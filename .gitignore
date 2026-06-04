@@ -1,0 +1,13 @@
+# transient generated artifacts (keep only the corpus-derived priors below)
+out/*
+!out/deps.json
+!out/objlib.json
+!out/factors.json
+!out/spatial_prior.json
+!out/lift.json
+!out/palette.json
+
+ralph/loop.log
+ralph/STOP
+__pycache__/
+*.pyc

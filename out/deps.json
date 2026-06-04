@@ -1,0 +1,2034 @@
+{
+ "n_maps": 159,
+ "regions_per_1000tiles": {
+  "p10": 1.4949845679012346,
+  "p50": 4.62962962962963,
+  "p90": 9.645061728395062
+ },
+ "max_depth": {
+  "p10": 2,
+  "p50": 4,
+  "p90": 8
+ },
+ "gate_type_mix": {
+  "guard": 0.869,
+  "portal": 0.115,
+  "garrison": 0.009,
+  "quest": 0.005,
+  "key": 0.002
+ },
+ "branching_by_depth": {
+  "0": 3.45,
+  "1": 1.6,
+  "2": 1.63,
+  "3": 1.46,
+  "4": 1.4,
+  "5": 1.65,
+  "6": 1.39,
+  "7": 2.12,
+  "8": 1.47,
+  "9": 1.75,
+  "10": 1.5,
+  "11": 1.33,
+  "12": 2.0,
+  "13": 1.0
+ },
+ "branching_overall": {
+  "p10": 1,
+  "p50": 1,
+  "p90": 4
+ },
+ "commons_tiles": {
+  "p10": 2,
+  "p50": 58,
+  "p90": 408
+ },
+ "pocket_tiles": {
+  "p10": 1,
+  "p50": 5,
+  "p90": 50
+ },
+ "gradient_by_depth": {
+  "1": {
+   "n_edges": 2452,
+   "mean_child_value": 10.8,
+   "guard_strength": {
+    "p10": 5,
+    "p50": 25,
+    "p90": 51
+   },
+   "frac_known_strength": 0.04
+  },
+  "2": {
+   "n_edges": 1570,
+   "mean_child_value": 9.1,
+   "guard_strength": {
+    "p10": 8,
+    "p50": 30,
+    "p90": 69
+   },
+   "frac_known_strength": 0.04
+  },
+  "3": {
+   "n_edges": 909,
+   "mean_child_value": 8.5,
+   "guard_strength": {
+    "p10": 13,
+    "p50": 32,
+    "p90": 73
+   },
+   "frac_known_strength": 0.05
+  },
+  "4": {
+   "n_edges": 514,
+   "mean_child_value": 9.0,
+   "guard_strength": {
+    "p10": 10,
+    "p50": 30,
+    "p90": 94
+   },
+   "frac_known_strength": 0.05
+  },
+  "5": {
+   "n_edges": 282,
+   "mean_child_value": 9.2,
+   "guard_strength": {
+    "p10": 8,
+    "p50": 50,
+    "p90": 62
+   },
+   "frac_known_strength": 0.02
+  },
+  "6": {
+   "n_edges": 178,
+   "mean_child_value": 8.2,
+   "guard_strength": {
+    "p10": 18,
+    "p50": 20,
+    "p90": 47
+   },
+   "frac_known_strength": 0.02
+  },
+  "7": {
+   "n_edges": 82,
+   "mean_child_value": 11.3,
+   "guard_strength": {},
+   "frac_known_strength": 0.0
+  },
+  "8": {
+   "n_edges": 55,
+   "mean_child_value": 9.8,
+   "guard_strength": {
+    "p10": 35,
+    "p50": 35,
+    "p90": 45
+   },
+   "frac_known_strength": 0.05
+  },
+  "9": {
+   "n_edges": 25,
+   "mean_child_value": 2.0,
+   "guard_strength": {},
+   "frac_known_strength": 0.0
+  },
+  "10": {
+   "n_edges": 21,
+   "mean_child_value": 13.1,
+   "guard_strength": {},
+   "frac_known_strength": 0.0
+  },
+  "11": {
+   "n_edges": 6,
+   "mean_child_value": 15.2,
+   "guard_strength": {},
+   "frac_known_strength": 0.0
+  },
+  "12": {
+   "n_edges": 4,
+   "mean_child_value": 1.5,
+   "guard_strength": {},
+   "frac_known_strength": 0.0
+  },
+  "13": {
+   "n_edges": 2,
+   "mean_child_value": 13.5,
+   "guard_strength": {
+    "p10": 1,
+    "p50": 15,
+    "p90": 15
+   },
+   "frac_known_strength": 1.0
+  },
+  "14": {
+   "n_edges": 1,
+   "mean_child_value": 29.0,
+   "guard_strength": {
+    "p10": 18,
+    "p50": 18,
+    "p90": 18
+   },
+   "frac_known_strength": 1.0
+  }
+ },
+ "per_map": [
+  {
+   "name": "A Viking We Shall Go Allied",
+   "area": 20736,
+   "max_depth": 2,
+   "n_reachable": 31,
+   "n_gates": 89,
+   "gate_types": {
+    "portal": 6,
+    "guard": 82,
+    "quest": 1
+   }
+  },
+  {
+   "name": "A Viking We Shall Go",
+   "area": 20736,
+   "max_depth": 2,
+   "n_reachable": 31,
+   "n_gates": 89,
+   "gate_types": {
+    "portal": 6,
+    "guard": 82,
+    "quest": 1
+   }
+  },
+  {
+   "name": "A Warm and Familiar Place",
+   "area": 2592,
+   "max_depth": 4,
+   "n_reachable": 14,
+   "n_gates": 23,
+   "gate_types": {
+    "portal": 2,
+    "guard": 21
+   }
+  },
+  {
+   "name": "Adventures of Jared Haret",
+   "area": 2592,
+   "max_depth": 2,
+   "n_reachable": 25,
+   "n_gates": 30,
+   "gate_types": {
+    "portal": 6,
+    "guard": 24
+   }
+  },
+  {
+   "name": "All for One",
+   "area": 10368,
+   "max_depth": 5,
+   "n_reachable": 54,
+   "n_gates": 107,
+   "gate_types": {
+    "portal": 20,
+    "garrison": 4,
+    "guard": 83
+   }
+  },
+  {
+   "name": "And One for All",
+   "area": 5184,
+   "max_depth": 2,
+   "n_reachable": 17,
+   "n_gates": 80,
+   "gate_types": {
+    "guard": 78,
+    "portal": 2
+   }
+  },
+  {
+   "name": "Arrogance Allied",
+   "area": 2592,
+   "max_depth": 3,
+   "n_reachable": 20,
+   "n_gates": 40,
+   "gate_types": {
+    "portal": 4,
+    "guard": 36
+   }
+  },
+  {
+   "name": "Arrogance",
+   "area": 2592,
+   "max_depth": 3,
+   "n_reachable": 20,
+   "n_gates": 40,
+   "gate_types": {
+    "portal": 4,
+    "guard": 36
+   }
+  },
+  {
+   "name": "Ascension",
+   "area": 5184,
+   "max_depth": 6,
+   "n_reachable": 21,
+   "n_gates": 40,
+   "gate_types": {
+    "portal": 4,
+    "guard": 36
+   }
+  },
+  {
+   "name": "Back For Revenge - Allied",
+   "area": 20736,
+   "max_depth": 7,
+   "n_reachable": 78,
+   "n_gates": 250,
+   "gate_types": {
+    "garrison": 17,
+    "guard": 209,
+    "key": 6,
+    "portal": 18
+   }
+  },
+  {
+   "name": "Back For Revenge",
+   "area": 20736,
+   "max_depth": 7,
+   "n_reachable": 78,
+   "n_gates": 250,
+   "gate_types": {
+    "garrison": 17,
+    "guard": 209,
+    "key": 6,
+    "portal": 18
+   }
+  },
+  {
+   "name": "Barbarian Breakout",
+   "area": 2592,
+   "max_depth": 2,
+   "n_reachable": 12,
+   "n_gates": 38,
+   "gate_types": {
+    "portal": 8,
+    "guard": 30
+   }
+  },
+  {
+   "name": "Barbarian BreakoutA",
+   "area": 2592,
+   "max_depth": 2,
+   "n_reachable": 12,
+   "n_gates": 38,
+   "gate_types": {
+    "portal": 8,
+    "guard": 30
+   }
+  },
+  {
+   "name": "Battle of the Sexes Allied",
+   "area": 11664,
+   "max_depth": 4,
+   "n_reachable": 47,
+   "n_gates": 81,
+   "gate_types": {
+    "guard": 69,
+    "portal": 12
+   }
+  },
+  {
+   "name": "Battle of the Sexes",
+   "area": 11664,
+   "max_depth": 4,
+   "n_reachable": 47,
+   "n_gates": 80,
+   "gate_types": {
+    "guard": 68,
+    "portal": 12
+   }
+  },
+  {
+   "name": "Brave New World(Allies)",
+   "area": 11664,
+   "max_depth": 8,
+   "n_reachable": 81,
+   "n_gates": 180,
+   "gate_types": {
+    "garrison": 2,
+    "guard": 169,
+    "portal": 8,
+    "quest": 1
+   }
+  },
+  {
+   "name": "Brave New World",
+   "area": 11664,
+   "max_depth": 8,
+   "n_reachable": 81,
+   "n_gates": 181,
+   "gate_types": {
+    "garrison": 2,
+    "guard": 170,
+    "portal": 8,
+    "quest": 1
+   }
+  },
+  {
+   "name": "Buried Treasure",
+   "area": 10368,
+   "max_depth": 7,
+   "n_reachable": 54,
+   "n_gates": 119,
+   "gate_types": {
+    "portal": 12,
+    "guard": 107
+   }
+  },
+  {
+   "name": "Carpe Diem - Allied",
+   "area": 10368,
+   "max_depth": 6,
+   "n_reachable": 44,
+   "n_gates": 118,
+   "gate_types": {
+    "portal": 12,
+    "guard": 104,
+    "key": 2
+   }
+  },
+  {
+   "name": "Carpe Diem",
+   "area": 10368,
+   "max_depth": 6,
+   "n_reachable": 44,
+   "n_gates": 118,
+   "gate_types": {
+    "portal": 12,
+    "guard": 104,
+    "key": 2
+   }
+  },
+  {
+   "name": "Caught in the Middle",
+   "area": 10368,
+   "max_depth": 4,
+   "n_reachable": 50,
+   "n_gates": 118,
+   "gate_types": {
+    "guard": 98,
+    "portal": 19,
+    "quest": 1
+   }
+  },
+  {
+   "name": "Chasing a Dream",
+   "area": 2592,
+   "max_depth": 4,
+   "n_reachable": 24,
+   "n_gates": 36,
+   "gate_types": {
+    "portal": 6,
+    "guard": 30
+   }
+  },
+  {
+   "name": "Crimson and Clover",
+   "area": 10368,
+   "max_depth": 4,
+   "n_reachable": 16,
+   "n_gates": 49,
+   "gate_types": {
+    "portal": 8,
+    "guard": 38,
+    "garrison": 3
+   }
+  },
+  {
+   "name": "Crimson and CloverA",
+   "area": 10368,
+   "max_depth": 4,
+   "n_reachable": 16,
+   "n_gates": 49,
+   "gate_types": {
+    "portal": 8,
+    "guard": 38,
+    "garrison": 3
+   }
+  },
+  {
+   "name": "Darwin's Prize(Allies)",
+   "area": 10368,
+   "max_depth": 3,
+   "n_reachable": 19,
+   "n_gates": 45,
+   "gate_types": {
+    "garrison": 5,
+    "guard": 40
+   }
+  },
+  {
+   "name": "Darwin's Prize",
+   "area": 5184,
+   "max_depth": 3,
+   "n_reachable": 19,
+   "n_gates": 43,
+   "gate_types": {
+    "garrison": 5,
+    "guard": 38
+   }
+  },
+  {
+   "name": "Dawn of War",
+   "area": 5184,
+   "max_depth": 7,
+   "n_reachable": 35,
+   "n_gates": 85,
+   "gate_types": {
+    "guard": 80,
+    "quest": 1,
+    "portal": 4
+   }
+  },
+  {
+   "name": "Dead and Buried",
+   "area": 2592,
+   "max_depth": 1,
+   "n_reachable": 5,
+   "n_gates": 24,
+   "gate_types": {
+    "portal": 6,
+    "guard": 18
+   }
+  },
+  {
+   "name": "Deluge",
+   "area": 2592,
+   "max_depth": 3,
+   "n_reachable": 23,
+   "n_gates": 39,
+   "gate_types": {
+    "guard": 33,
+    "portal": 6
+   }
+  },
+  {
+   "name": "Divided Loyalties",
+   "area": 10368,
+   "max_depth": 8,
+   "n_reachable": 85,
+   "n_gates": 150,
+   "gate_types": {
+    "portal": 12,
+    "guard": 138
+   }
+  },
+  {
+   "name": "Divided LoyaltiesA",
+   "area": 10368,
+   "max_depth": 8,
+   "n_reachable": 85,
+   "n_gates": 150,
+   "gate_types": {
+    "portal": 12,
+    "guard": 138
+   }
+  },
+  {
+   "name": "Dragon Orb",
+   "area": 10368,
+   "max_depth": 3,
+   "n_reachable": 60,
+   "n_gates": 93,
+   "gate_types": {
+    "portal": 19,
+    "guard": 74
+   }
+  },
+  {
+   "name": "Dragon Pass (Allies)",
+   "area": 10368,
+   "max_depth": 5,
+   "n_reachable": 56,
+   "n_gates": 88,
+   "gate_types": {
+    "portal": 12,
+    "guard": 74,
+    "key": 2
+   }
+  },
+  {
+   "name": "Dragon Pass",
+   "area": 10368,
+   "max_depth": 5,
+   "n_reachable": 56,
+   "n_gates": 88,
+   "gate_types": {
+    "portal": 12,
+    "guard": 74,
+    "key": 2
+   }
+  },
+  {
+   "name": "Dungeon Keeper",
+   "area": 2592,
+   "max_depth": 3,
+   "n_reachable": 15,
+   "n_gates": 28,
+   "gate_types": {
+    "portal": 2,
+    "guard": 26
+   }
+  },
+  {
+   "name": "Dwarven Gold",
+   "area": 2592,
+   "max_depth": 5,
+   "n_reachable": 31,
+   "n_gates": 49,
+   "gate_types": {
+    "guard": 41,
+    "portal": 8
+   }
+  },
+  {
+   "name": "Dwarven Tunnels(Allies)",
+   "area": 10368,
+   "max_depth": 7,
+   "n_reachable": 57,
+   "n_gates": 113,
+   "gate_types": {
+    "guard": 100,
+    "portal": 13
+   }
+  },
+  {
+   "name": "Dwarven Tunnels",
+   "area": 10368,
+   "max_depth": 7,
+   "n_reachable": 57,
+   "n_gates": 113,
+   "gate_types": {
+    "guard": 100,
+    "portal": 13
+   }
+  },
+  {
+   "name": "Elbow Room(Allies)",
+   "area": 1296,
+   "max_depth": 1,
+   "n_reachable": 9,
+   "n_gates": 4,
+   "gate_types": {
+    "guard": 3,
+    "key": 1
+   }
+  },
+  {
+   "name": "Elbow Room",
+   "area": 1296,
+   "max_depth": 1,
+   "n_reachable": 9,
+   "n_gates": 4,
+   "gate_types": {
+    "guard": 3,
+    "key": 1
+   }
+  },
+  {
+   "name": "Emerald Isles",
+   "area": 5184,
+   "max_depth": 4,
+   "n_reachable": 25,
+   "n_gates": 38,
+   "gate_types": {
+    "guard": 38
+   }
+  },
+  {
+   "name": "Emerald IslesA",
+   "area": 5184,
+   "max_depth": 4,
+   "n_reachable": 25,
+   "n_gates": 38,
+   "gate_types": {
+    "guard": 38
+   }
+  },
+  {
+   "name": "Faeries",
+   "area": 10368,
+   "max_depth": 2,
+   "n_reachable": 16,
+   "n_gates": 56,
+   "gate_types": {
+    "guard": 35,
+    "portal": 19,
+    "garrison": 2
+   }
+  },
+  {
+   "name": "For Sale",
+   "area": 1296,
+   "max_depth": 2,
+   "n_reachable": 11,
+   "n_gates": 14,
+   "gate_types": {
+    "portal": 4,
+    "guard": 8,
+    "quest": 2
+   }
+  },
+  {
+   "name": "Fort Noxis",
+   "area": 2592,
+   "max_depth": 5,
+   "n_reachable": 22,
+   "n_gates": 41,
+   "gate_types": {
+    "guard": 34,
+    "portal": 4,
+    "garrison": 3
+   }
+  },
+  {
+   "name": "Free for All",
+   "area": 23328,
+   "max_depth": 4,
+   "n_reachable": 66,
+   "n_gates": 160,
+   "gate_types": {
+    "portal": 10,
+    "guard": 150
+   }
+  },
+  {
+   "name": "Freedom",
+   "area": 2592,
+   "max_depth": 4,
+   "n_reachable": 41,
+   "n_gates": 66,
+   "gate_types": {
+    "portal": 18,
+    "guard": 47,
+    "garrison": 1
+   }
+  },
+  {
+   "name": "Gelea's Champions (Allies)",
+   "area": 10368,
+   "max_depth": 3,
+   "n_reachable": 28,
+   "n_gates": 82,
+   "gate_types": {
+    "portal": 8,
+    "guard": 71,
+    "garrison": 3
+   }
+  },
+  {
+   "name": "Gelea's Champions",
+   "area": 10368,
+   "max_depth": 3,
+   "n_reachable": 28,
+   "n_gates": 82,
+   "gate_types": {
+    "portal": 8,
+    "guard": 71,
+    "garrison": 3
+   }
+  },
+  {
+   "name": "Goblins in the Pantry",
+   "area": 5184,
+   "max_depth": 5,
+   "n_reachable": 22,
+   "n_gates": 55,
+   "gate_types": {
+    "portal": 6,
+    "guard": 49
+   }
+  },
+  {
+   "name": "Golems Aplenty Allied",
+   "area": 10368,
+   "max_depth": 6,
+   "n_reachable": 46,
+   "n_gates": 99,
+   "gate_types": {
+    "portal": 12,
+    "guard": 87
+   }
+  },
+  {
+   "name": "Golems Aplenty",
+   "area": 10368,
+   "max_depth": 6,
+   "n_reachable": 46,
+   "n_gates": 99,
+   "gate_types": {
+    "portal": 12,
+    "guard": 87
+   }
+  },
+  {
+   "name": "Good Witch, Bad Witch",
+   "area": 11664,
+   "max_depth": 2,
+   "n_reachable": 12,
+   "n_gates": 51,
+   "gate_types": {
+    "garrison": 1,
+    "portal": 10,
+    "guard": 39,
+    "quest": 1
+   }
+  },
+  {
+   "name": "Good to Go",
+   "area": 1296,
+   "max_depth": 2,
+   "n_reachable": 10,
+   "n_gates": 31,
+   "gate_types": {
+    "guard": 31
+   }
+  },
+  {
+   "name": "Gorlam's Tentacle Swampland",
+   "area": 10368,
+   "max_depth": 8,
+   "n_reachable": 28,
+   "n_gates": 58,
+   "gate_types": {
+    "guard": 46,
+    "portal": 11,
+    "garrison": 1
+   }
+  },
+  {
+   "name": "Hatchet Axe and Saw",
+   "area": 5184,
+   "max_depth": 6,
+   "n_reachable": 45,
+   "n_gates": 54,
+   "gate_types": {
+    "quest": 4,
+    "garrison": 5,
+    "guard": 33,
+    "portal": 12
+   }
+  },
+  {
+   "name": "Heroes of Might not Magic Allied",
+   "area": 10368,
+   "max_depth": 10,
+   "n_reachable": 108,
+   "n_gates": 160,
+   "gate_types": {
+    "garrison": 5,
+    "guard": 139,
+    "portal": 16
+   }
+  },
+  {
+   "name": "Heroes of Might not Magic",
+   "area": 10368,
+   "max_depth": 10,
+   "n_reachable": 108,
+   "n_gates": 160,
+   "gate_types": {
+    "garrison": 5,
+    "guard": 139,
+    "portal": 16
+   }
+  },
+  {
+   "name": "Hoard(Allies)",
+   "area": 10368,
+   "max_depth": 4,
+   "n_reachable": 40,
+   "n_gates": 89,
+   "gate_types": {
+    "portal": 10,
+    "guard": 79
+   }
+  },
+  {
+   "name": "Hoard",
+   "area": 10368,
+   "max_depth": 4,
+   "n_reachable": 40,
+   "n_gates": 89,
+   "gate_types": {
+    "portal": 10,
+    "guard": 79
+   }
+  },
+  {
+   "name": "Hold the middle",
+   "area": 10368,
+   "max_depth": 5,
+   "n_reachable": 40,
+   "n_gates": 104,
+   "gate_types": {
+    "portal": 17,
+    "guard": 87
+   }
+  },
+  {
+   "name": "Irrational Hostility",
+   "area": 2592,
+   "max_depth": 4,
+   "n_reachable": 29,
+   "n_gates": 55,
+   "gate_types": {
+    "portal": 10,
+    "guard": 45
+   }
+  },
+  {
+   "name": "Island King Allied",
+   "area": 11664,
+   "max_depth": 5,
+   "n_reachable": 66,
+   "n_gates": 117,
+   "gate_types": {
+    "guard": 97,
+    "portal": 18,
+    "quest": 2
+   }
+  },
+  {
+   "name": "Island King",
+   "area": 11664,
+   "max_depth": 5,
+   "n_reachable": 66,
+   "n_gates": 117,
+   "gate_types": {
+    "guard": 97,
+    "portal": 18,
+    "quest": 2
+   }
+  },
+  {
+   "name": "Island of Fire",
+   "area": 10368,
+   "max_depth": 8,
+   "n_reachable": 27,
+   "n_gates": 72,
+   "gate_types": {
+    "guard": 66,
+    "portal": 6
+   }
+  },
+  {
+   "name": "Islands and Caves",
+   "area": 23328,
+   "max_depth": 5,
+   "n_reachable": 58,
+   "n_gates": 144,
+   "gate_types": {
+    "portal": 28,
+    "guard": 116
+   }
+  },
+  {
+   "name": "Jihad",
+   "area": 2592,
+   "max_depth": 3,
+   "n_reachable": 51,
+   "n_gates": 127,
+   "gate_types": {
+    "portal": 30,
+    "guard": 97
+   }
+  },
+  {
+   "name": "Judgement Day",
+   "area": 1296,
+   "max_depth": 3,
+   "n_reachable": 6,
+   "n_gates": 18,
+   "gate_types": {
+    "portal": 12,
+    "garrison": 3,
+    "guard": 3
+   }
+  },
+  {
+   "name": "Just A Visit",
+   "area": 5184,
+   "max_depth": 4,
+   "n_reachable": 40,
+   "n_gates": 70,
+   "gate_types": {
+    "guard": 70
+   }
+  },
+  {
+   "name": "Key to Victory",
+   "area": 2592,
+   "max_depth": 1,
+   "n_reachable": 5,
+   "n_gates": 35,
+   "gate_types": {
+    "guard": 31,
+    "portal": 4
+   }
+  },
+  {
+   "name": "King of Pain",
+   "area": 5184,
+   "max_depth": 5,
+   "n_reachable": 41,
+   "n_gates": 65,
+   "gate_types": {
+    "portal": 4,
+    "guard": 61
+   }
+  },
+  {
+   "name": "Kingdom for sale(allies)",
+   "area": 11664,
+   "max_depth": 4,
+   "n_reachable": 48,
+   "n_gates": 130,
+   "gate_types": {
+    "quest": 14,
+    "guard": 114,
+    "portal": 2
+   }
+  },
+  {
+   "name": "Kingdom for sale",
+   "area": 11664,
+   "max_depth": 4,
+   "n_reachable": 48,
+   "n_gates": 130,
+   "gate_types": {
+    "quest": 14,
+    "guard": 114,
+    "portal": 2
+   }
+  },
+  {
+   "name": "Knee Deep in the Dead",
+   "area": 1296,
+   "max_depth": 4,
+   "n_reachable": 18,
+   "n_gates": 27,
+   "gate_types": {
+    "guard": 26,
+    "garrison": 1
+   }
+  },
+  {
+   "name": "Knight of Darkness",
+   "area": 10368,
+   "max_depth": 3,
+   "n_reachable": 12,
+   "n_gates": 44,
+   "gate_types": {
+    "portal": 8,
+    "guard": 36
+   }
+  },
+  {
+   "name": "Land of Titans (Allied)",
+   "area": 23328,
+   "max_depth": 3,
+   "n_reachable": 16,
+   "n_gates": 134,
+   "gate_types": {
+    "portal": 9,
+    "guard": 120,
+    "key": 2,
+    "garrison": 3
+   }
+  },
+  {
+   "name": "Land of Titans",
+   "area": 23328,
+   "max_depth": 3,
+   "n_reachable": 16,
+   "n_gates": 134,
+   "gate_types": {
+    "portal": 9,
+    "guard": 120,
+    "key": 2,
+    "garrison": 3
+   }
+  },
+  {
+   "name": "Last Chance Allies",
+   "area": 2592,
+   "max_depth": 4,
+   "n_reachable": 23,
+   "n_gates": 36,
+   "gate_types": {
+    "portal": 4,
+    "guard": 32
+   }
+  },
+  {
+   "name": "Last Chance",
+   "area": 2592,
+   "max_depth": 4,
+   "n_reachable": 23,
+   "n_gates": 36,
+   "gate_types": {
+    "portal": 4,
+    "guard": 32
+   }
+  },
+  {
+   "name": "Loss of Innocence(Allies)",
+   "area": 11664,
+   "max_depth": 7,
+   "n_reachable": 69,
+   "n_gates": 118,
+   "gate_types": {
+    "guard": 116,
+    "portal": 2
+   }
+  },
+  {
+   "name": "Loss of Innocence",
+   "area": 11664,
+   "max_depth": 7,
+   "n_reachable": 67,
+   "n_gates": 118,
+   "gate_types": {
+    "guard": 116,
+    "portal": 2
+   }
+  },
+  {
+   "name": "Manifest Destiny",
+   "area": 2592,
+   "max_depth": 2,
+   "n_reachable": 19,
+   "n_gates": 58,
+   "gate_types": {
+    "garrison": 16,
+    "portal": 2,
+    "guard": 40
+   }
+  },
+  {
+   "name": "Marshland Menace",
+   "area": 10368,
+   "max_depth": 4,
+   "n_reachable": 52,
+   "n_gates": 93,
+   "gate_types": {
+    "portal": 14,
+    "guard": 79
+   }
+  },
+  {
+   "name": "Meeting in Muzgob(Allies)",
+   "area": 11664,
+   "max_depth": 6,
+   "n_reachable": 115,
+   "n_gates": 172,
+   "gate_types": {
+    "portal": 9,
+    "guard": 160,
+    "key": 3
+   }
+  },
+  {
+   "name": "Meeting in Muzgob",
+   "area": 11664,
+   "max_depth": 6,
+   "n_reachable": 118,
+   "n_gates": 173,
+   "gate_types": {
+    "portal": 9,
+    "guard": 161,
+    "key": 3
+   }
+  },
+  {
+   "name": "Merchant Princes Allied",
+   "area": 5184,
+   "max_depth": 4,
+   "n_reachable": 31,
+   "n_gates": 73,
+   "gate_types": {
+    "portal": 11,
+    "guard": 62
+   }
+  },
+  {
+   "name": "Merchant Princes",
+   "area": 5184,
+   "max_depth": 4,
+   "n_reachable": 31,
+   "n_gates": 73,
+   "gate_types": {
+    "portal": 11,
+    "guard": 62
+   }
+  },
+  {
+   "name": "Middletown",
+   "area": 23328,
+   "max_depth": 5,
+   "n_reachable": 55,
+   "n_gates": 122,
+   "gate_types": {
+    "portal": 10,
+    "guard": 109,
+    "garrison": 3
+   }
+  },
+  {
+   "name": "Monk's Retreat Allied",
+   "area": 23328,
+   "max_depth": 5,
+   "n_reachable": 49,
+   "n_gates": 164,
+   "gate_types": {
+    "portal": 8,
+    "guard": 151,
+    "key": 2,
+    "garrison": 3
+   }
+  },
+  {
+   "name": "Monk's Retreat",
+   "area": 23328,
+   "max_depth": 5,
+   "n_reachable": 49,
+   "n_gates": 164,
+   "gate_types": {
+    "portal": 8,
+    "guard": 151,
+    "key": 2,
+    "garrison": 3
+   }
+  },
+  {
+   "name": "Myth and Legend",
+   "area": 41472,
+   "max_depth": 4,
+   "n_reachable": 62,
+   "n_gates": 254,
+   "gate_types": {
+    "guard": 238,
+    "portal": 16
+   }
+  },
+  {
+   "name": "Noahs Ark",
+   "area": 23328,
+   "max_depth": 8,
+   "n_reachable": 50,
+   "n_gates": 156,
+   "gate_types": {
+    "portal": 22,
+    "guard": 131,
+    "garrison": 3
+   }
+  },
+  {
+   "name": "One Bad Day - Allied",
+   "area": 5184,
+   "max_depth": 3,
+   "n_reachable": 50,
+   "n_gates": 90,
+   "gate_types": {
+    "portal": 12,
+    "guard": 78
+   }
+  },
+  {
+   "name": "Overthrow Thy Neighbors",
+   "area": 10368,
+   "max_depth": 11,
+   "n_reachable": 63,
+   "n_gates": 104,
+   "gate_types": {
+    "portal": 12,
+    "guard": 92
+   }
+  },
+  {
+   "name": "Pandora's Box ",
+   "area": 41472,
+   "max_depth": 10,
+   "n_reachable": 99,
+   "n_gates": 249,
+   "gate_types": {
+    "guard": 232,
+    "portal": 16,
+    "key": 1
+   }
+  },
+  {
+   "name": "Peaceful Ending - Allied",
+   "area": 23328,
+   "max_depth": 9,
+   "n_reachable": 95,
+   "n_gates": 194,
+   "gate_types": {
+    "quest": 7,
+    "guard": 169,
+    "portal": 18
+   }
+  },
+  {
+   "name": "Peaceful Ending",
+   "area": 23328,
+   "max_depth": 9,
+   "n_reachable": 95,
+   "n_gates": 194,
+   "gate_types": {
+    "quest": 7,
+    "guard": 169,
+    "portal": 18
+   }
+  },
+  {
+   "name": "Peacemaker",
+   "area": 5184,
+   "max_depth": 5,
+   "n_reachable": 45,
+   "n_gates": 80,
+   "gate_types": {
+    "portal": 9,
+    "guard": 71
+   }
+  },
+  {
+   "name": "Pestilence Lake Allies",
+   "area": 11664,
+   "max_depth": 3,
+   "n_reachable": 60,
+   "n_gates": 133,
+   "gate_types": {
+    "guard": 117,
+    "garrison": 2,
+    "portal": 12,
+    "quest": 2
+   }
+  },
+  {
+   "name": "Pestilence Lake",
+   "area": 11664,
+   "max_depth": 3,
+   "n_reachable": 60,
+   "n_gates": 133,
+   "gate_types": {
+    "guard": 117,
+    "garrison": 2,
+    "portal": 12,
+    "quest": 2
+   }
+  },
+  {
+   "name": "Pirates",
+   "area": 5184,
+   "max_depth": 2,
+   "n_reachable": 24,
+   "n_gates": 46,
+   "gate_types": {
+    "guard": 39,
+    "portal": 7
+   }
+  },
+  {
+   "name": "Race for Ardintinny",
+   "area": 41472,
+   "max_depth": 4,
+   "n_reachable": 54,
+   "n_gates": 114,
+   "gate_types": {
+    "guard": 93,
+    "portal": 20,
+    "garrison": 1
+   }
+  },
+  {
+   "name": "Race for the Town",
+   "area": 5184,
+   "max_depth": 5,
+   "n_reachable": 31,
+   "n_gates": 77,
+   "gate_types": {
+    "portal": 8,
+    "guard": 69
+   }
+  },
+  {
+   "name": "Ready or Not",
+   "area": 10368,
+   "max_depth": 9,
+   "n_reachable": 47,
+   "n_gates": 71,
+   "gate_types": {
+    "guard": 61,
+    "portal": 10
+   }
+  },
+  {
+   "name": "Realm of Chaos",
+   "area": 10368,
+   "max_depth": 6,
+   "n_reachable": 61,
+   "n_gates": 97,
+   "gate_types": {
+    "portal": 8,
+    "guard": 89
+   }
+  },
+  {
+   "name": "Realm of ChaosA",
+   "area": 10368,
+   "max_depth": 6,
+   "n_reachable": 61,
+   "n_gates": 97,
+   "gate_types": {
+    "portal": 8,
+    "guard": 89
+   }
+  },
+  {
+   "name": "Rebellion",
+   "area": 5184,
+   "max_depth": 2,
+   "n_reachable": 13,
+   "n_gates": 38,
+   "gate_types": {
+    "guard": 38
+   }
+  },
+  {
+   "name": "Reclamation Allied",
+   "area": 20736,
+   "max_depth": 6,
+   "n_reachable": 87,
+   "n_gates": 181,
+   "gate_types": {
+    "garrison": 2,
+    "guard": 165,
+    "portal": 10,
+    "key": 3,
+    "quest": 1
+   }
+  },
+  {
+   "name": "Reclamation",
+   "area": 20736,
+   "max_depth": 6,
+   "n_reachable": 87,
+   "n_gates": 181,
+   "gate_types": {
+    "garrison": 2,
+    "guard": 165,
+    "portal": 10,
+    "key": 3,
+    "quest": 1
+   }
+  },
+  {
+   "name": "Rediscovery",
+   "area": 10368,
+   "max_depth": 6,
+   "n_reachable": 46,
+   "n_gates": 161,
+   "gate_types": {
+    "portal": 6,
+    "guard": 155
+   }
+  },
+  {
+   "name": "Resource War Allies",
+   "area": 10368,
+   "max_depth": 7,
+   "n_reachable": 58,
+   "n_gates": 74,
+   "gate_types": {
+    "guard": 66,
+    "portal": 8
+   }
+  },
+  {
+   "name": "Resource War",
+   "area": 10368,
+   "max_depth": 7,
+   "n_reachable": 58,
+   "n_gates": 74,
+   "gate_types": {
+    "guard": 66,
+    "portal": 8
+   }
+  },
+  {
+   "name": "Rise of the Phoenix Allied",
+   "area": 23328,
+   "max_depth": 3,
+   "n_reachable": 40,
+   "n_gates": 169,
+   "gate_types": {
+    "guard": 143,
+    "portal": 22,
+    "garrison": 4
+   }
+  },
+  {
+   "name": "Rise of the Phoenix",
+   "area": 23328,
+   "max_depth": 3,
+   "n_reachable": 40,
+   "n_gates": 169,
+   "gate_types": {
+    "guard": 143,
+    "portal": 22,
+    "garrison": 4
+   }
+  },
+  {
+   "name": "Rumble in the Bogs",
+   "area": 10368,
+   "max_depth": 7,
+   "n_reachable": 35,
+   "n_gates": 77,
+   "gate_types": {
+    "portal": 10,
+    "guard": 67
+   }
+  },
+  {
+   "name": "Rumble in the BogsA",
+   "area": 10368,
+   "max_depth": 7,
+   "n_reachable": 35,
+   "n_gates": 77,
+   "gate_types": {
+    "portal": 10,
+    "guard": 67
+   }
+  },
+  {
+   "name": "Sands of Blood",
+   "area": 2592,
+   "max_depth": 8,
+   "n_reachable": 29,
+   "n_gates": 62,
+   "gate_types": {
+    "portal": 10,
+    "garrison": 4,
+    "guard": 48
+   }
+  },
+  {
+   "name": "Sangraal's Thief Allied",
+   "area": 10368,
+   "max_depth": 6,
+   "n_reachable": 82,
+   "n_gates": 170,
+   "gate_types": {
+    "portal": 18,
+    "guard": 150,
+    "garrison": 1,
+    "key": 1
+   }
+  },
+  {
+   "name": "Sangraal's Thief",
+   "area": 10368,
+   "max_depth": 6,
+   "n_reachable": 82,
+   "n_gates": 170,
+   "gate_types": {
+    "portal": 18,
+    "guard": 150,
+    "garrison": 1,
+    "key": 1
+   }
+  },
+  {
+   "name": "Search for the Grail",
+   "area": 10368,
+   "max_depth": 1,
+   "n_reachable": 6,
+   "n_gates": 31,
+   "gate_types": {
+    "guard": 22,
+    "portal": 9
+   }
+  },
+  {
+   "name": "Serpents Treasure",
+   "area": 41472,
+   "max_depth": 5,
+   "n_reachable": 71,
+   "n_gates": 190,
+   "gate_types": {
+    "portal": 24,
+    "guard": 163,
+    "garrison": 3
+   }
+  },
+  {
+   "name": "Shadow Valleys",
+   "area": 10368,
+   "max_depth": 5,
+   "n_reachable": 48,
+   "n_gates": 109,
+   "gate_types": {
+    "guard": 103,
+    "portal": 6
+   }
+  },
+  {
+   "name": "South of Hell (Allies)",
+   "area": 23328,
+   "max_depth": 5,
+   "n_reachable": 71,
+   "n_gates": 139,
+   "gate_types": {
+    "guard": 116,
+    "quest": 1,
+    "portal": 19,
+    "key": 3
+   }
+  },
+  {
+   "name": "South of Hell",
+   "area": 23328,
+   "max_depth": 7,
+   "n_reachable": 93,
+   "n_gates": 134,
+   "gate_types": {
+    "guard": 111,
+    "quest": 1,
+    "portal": 19,
+    "key": 3
+   }
+  },
+  {
+   "name": "Southern Cross",
+   "area": 23328,
+   "max_depth": 7,
+   "n_reachable": 29,
+   "n_gates": 80,
+   "gate_types": {
+    "portal": 12,
+    "guard": 66,
+    "garrison": 2
+   }
+  },
+  {
+   "name": "Step by Step (Allies)",
+   "area": 10368,
+   "max_depth": 12,
+   "n_reachable": 91,
+   "n_gates": 144,
+   "gate_types": {
+    "portal": 12,
+    "guard": 131,
+    "key": 1
+   }
+  },
+  {
+   "name": "Step by Step",
+   "area": 10368,
+   "max_depth": 12,
+   "n_reachable": 91,
+   "n_gates": 144,
+   "gate_types": {
+    "portal": 12,
+    "guard": 131,
+    "key": 1
+   }
+  },
+  {
+   "name": "Tale of two lands (Allies)",
+   "area": 41472,
+   "max_depth": 6,
+   "n_reachable": 52,
+   "n_gates": 210,
+   "gate_types": {
+    "portal": 11,
+    "guard": 194,
+    "quest": 5
+   }
+  },
+  {
+   "name": "Tale of two lands",
+   "area": 41472,
+   "max_depth": 6,
+   "n_reachable": 52,
+   "n_gates": 210,
+   "gate_types": {
+    "portal": 11,
+    "guard": 194,
+    "quest": 5
+   }
+  },
+  {
+   "name": "Terrible Rumor",
+   "area": 2592,
+   "max_depth": 4,
+   "n_reachable": 44,
+   "n_gates": 67,
+   "gate_types": {
+    "portal": 12,
+    "guard": 50,
+    "key": 1,
+    "quest": 3,
+    "garrison": 1
+   }
+  },
+  {
+   "name": "The Battle of Daeyan's Ford",
+   "area": 23328,
+   "max_depth": 3,
+   "n_reachable": 41,
+   "n_gates": 100,
+   "gate_types": {
+    "garrison": 6,
+    "portal": 15,
+    "quest": 2,
+    "guard": 77
+   }
+  },
+  {
+   "name": "The Challenge",
+   "area": 5184,
+   "max_depth": 2,
+   "n_reachable": 10,
+   "n_gates": 57,
+   "gate_types": {
+    "guard": 52,
+    "portal": 4,
+    "garrison": 1
+   }
+  },
+  {
+   "name": "The Five Rings",
+   "area": 23328,
+   "max_depth": 4,
+   "n_reachable": 28,
+   "n_gates": 54,
+   "gate_types": {
+    "portal": 18,
+    "guard": 30,
+    "garrison": 6
+   }
+  },
+  {
+   "name": "The Gauntlet",
+   "area": 23328,
+   "max_depth": 8,
+   "n_reachable": 65,
+   "n_gates": 106,
+   "gate_types": {
+    "portal": 8,
+    "guard": 98
+   }
+  },
+  {
+   "name": "The Great Race",
+   "area": 5184,
+   "max_depth": 7,
+   "n_reachable": 46,
+   "n_gates": 102,
+   "gate_types": {
+    "portal": 8,
+    "guard": 90,
+    "quest": 3,
+    "key": 1
+   }
+  },
+  {
+   "name": "The Mandate of Heaven",
+   "area": 41472,
+   "max_depth": 14,
+   "n_reachable": 72,
+   "n_gates": 145,
+   "gate_types": {
+    "portal": 26,
+    "guard": 119
+   }
+  },
+  {
+   "name": "The Newcomers",
+   "area": 2592,
+   "max_depth": 3,
+   "n_reachable": 36,
+   "n_gates": 62,
+   "gate_types": {
+    "portal": 8,
+    "guard": 48,
+    "garrison": 5,
+    "quest": 1
+   }
+  },
+  {
+   "name": "Thousand Islands (allies)",
+   "area": 20736,
+   "max_depth": 2,
+   "n_reachable": 17,
+   "n_gates": 154,
+   "gate_types": {
+    "guard": 118,
+    "portal": 35,
+    "garrison": 1
+   }
+  },
+  {
+   "name": "Thousand Islands",
+   "area": 20736,
+   "max_depth": 2,
+   "n_reachable": 15,
+   "n_gates": 154,
+   "gate_types": {
+    "guard": 118,
+    "portal": 35,
+    "garrison": 1
+   }
+  },
+  {
+   "name": "Time's Up",
+   "area": 2592,
+   "max_depth": 5,
+   "n_reachable": 18,
+   "n_gates": 42,
+   "gate_types": {
+    "key": 7,
+    "guard": 33,
+    "portal": 2
+   }
+  },
+  {
+   "name": "Titans Winter",
+   "area": 11664,
+   "max_depth": 4,
+   "n_reachable": 41,
+   "n_gates": 81,
+   "gate_types": {
+    "guard": 80,
+    "garrison": 1
+   }
+  },
+  {
+   "name": "Too Many Monsters",
+   "area": 1296,
+   "max_depth": 2,
+   "n_reachable": 14,
+   "n_gates": 47,
+   "gate_types": {
+    "guard": 46,
+    "key": 1
+   }
+  },
+  {
+   "name": "Tovar's Fortress (Allies)",
+   "area": 10368,
+   "max_depth": 4,
+   "n_reachable": 57,
+   "n_gates": 79,
+   "gate_types": {
+    "portal": 9,
+    "garrison": 1,
+    "guard": 67,
+    "key": 2
+   }
+  },
+  {
+   "name": "Tovar's Fortress",
+   "area": 10368,
+   "max_depth": 4,
+   "n_reachable": 57,
+   "n_gates": 79,
+   "gate_types": {
+    "portal": 9,
+    "garrison": 1,
+    "guard": 67,
+    "key": 2
+   }
+  },
+  {
+   "name": "Treasure Hunt",
+   "area": 5184,
+   "max_depth": 7,
+   "n_reachable": 60,
+   "n_gates": 101,
+   "gate_types": {
+    "quest": 21,
+    "guard": 50,
+    "garrison": 8,
+    "portal": 22
+   }
+  },
+  {
+   "name": "Twins",
+   "area": 2592,
+   "max_depth": 4,
+   "n_reachable": 24,
+   "n_gates": 51,
+   "gate_types": {
+    "garrison": 2,
+    "portal": 2,
+    "guard": 47
+   }
+  },
+  {
+   "name": "Undead Unrest",
+   "area": 10368,
+   "max_depth": 6,
+   "n_reachable": 55,
+   "n_gates": 99,
+   "gate_types": {
+    "guard": 87,
+    "portal": 11,
+    "garrison": 1
+   }
+  },
+  {
+   "name": "Unexpected Inheritance",
+   "area": 10368,
+   "max_depth": 5,
+   "n_reachable": 39,
+   "n_gates": 82,
+   "gate_types": {
+    "portal": 15,
+    "guard": 65,
+    "garrison": 2
+   }
+  },
+  {
+   "name": "Unholy Quest",
+   "area": 41472,
+   "max_depth": 3,
+   "n_reachable": 18,
+   "n_gates": 74,
+   "gate_types": {
+    "portal": 17,
+    "guard": 52,
+    "garrison": 5
+   }
+  },
+  {
+   "name": "Valleys of War",
+   "area": 10368,
+   "max_depth": 3,
+   "n_reachable": 15,
+   "n_gates": 105,
+   "gate_types": {
+    "portal": 6,
+    "guard": 93,
+    "garrison": 4,
+    "quest": 1,
+    "key": 1
+   }
+  },
+  {
+   "name": "Vial of Life",
+   "area": 11664,
+   "max_depth": 4,
+   "n_reachable": 34,
+   "n_gates": 77,
+   "gate_types": {
+    "portal": 10,
+    "guard": 66,
+    "garrison": 1
+   }
+  },
+  {
+   "name": "War of the Mighty (Allies)",
+   "area": 41472,
+   "max_depth": 5,
+   "n_reachable": 123,
+   "n_gates": 254,
+   "gate_types": {
+    "portal": 30,
+    "guard": 219,
+    "key": 2,
+    "quest": 3
+   }
+  },
+  {
+   "name": "War of the Mighty",
+   "area": 41472,
+   "max_depth": 5,
+   "n_reachable": 123,
+   "n_gates": 254,
+   "gate_types": {
+    "portal": 30,
+    "guard": 219,
+    "key": 2,
+    "quest": 3
+   }
+  },
+  {
+   "name": "Warlords",
+   "area": 11664,
+   "max_depth": 3,
+   "n_reachable": 71,
+   "n_gates": 113,
+   "gate_types": {
+    "garrison": 16,
+    "guard": 97
+   }
+  },
+  {
+   "name": "WarlordsA",
+   "area": 11664,
+   "max_depth": 3,
+   "n_reachable": 71,
+   "n_gates": 113,
+   "gate_types": {
+    "garrison": 16,
+    "guard": 97
+   }
+  },
+  {
+   "name": "Warmongers",
+   "area": 20736,
+   "max_depth": 3,
+   "n_reachable": 64,
+   "n_gates": 157,
+   "gate_types": {
+    "garrison": 4,
+    "portal": 9,
+    "guard": 144
+   }
+  },
+  {
+   "name": "When Dragons Clash",
+   "area": 10368,
+   "max_depth": 3,
+   "n_reachable": 9,
+   "n_gates": 56,
+   "gate_types": {
+    "guard": 41,
+    "portal": 15
+   }
+  },
+  {
+   "name": "Wings of War",
+   "area": 5184,
+   "max_depth": 2,
+   "n_reachable": 20,
+   "n_gates": 59,
+   "gate_types": {
+    "guard": 52,
+    "garrison": 2,
+    "portal": 5
+   }
+  },
+  {
+   "name": "Xathras Prize",
+   "area": 23328,
+   "max_depth": 6,
+   "n_reachable": 80,
+   "n_gates": 143,
+   "gate_types": {
+    "portal": 12,
+    "guard": 131
+   }
+  }
+ ]
+}

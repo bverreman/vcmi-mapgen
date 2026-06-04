@@ -1,0 +1,26 @@
+# Ralph backlog
+
+Highest priority first. The loop works the top unchecked `[ ]` item each iteration,
+marks it `[x]` with a one-line result, and commits. Add new tasks at the bottom.
+
+- [ ] Playability: set a player-owned starting town (+ generated hero) so the map is
+      actually playable, not just inspectable. Towns are currently neutral and
+      `faithful.to_vmap` nulls `mainTown`. Set player 0's main town to the root-zone
+      town in the header. Verify it still loads.
+- [ ] Global traversability gate: add a check (e.g. in `src/gate.py` or a new
+      `src/traverse.py`) that BFS-walks passable land + chokepoints from the start
+      town and asserts every zone (and its town/mines) is reachable in dependency
+      order. Wire it into `ralph/verify.sh` so an unreachable map fails the gate.
+- [ ] Tree-depth fidelity: the generator caps depth ~4 vs real 5–7, inflating the
+      `struct` distance. Raise `max_depth`/branching in `src/deps_gen.py` so a fit to
+      "Dawn of War" lowers struct distance, WITHOUT raising object-distance above 3.
+- [ ] Density outliers: some maps fit poorly on density (e.g. "King of Pain" ~35).
+      Add a small script to print per-purpose real-vs-gen residuals for a given map,
+      find the worst purposes, and adjust the scatter so they match.
+- [ ] Multi-map fit report: script `src/deps_report.py` that fits N corpus maps and
+      writes `out/fit_report.md` (table: total/density/terrain/struct/obj-dist per
+      map + averages). Use it to track regressions.
+- [ ] Underground level: generate 2-level maps (surface + underground rock + a few
+      subterranean gates) so 2-level targets (e.g. "All for One") match on terrain.
+- [ ] Cosmetic: resolve the 2 "animation failed" load warnings (identify the object
+      type/animation that fails and substitute a valid one from the corpus pools).
