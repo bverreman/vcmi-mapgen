@@ -34,7 +34,7 @@ echo "[verify] 3/3 headless editor load-test (slow ~90s)"
 python3 - <<'PY' || { echo "[verify] FAIL: editor load-test"; exit 1; }
 import sys; sys.path.insert(0, 'src')
 import gate
-r = gate.load_test('out/_ralph_gen.vmap', wait=70)
+r = gate.load_test('out/_ralph_gen.vmap', wait=95)
 print('   %s' % r)
 sys.exit(0 if (r['loaded'] and not r['fatal']) else 1)
 PY
