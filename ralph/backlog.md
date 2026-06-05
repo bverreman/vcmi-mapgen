@@ -20,9 +20,13 @@ marks it `[x]` with a one-line result, and commits. Add new tasks at the bottom.
       now reaches depth 7 (was 5): struct 4.5->2.0, obj-distance 2.18. A root-seeded
       spine was tried first but reshaped the tree enough to seal zones (6/12 seeds
       unreachable) -- the leaf-extension avoids that.
-- [ ] Density outliers: some maps fit poorly on density (e.g. "King of Pain" ~35).
-      Add a small script to print per-purpose real-vs-gen residuals for a given map,
-      find the worst purposes, and adjust the scatter so they match.
+- [x] Density outliers: new `src/deps_density.py` prints per-purpose real-vs-gen
+      residuals (sorted) for any map. It exposed GUARD as the dominant outlier on
+      "King of Pain" (real 11.8 vs gen 23.1/1k): the realizer force-guarded EVERY
+      mine/dwelling/bank, ~doubling guard count. Fixed: the per-treasure guard layer
+      now caps total guards at the GUARD budget, spending it on must-objects first.
+      King of Pain density 17.0->10.6, total 32.7->25.7, obj-dist 2.9->2.5; Dawn of
+      War held at obj-dist 2.18; seed=4 24/24 reachable, loads (2 warns).
 - [ ] Multi-map fit report: script `src/deps_report.py` that fits N corpus maps and
       writes `out/fit_report.md` (table: total/density/terrain/struct/obj-dist per
       map + averages). Use it to track regressions.

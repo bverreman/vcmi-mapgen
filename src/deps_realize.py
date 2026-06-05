@@ -333,8 +333,11 @@ def realize(W=72, H=72, seed=7, params=None):
             if place(purpose, terr[y][x]["t"], x, y):
                 placed_by[purpose].append((x, y)); need -= 1
 
-    # PER-TREASURE GUARDS: mines/dwellings/banks are ALWAYS guarded (as in H3);
-    # remaining guard budget goes to other loot by the target's coupling order.
+    # PER-TREASURE GUARDS: mines/dwellings/banks are guarded FIRST (as in H3), but
+    # the total guard count is capped at the target's GUARD budget -- real maps leave
+    # many treasures (esp. mines near a town) unguarded, so force-guarding every one
+    # roughly doubled GUARD density. Spending the budget on must-objects first keeps
+    # the high-value loot gated while matching the corpus guard count.
     NB8 = [(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)]
     guard_target = round(density.get("GUARD", 0) * tiles / 1000.0)
     budget = guard_target - sum(1 for o in objs if TYPE2PURPOSE.get(o["type"]) == "GUARD")
@@ -349,8 +352,7 @@ def realize(W=72, H=72, seed=7, params=None):
         rnd.shuffle(op); rest += op
     new_guards = []
     for o in must + rest:
-        forced = TYPE2PURPOSE.get(o["type"]) in ALWAYS
-        if budget <= 0 and not forced: break
+        if budget <= 0: break
         nbs = NB8[:]; rnd.shuffle(nbs)
         for dx, dy in nbs:                                # guard an approach tile of the object
             x, y = o["x"] + dx, o["y"] + dy

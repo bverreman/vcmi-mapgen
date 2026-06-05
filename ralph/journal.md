@@ -28,3 +28,12 @@ verify result (object-distance, load-test). Newest at the bottom.
   density -- both reverted. The leaf-extension reshapes only one branch, so the
   organic layout keeps each new node adjacent to its parent. Density rose slightly
   (~+2 on the forest-heavy Dawn of War, from the few extra deep barrier zones).
+- Density outliers: added src/deps_density.py (fits a map, prints per-purpose
+  real-vs-gen density residuals sorted by |diff|). On "King of Pain" it pinpointed
+  GUARD as the outlier: gen 23.1 vs real 11.8/1k -- the per-treasure guard layer
+  force-guarded every mine/dwelling/bank (88 of them) regardless of budget, so 107
+  guards landed where ~61 were wanted. Fixed: guards now cap at the GUARD budget,
+  spending it on must-objects (mine/dwell/bank) first. King of Pain density
+  17.0->10.6, total 32.7->25.7, obj-dist 2.9->2.5 (slightly better). Dawn of War
+  unchanged (obj-dist 2.18, total 34.4), seed=4 24/24 reachable, loads/2 warns.
+  Guards stay passable-after-combat so the traversability gate is unaffected.
