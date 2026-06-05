@@ -53,6 +53,16 @@ except Exception:
 GAMEPLAY_PUR = ["MINE", "DWELLING", "BANK", "REWARD_PICKUP", "RESOURCE_PILE",
                 "STAT_PERMANENT", "BONUS_TEMP", "SPELL_SKILL", "INFO", "MANA", "SPECIAL", "GUARD"]
 
+# specific TYPE -> object entry (animation/mask/subtype), per terrain, so the graph
+# can place the exact type it asks for (oakTrees on grass vs pineTrees on snow).
+TYPE2ENTRY = collections.defaultdict(dict)     # terr_int -> type -> entry
+TYPE2ENTRY_ANY = {}
+for _purp, _terrs in OBJ.items():
+    for _ts, _items in _terrs.items():
+        for _e in _items:
+            TYPE2ENTRY[int(_ts)].setdefault(_e["type"], _e)
+            TYPE2ENTRY_ANY.setdefault(_e["type"], _e)
+
 
 def is_mountain(e):
     t = (e["type"] if isinstance(e, str) else e["type"]).lower()
@@ -320,89 +330,103 @@ def realize(W=72, H=72, seed=7, params=None):
             if (x, y) not in occupied: return x, y
         return None
 
-    # OBJECT PLACEMENT BY ADJACENCY GRAPH ------------------------------------
-    # Terrain/macro is fixed; only the objects ON it are placed here. Instead of
-    # scattering each purpose independently to a count (a histogram), we GROW the
-    # real local motifs: every object spawns its learned graph neighbours at their
-    # characteristic distance (a mine pulls a guard onto its approach + resources
-    # fanned around it; treasure clusters; etc.). Per-purpose density is only a CAP;
-    # the graph sets the SHAPE -- and guard<->treasure coupling is now emergent
-    # (the old per-treasure-guard hack is gone, it's just a MINE->GUARD edge).
+    # OBJECT PLACEMENT BY THE IMMEDIATE-TOUCH ADJACENCY GRAPH ------------------
+    # Terrain/macro is fixed; we only place the objects ON it. Each placed object
+    # grows the SPECIFIC types that abut it ON ITS TERRAIN, at real touching offsets:
+    # a grass mine pulls oakTrees + a guard; a snow mine pulls pineTrees +
+    # deadVegetation; oakTrees pull oakTrees (a forest). Per-purpose density is only a
+    # CAP; the graph sets the shape, and guard<->treasure coupling is emergent.
+    NB8 = [(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)]
     def ok_tile(x, y):
         return 0 <= x < W and 0 <= y < H and not barrier[y][x] and (x, y) not in occupied \
             and (x, y) not in road_clear and not near_choke(x, y, 2)
 
+    decor_anchor = set()
+    def emit_decor(e, x, y):
+        # decoration MAY overlap other decoration (even multi-tile) -- it only has to
+        # avoid gameplay/barrier/water tiles, and not stack on the same anchor. This
+        # is what lets trees pack into forests instead of small rock filling the gaps.
+        if (x, y) in decor_anchor:
+            return False
+        tiles = list(occ_tiles(x, y, e["mask"]))
+        if any(not (0 <= tx < W and 0 <= ty < H) or (tx, ty) in occupied for tx, ty in tiles):
+            return False
+        decor_anchor.add((x, y))
+        objs.append({"type": e["type"], "subtype": e["subtype"], "animation": e["animation"],
+                     "mask": e["mask"], "x": x, "y": y, "l": 0})
+        return True
+
+    def place_type(T, x, y):                               # place a SPECIFIC type, terrain-correct
+        e = TYPE2ENTRY.get(terr[y][x]["t"], {}).get(T) or TYPE2ENTRY_ANY.get(T)
+        if not e:
+            return False
+        return emit_decor(e, x, y) if TYPE2PURPOSE.get(T) == "DECORATION" else emit(e, x, y)
+
     targets = {pur: int(round(density.get(pur, 0) * tiles / 1000.0)) for pur in GAMEPLAY_PUR}
+    decor_target = int(round(density.get("DECORATION", 140) * tiles / 1000.0))
     placed = collections.Counter(TYPE2PURPOSE.get(o["type"], "?") for o in objs)
 
-    # cluster anchors: ensure enough mines/dwellings/banks exist to seed motifs
-    for anchor in ("MINE", "DWELLING", "BANK"):
+    def cap_ok(T2):
+        pur = TYPE2PURPOSE.get(T2)
+        if pur == "DECORATION": return placed["DECORATION"] < decor_target
+        return pur in targets and placed[pur] < targets[pur]
+
+    for anchor in ("MINE", "DWELLING", "BANK"):            # seed cluster anchors
         while placed[anchor] < targets.get(anchor, 0):
             s = next_spot()
             if s is None: break
-            x, y = s
-            if place(anchor, terr[y][x]["t"], x, y):
-                placed[anchor] += 1
+            if place(anchor, terr[s[1]][s[0]]["t"], *s): placed[anchor] += 1
 
-    def grow_near(ox, oy, nbr, offs):
-        # sample a REAL relative offset (dx,dy) from the corpus so the neighbour
-        # lands in its characteristic geometry (guard on the approach, resource fan)
+    def grow_touch(o, T2, offs):
         for _ in range(8):
-            if offs:
-                dx, dy = offs[rnd.randrange(len(offs))]
-            else:
-                a = rnd.uniform(0, 6.2832); dx, dy = round(2 * math.cos(a)), round(2 * math.sin(a))
-            x, y = ox + dx, oy + dy
-            if ok_tile(x, y) and place(nbr, terr[y][x]["t"], x, y):
+            dx, dy = offs[rnd.randrange(len(offs))] if offs else rnd.choice(NB8)
+            x, y = o["x"] + dx, o["y"] + dy
+            if ok_tile(x, y) and place_type(T2, x, y):
                 return True
         return False
 
-    # grow neighbours from every gameplay object; satellites keep extending clusters,
-    # bounded by the per-purpose caps. Process high-value anchors (mine/dwelling/bank)
-    # FIRST so they claim their tight neighbours (esp. the guard on the approach)
-    # before the limited guard budget is spent on lesser loot; satellites (appended)
-    # are processed after, spreading the rest.
-    _PRI = {"MINE": 0, "DWELLING": 0, "BANK": 0, "TOWN": 1, "GUARD": 1}
-    queue = sorted((o for o in objs if TYPE2PURPOSE.get(o["type"]) in _ADJ),
-                   key=lambda o: _PRI.get(TYPE2PURPOSE.get(o["type"]), 2))
-    qi = 0; grown = 0
-    while qi < len(queue) and grown < 20000:
-        o = queue[qi]; qi += 1
-        prof = _ADJ.get(TYPE2PURPOSE.get(o["type"]))
-        if not prof: continue
-        deg = prof.get("avg_degree", 0)
-        for entry in prof.get("neighbours", []):
-            nbr = entry["pur"]
-            if nbr not in targets or placed[nbr] >= targets[nbr]:
-                continue
-            lam = entry["share"] * deg                     # expected satellites of this type
-            n = int(lam) + (1 if rnd.random() < (lam - int(lam)) else 0)
-            offs = entry.get("offsets")
-            for _ in range(min(n, targets[nbr] - placed[nbr])):
-                if grow_near(o["x"], o["y"], nbr, offs):
-                    placed[nbr] += 1; grown += 1
-                    queue.append(objs[-1])                 # satellite can grow too
+    def drain(queue, allow_decor=True):
+        qi = 0
+        while qi < len(queue) and qi < 40000:
+            o = queue[qi]; qi += 1
+            X = terr[o["y"]][o["x"]]["t"] if 0 <= o["x"] < W and 0 <= o["y"] < H else 2
+            prof = _ADJ.get(f"{X}|{o['type']}")
+            if not prof: continue
+            deg = prof.get("avg_degree", 0)
+            for entry in prof.get("neighbours", []):
+                T2 = entry["type"]
+                if not allow_decor and TYPE2PURPOSE.get(T2) == "DECORATION": continue
+                if not cap_ok(T2): continue
+                lam = entry["share"] * deg
+                n = int(lam) + (1 if rnd.random() < (lam - int(lam)) else 0)
+                offs = entry.get("offsets")
+                for _ in range(n):
+                    if not cap_ok(T2): break
+                    if grow_touch(o, T2, offs):
+                        placed[TYPE2PURPOSE.get(T2, "?")] += 1
+                        queue.append(objs[-1])
 
-    # leftover fill: top up any purpose still under its cap with lone placements
+    # grow GAMEPLAY motifs from anchors first (mine -> guard + resources); decoration
+    # is handled by the forest blanket below so small rock doesn't crowd out trees.
+    _PRI = {"MINE": 0, "DWELLING": 0, "BANK": 0, "TOWN": 1, "GUARD": 1}
+    drain(sorted((o for o in objs if f"{terr[o['y']][o['x']]['t']}|{o['type']}" in _ADJ),
+                 key=lambda o: _PRI.get(TYPE2PURPOSE.get(o["type"]), 2)), allow_decor=False)
+
+    # blanket the rest with terrain-correct decoration forests grown from seeds
+    while placed["DECORATION"] < decor_target:
+        s = next_spot()
+        if s is None: break
+        x, y = s
+        e = wpick(veg_pool(terr[y][x]["t"]), rnd)
+        if e and emit_decor(e, x, y):
+            placed["DECORATION"] += 1; drain([objs[-1]])
+
+    # leftover fill: top up any gameplay purpose still under its cap
     for pur in GAMEPLAY_PUR:
         while placed[pur] < targets.get(pur, 0):
             s = next_spot()
             if s is None: break
-            x, y = s
-            if place(pur, terr[y][x]["t"], x, y): placed[pur] += 1
-
-    # vegetation to target density, clumped (forest/clearing)
-    nf = deps_embed._noise(W, H, 9, rnd)
-    decor_target = int(round(density.get("DECORATION", 140) * tiles / 1000.0))
-    decor_n = 0; guard = 0
-    while decor_n < decor_target and guard < decor_target * 30:
-        guard += 1
-        s = next_spot()
-        if s is None: break
-        x, y = s
-        if rnd.random() > 0.18 + 0.7 * ((nf(x, y) + 1) / 2): continue
-        e = wpick(veg_pool(terr[y][x]["t"]), rnd)
-        if e and emit(e, x, y): decor_n += 1
+            if place(pur, terr[s[1]][s[0]]["t"], *s): placed[pur] += 1
 
     objs = reachability_repair(objs, terr, W, H, water, biome, zone)
 
