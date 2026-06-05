@@ -4,14 +4,22 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-echo "[verify] 1/3 generation runs and writes a vmap"
-python3 - <<'PY' || { echo "[verify] FAIL: generation"; exit 1; }
+echo "[verify] 1/3 generation runs, is fully traversable, and writes a vmap"
+python3 - <<'PY' || { echo "[verify] FAIL: generation/traversability"; exit 1; }
 import sys; sys.path.insert(0, 'src')
-import deps_realize as R, faithful
+import deps_realize as R, faithful, traverse as T
 fm, tree, em = R.realize(seed=4)
+# global traversability gate: every zone, town and mine reachable on foot from
+# the starting town (catches sealed chokepoints / blocked entrances).
+r = T.traverse(fm, em)
+print('   objects=%d  reachable %d/%d zones, towns/mines ok=%s'
+      % (len(fm['objects']), r['zones_reached'], r['zones_total'], r['ok']))
+if not r['ok']:
+    print('   UNREACHABLE bad_zones=%s towns=%s mines=%s'
+          % (r['bad_zones'], r['unreachable_towns'], r['unreachable_mines']))
+    sys.exit(1)
 faithful.save(fm, 'out/_ralph_gen.json')
 faithful.to_vmap(fm, 'out/_ralph_gen.vmap', name='ralph gen')
-print('   objects=%d' % len(fm['objects']))
 PY
 
 echo "[verify] 2/3 object-distance <= 3 on held-out map (Dawn of War)"

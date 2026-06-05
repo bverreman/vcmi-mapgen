@@ -10,3 +10,11 @@ verify result (object-distance, load-test). Newest at the bottom.
   (blue) mainTown={generateHero:True,...}, others None. Verify PASS: loaded:True,
   fatal:False, 2 warns, object-distance 2.43. (load-test needs ~110s wait on a cold
   mod cache; verify.sh's wait=70 can flake on the first cold run, passes warm.)
+- Traversability gate: added src/traverse.py (tile-level BFS from start town over
+  passable land; asserts all zones/towns/mines reachable). Wired into verify.sh
+  step 1. It exposed a real stranding bug -- town entrance tiles weren't reserved,
+  so a dwelling could seal a town's only approach (seeds 23/100 even sealed the
+  START town -> whole map unreachable). Fixed: realize.reserve_approach() reserves
+  town side/below entry tiles. Verify PASS: 24/24 zones reachable, obj-distance
+  2.32 (was 2.43), load loaded:True/2 warns. (seed=23 still has 1 rare blocked
+  mine -- gate flags it; mine-approach reservation left for a later pass.)

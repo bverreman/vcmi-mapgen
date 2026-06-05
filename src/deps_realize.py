@@ -169,6 +169,18 @@ def realize(W=72, H=72, seed=7, params=None):
         e = wpick(pool_for(purpose, tcode), rnd)
         return emit(e, x, y) if e else False
 
+    def reserve_approach(o):
+        """Reserve a visitable object's entrance tiles so nothing later blocks the
+        only way in. Towns are entered from the sides/below (visitableFrom
+        ["---","+-+","+++"]); sealing that tile strands the whole zone behind it."""
+        for cx, cy, ch in _mask_cells(o["x"], o["y"], o["mask"]):
+            if ch != "A":
+                continue
+            for dx, dy in ((-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)):
+                x, y = cx + dx, cy + dy
+                if 0 <= x < W and 0 <= y < H:
+                    occupied.add((x, y))
+
     def free_near(zid, cx, cy, r=6):
         for rad in range(r):
             for dx in range(-rad, rad + 1):
@@ -188,7 +200,7 @@ def realize(W=72, H=72, seed=7, params=None):
         for x, y in free_near(zid, cx, cy, r=9):
             if all((x - tx) ** 2 + (y - ty) ** 2 >= (0.8 * town_sep) ** 2 for tx, ty in towns) \
                and place("TOWN", biome[zid], x, y):
-                towns.append((x, y)); return (x, y)
+                reserve_approach(objs[-1]); towns.append((x, y)); return (x, y)
         return None
     root_town = add_town(0, int(pos[0][0]), int(pos[0][1]))
     for n in sorted((n for n in tree["nodes"] if n["id"]), key=lambda n: -n["value"]):
