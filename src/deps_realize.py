@@ -43,6 +43,16 @@ WATER = 8
 SCATTER = ["MINE", "DWELLING", "BANK", "REWARD_PICKUP", "RESOURCE_PILE",
            "STAT_PERMANENT", "BONUS_TEMP", "SPELL_SKILL", "INFO", "MANA", "SPECIAL"]
 
+# object-adjacency graph (deps_adj.py): per anchor purpose -> its neighbour
+# distribution {avg_degree, neighbours:[(purpose, share, median_dist)]}. Objects
+# are GROWN from this graph (real motifs: mine+guard+resources) rather than scattered.
+try:
+    _ADJ = json.load(open(f"{ROOT}/out/adjacency.json")).get("profiles", {})
+except Exception:
+    _ADJ = {}
+GAMEPLAY_PUR = ["MINE", "DWELLING", "BANK", "REWARD_PICKUP", "RESOURCE_PILE",
+                "STAT_PERMANENT", "BONUS_TEMP", "SPELL_SKILL", "INFO", "MANA", "SPECIAL", "GUARD"]
+
 
 def is_mountain(e):
     t = (e["type"] if isinstance(e, str) else e["type"]).lower()
@@ -310,75 +320,76 @@ def realize(W=72, H=72, seed=7, params=None):
             if (x, y) not in occupied: return x, y
         return None
 
-    # DENSITY LAYER: scatter ambient objects to per-purpose density, but matching
-    # the target's SPATIAL signature -- near towns at the right distance, and
-    # dispersed from same-purpose neighbours.
-    have = collections.Counter(TYPE2PURPOSE.get(o["type"], "?") for o in objs)
-    placed_by = collections.defaultdict(list)
-    for o in objs:
-        pp = TYPE2PURPOSE.get(o["type"])
-        if pp: placed_by[pp].append((o["x"], o["y"]))
-
+    # OBJECT PLACEMENT BY ADJACENCY GRAPH ------------------------------------
+    # Terrain/macro is fixed; only the objects ON it are placed here. Instead of
+    # scattering each purpose independently to a count (a histogram), we GROW the
+    # real local motifs: every object spawns its learned graph neighbours at their
+    # characteristic distance (a mine pulls a guard onto its approach + resources
+    # fanned around it; treasure clusters; etc.). Per-purpose density is only a CAP;
+    # the graph sets the SHAPE -- and guard<->treasure coupling is now emergent
+    # (the old per-treasure-guard hack is gone, it's just a MINE->GUARD edge).
     def ok_tile(x, y):
         return 0 <= x < W and 0 <= y < H and not barrier[y][x] and (x, y) not in occupied \
             and (x, y) not in road_clear and not near_choke(x, y, 2)
 
-    for purpose in SCATTER:
-        target = int(round(density.get(purpose, 0) * tiles / 1000.0))
-        need = target - have.get(purpose, 0)
-        sep = sig.get((purpose, purpose), 0)
-        twn = sig.get((purpose, "TOWN"))
-        tries = 0
-        while need > 0 and tries < need * 45:
-            tries += 1
-            if twn and towns and rnd.random() < 0.85:          # town-biased candidate
-                tx, ty = rnd.choice(towns)
-                ang = rnd.random() * 6.2832; rad = twn * rnd.uniform(0.5, 1.4)
-                x, y = int(tx + rad * math.cos(ang)), int(ty + rad * math.sin(ang))
-                if not ok_tile(x, y): continue
-            else:
-                s = next_spot()
-                if s is None: break
-                x, y = s
-            if sep > 1 and any((x - px) ** 2 + (y - py) ** 2 < (0.7 * sep) ** 2
-                               for px, py in placed_by[purpose]):
-                continue
-            if place(purpose, terr[y][x]["t"], x, y):
-                placed_by[purpose].append((x, y)); need -= 1
+    targets = {pur: int(round(density.get(pur, 0) * tiles / 1000.0)) for pur in GAMEPLAY_PUR}
+    placed = collections.Counter(TYPE2PURPOSE.get(o["type"], "?") for o in objs)
 
-    # PER-TREASURE GUARDS: mines/dwellings/banks are guarded FIRST (as in H3), but
-    # the total guard count is capped at the target's GUARD budget -- real maps leave
-    # many treasures (esp. mines near a town) unguarded, so force-guarding every one
-    # roughly doubled GUARD density. Spending the budget on must-objects first keeps
-    # the high-value loot gated while matching the corpus guard count.
-    NB8 = [(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)]
-    guard_target = round(density.get("GUARD", 0) * tiles / 1000.0)
-    budget = guard_target - sum(1 for o in objs if TYPE2PURPOSE.get(o["type"]) == "GUARD")
-    ALWAYS = {"MINE", "DWELLING", "BANK"}
-    OPTIONAL = ["STAT_PERMANENT", "BONUS_TEMP", "REWARD_PICKUP", "SPELL_SKILL",
-                "RESOURCE_PILE", "MANA", "SPECIAL"]
-    must = [o for o in objs if TYPE2PURPOSE.get(o["type"]) in ALWAYS]
-    rnd.shuffle(must)
-    rest = []
-    for pp in sorted(OPTIONAL, key=lambda q: sig.get((q, "GUARD"), 99)):
-        op = [o for o in objs if TYPE2PURPOSE.get(o["type"]) == pp]
-        rnd.shuffle(op); rest += op
-    new_guards = []
-    for o in must + rest:
-        if budget <= 0: break
-        nbs = NB8[:]; rnd.shuffle(nbs)
-        for dx, dy in nbs:                                # guard an approach tile of the object
-            x, y = o["x"] + dx, o["y"] + dy
-            if 0 <= x < W and 0 <= y < H and (x, y) not in occupied and not barrier[y][x]:
-                e = wpick(pool_for("GUARD", terr[y][x]["t"]), rnd)
-                if e:
-                    occupied.add((x, y))
-                    new_guards.append({"type": e["type"], "subtype": e["subtype"],
-                                       "animation": e["animation"], "mask": e["mask"],
-                                       "x": x, "y": y, "l": 0})
-                    budget -= 1
-                break
-    objs += new_guards
+    # cluster anchors: ensure enough mines/dwellings/banks exist to seed motifs
+    for anchor in ("MINE", "DWELLING", "BANK"):
+        while placed[anchor] < targets.get(anchor, 0):
+            s = next_spot()
+            if s is None: break
+            x, y = s
+            if place(anchor, terr[y][x]["t"], x, y):
+                placed[anchor] += 1
+
+    def grow_near(ox, oy, nbr, offs):
+        # sample a REAL relative offset (dx,dy) from the corpus so the neighbour
+        # lands in its characteristic geometry (guard on the approach, resource fan)
+        for _ in range(8):
+            if offs:
+                dx, dy = offs[rnd.randrange(len(offs))]
+            else:
+                a = rnd.uniform(0, 6.2832); dx, dy = round(2 * math.cos(a)), round(2 * math.sin(a))
+            x, y = ox + dx, oy + dy
+            if ok_tile(x, y) and place(nbr, terr[y][x]["t"], x, y):
+                return True
+        return False
+
+    # grow neighbours from every gameplay object; satellites keep extending clusters,
+    # bounded by the per-purpose caps. Process high-value anchors (mine/dwelling/bank)
+    # FIRST so they claim their tight neighbours (esp. the guard on the approach)
+    # before the limited guard budget is spent on lesser loot; satellites (appended)
+    # are processed after, spreading the rest.
+    _PRI = {"MINE": 0, "DWELLING": 0, "BANK": 0, "TOWN": 1, "GUARD": 1}
+    queue = sorted((o for o in objs if TYPE2PURPOSE.get(o["type"]) in _ADJ),
+                   key=lambda o: _PRI.get(TYPE2PURPOSE.get(o["type"]), 2))
+    qi = 0; grown = 0
+    while qi < len(queue) and grown < 20000:
+        o = queue[qi]; qi += 1
+        prof = _ADJ.get(TYPE2PURPOSE.get(o["type"]))
+        if not prof: continue
+        deg = prof.get("avg_degree", 0)
+        for entry in prof.get("neighbours", []):
+            nbr = entry["pur"]
+            if nbr not in targets or placed[nbr] >= targets[nbr]:
+                continue
+            lam = entry["share"] * deg                     # expected satellites of this type
+            n = int(lam) + (1 if rnd.random() < (lam - int(lam)) else 0)
+            offs = entry.get("offsets")
+            for _ in range(min(n, targets[nbr] - placed[nbr])):
+                if grow_near(o["x"], o["y"], nbr, offs):
+                    placed[nbr] += 1; grown += 1
+                    queue.append(objs[-1])                 # satellite can grow too
+
+    # leftover fill: top up any purpose still under its cap with lone placements
+    for pur in GAMEPLAY_PUR:
+        while placed[pur] < targets.get(pur, 0):
+            s = next_spot()
+            if s is None: break
+            x, y = s
+            if place(pur, terr[y][x]["t"], x, y): placed[pur] += 1
 
     # vegetation to target density, clumped (forest/clearing)
     nf = deps_embed._noise(W, H, 9, rnd)
