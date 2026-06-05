@@ -3,10 +3,10 @@
 Highest priority first. The loop works the top unchecked `[ ]` item each iteration,
 marks it `[x]` with a one-line result, and commits. Add new tasks at the bottom.
 
-- [ ] Playability: set a player-owned starting town (+ generated hero) so the map is
-      actually playable, not just inspectable. Towns are currently neutral and
-      `faithful.to_vmap` nulls `mainTown`. Set player 0's main town to the root-zone
-      town in the header. Verify it still loads.
+- [x] Playability: set a player-owned starting town (+ generated hero). Realizer now
+      records the root-zone town as `fm["main_town"]` (anchor-2,-2 = corpus offset);
+      `faithful.to_vmap` sets player 0's `mainTown={generateHero:True,...}` and nulls
+      the rest. Loads (loaded:True, 2 cosmetic warns), object-distance 2.43.
 - [ ] Global traversability gate: add a check (e.g. in `src/gate.py` or a new
       `src/traverse.py`) that BFS-walks passable land + chokepoints from the start
       town and asserts every zone (and its town/mines) is reachable in dependency

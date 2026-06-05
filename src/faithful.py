@@ -38,8 +38,16 @@ def to_vmap(fm, out_path, name=None):
         objs.append({"instanceName":f"{o['type']}_{n}","l":o["l"],"type":o["type"],"subtype":o["subtype"],
                      "template":tmpl,"x":o["x"],"y":o["y"]})
     header,_,_,_=vmapwrite.read_raw(glob.glob("/home/gabriel/.var/app/eu.vcmi.VCMI/data/vcmi/Maps/RandomMaps/*.vmap")[0])
-    for pid,pl in list(header.get("players",{}).items()):
-        if isinstance(pl,dict): pl["mainTown"]=None
+    # Give player 0 a starting town + generated hero so the map is playable; the
+    # remaining players stay town-less. mt points at the root-zone town (realizer).
+    mt=fm.get("main_town")
+    pids=sorted(p for p,pl in header.get("players",{}).items() if isinstance(pl,dict))
+    for i,pid in enumerate(pids):
+        pl=header["players"][pid]
+        if i==0 and mt:
+            pl["mainTown"]={"generateHero":True,"l":mt["l"],"x":mt["x"],"y":mt["y"]}
+        else:
+            pl["mainTown"]=None
     vmapwrite.write_vmap(out_path, header, levels, objs, name=name or fm.get("name","generated"))
     return out_path
 

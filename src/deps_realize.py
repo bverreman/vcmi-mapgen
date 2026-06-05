@@ -188,9 +188,9 @@ def realize(W=72, H=72, seed=7, params=None):
         for x, y in free_near(zid, cx, cy, r=9):
             if all((x - tx) ** 2 + (y - ty) ** 2 >= (0.8 * town_sep) ** 2 for tx, ty in towns) \
                and place("TOWN", biome[zid], x, y):
-                towns.append((x, y)); return True
-        return False
-    add_town(0, int(pos[0][0]), int(pos[0][1]))
+                towns.append((x, y)); return (x, y)
+        return None
+    root_town = add_town(0, int(pos[0][0]), int(pos[0][1]))
     for n in sorted((n for n in tree["nodes"] if n["id"]), key=lambda n: -n["value"]):
         if len(towns) >= town_target: break
         add_town(n["id"], int(pos[n["id"]][0]), int(pos[n["id"]][1]))
@@ -368,6 +368,11 @@ def realize(W=72, H=72, seed=7, params=None):
 
     objs = reachability_repair(objs, terr, W, H, water, biome, zone)
     fm = {"name": f"deps_fit_s{seed}", "terrain": [terr], "objects": objs}
+    # main town: the editor matches a player's mainTown to the town at
+    # (anchor-2, anchor-2) -- the corpus offset for the town footprint anchor.
+    if root_town:
+        rx, ry = root_town
+        fm["main_town"] = {"x": rx - 2, "y": ry - 2, "l": 0}
     return fm, tree, em
 
 
