@@ -62,6 +62,26 @@ verify result (object-distance, load-test). Newest at the bottom.
   struct 1.1->7.6 from the 2x-tile region rate, net hugely positive). 2-level map
   load-tested: loaded:True, 0 fatal, 0 visitable warns (980 surface + 164 cavern
   objs; underground 4387 rock + 797 subterranean). Dawn of War gate held at 2.18.
+- Two-level playability gate: made traverse.py level-aware -- passable_grid(fm,l)
+  blocks water AND rock(9), counts only objects on level l (old code blocked the
+  surface with underground footprints). New _gate_links() reads subterranean-gate
+  pairs (both ends share x,y) and BFS now teleports across levels at gate approach
+  tiles, so cavern objects are reachable only THROUGH a reachable surface gate.
+  obj_reachable / zone / town / mine checks all carry the object's level. This
+  exposed a cavern-stranding bug: in build_underground the scattered MINE/DWELLING/
+  BANK objects (the only ones with B footprints; guards/most rewards are 'A'-only)
+  walled the gate off from the cavern body -- the gate's own B cells pinch its single
+  'BAB' entrance, so seed 0 reached cav=1/797 and seed 10 cav=1. Fixed two ways:
+  (1) reserve the gate A-cell + its 8-ring so nothing seals the descend point;
+  (2) connectivity-preserving placement -- track `reach` (cavern tiles walkable from
+  the gate), require each object's entrance in `reach`, and reject any footprint
+  whose B cells would strand an already-reachable tile. Result: 0 stranded underground
+  objects across all 8 Marshland seeds (vs up to 28 before), and seeds 4/6/11 fully
+  traversable end-to-end. Wired into verify.sh as step 1b. The change is neutral-to-
+  positive on fit (Marshland obj-dist 3.6->2.76, total 47->45; Dawn of War 2.18
+  unchanged) and both 1-level (seed=4) and 2-level (Marshland seed=4) maps load
+  (loaded:True, fatal:False, 2 known mod warns). Remaining 2-level ok=False seeds are
+  SURFACE mine stranding (separate from the underground; reachability_repair tail).
 - Cosmetic warnings probe (closed, non-actionable): the 2 "Animation  failed to load"
   warnings are NOT from our objects -- a zero-object map still emits them. They trace
   to the user's broken mods (hota/phoenixHorde.def not found, third-upgrades dup

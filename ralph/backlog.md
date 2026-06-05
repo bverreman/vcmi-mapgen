@@ -45,10 +45,18 @@ marks it `[x]` with a one-line result, and commits. Add new tasks at the bottom.
       with a ZERO-object map -> they come from the user's broken HotA/third-upgrades mods
       (hota/phoenixHorde.def missing etc.), not our objects. No substitution possible or
       needed; loaded:True/fatal:False regardless. Left as an environment artifact.
-- [ ] Two-level playability: a global traversability gate for the underground (the
-      surface gate's descend must reach the cavern objects; today only the surface
-      level is asserted reachable in verify.sh). Extend traverse.py across levels via
-      the subterranean-gate pair and add to the gate.
+- [x] Two-level playability: `traverse.py` is now level-aware (per-level passable
+      grid, rock(9) walls the underground) and BFS-walks ACROSS levels by teleporting
+      at subterranean-gate approach tiles (`_gate_links`), so cavern objects count as
+      reachable only if the surface gate is reachable and the cavern is connected to
+      it. Exposed + fixed a cavern-stranding bug: scattered MINE/DWELLING/BANK
+      footprints (the only B-carrying underground objects) walled the cavern off from
+      the gate (seed 0 cav=1). Fix in `build_underground`: reserve the gate's A-ring,
+      and connectivity-preserving placement -- an object's entrance must be reachable
+      FROM the gate and its footprint must not strand any already-reachable cavern
+      tile. Now 0 stranded underground objects across all 8 Marshland seeds; new
+      verify.sh step 1b asserts this. Marshland obj-dist 3.6->2.76; Dawn of War held
+      at 2.18; seed=4 24/24; both 1- and 2-level maps load (loaded:True, 2 warns).
 - [ ] Underground object-distance: 2-level fits still sit ~3.5 obj-dist (Marshland 3.6).
       The cavern scatter ignores the target's spatial signature (sep / town-bias) that
       the surface scatter uses -- carry the signature into build_underground.

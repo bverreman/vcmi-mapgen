@@ -542,22 +542,65 @@ def build_underground(W, H, rnd, density, p, gx, gy):
     for dx in (-1, 0, 1):                                   # guarantee the gate has clearance
         for dy in (-1, 0, 1): carve(gx + dx, gy + dy)
 
-    occ = set(); objs = []
+    occ = set(); objs = []; blockedB = set()
+    NB8 = [(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)]
+    NB4 = [(1, 0), (-1, 0), (0, 1), (0, -1)]
+
+    def _cells(e, x, y, ch_want):
+        return [(cx, cy) for cx, cy, ch in _mask_cells(x, y, e["mask"])
+                if ch == ch_want and 0 <= cx < W and 0 <= cy < H]
+
+    def flood(seeds, extra_block):
+        """Passable cavern tiles reachable from `seeds`: SUB tiles minus object 'B'
+        footprints (blockedB) minus a tentative extra-block set."""
+        seen, st = set(), []
+        for s in seeds:
+            if s in walk and s not in blockedB and s not in extra_block:
+                seen.add(s); st.append(s)
+        while st:
+            x, y = st.pop()
+            for dx, dy in NB4:
+                n = (x + dx, y + dy)
+                if n in walk and n not in blockedB and n not in extra_block and n not in seen:
+                    seen.add(n); st.append(n)
+        return seen
+
+    gate_seeds = []
+    reach = set(walk)                                       # before the gate: whole cavern
+    gate = wpick([e for e in pool_for("TRANSPORT", SUB) if e["type"] == "subterraneanGate"]
+                 or pool_for("TRANSPORT", SUB), rnd)
+    if gate:
+        for q in occ_tiles(gx, gy, gate["mask"]): occ.add(q)
+        blockedB |= set(_cells(gate, gx, gy, 'B'))
+        objs.append({"type": gate["type"], "subtype": gate["subtype"], "animation": gate["animation"],
+                     "mask": gate["mask"], "x": gx, "y": gy, "l": 1})
+        gate_seeds = _cells(gate, gx, gy, 'A') or [(gx, gy)]
+        # The gate's only walkable entrance is one tile (mask 'BAB'); reserve the
+        # A cell and its ring so no scattered object seals the cavern off from the
+        # descend point (mirrors the surface reserve_approach for towns).
+        for ax, ay in gate_seeds:
+            occ.add((ax, ay))
+            for dx, dy in NB8: occ.add((ax + dx, ay + dy))
+        reach = flood(gate_seeds, set())                    # walkable cavern from the gate
+
     def emit_u(e, x, y):
         foot = list(occ_tiles(x, y, e["mask"]))
         if any(not (0 <= tx < W and 0 <= ty < H) or (tx, ty) in occ for tx, ty in foot):
             return False
-        appr = [(cx, cy) for cx, cy, ch in _mask_cells(x, y, e["mask"]) if ch == 'A'] or [(x, y)]
-        if any((cx, cy) not in walk for cx, cy in appr):    # entrance must be in the cavern
+        appr = _cells(e, x, y, 'A') or [(x, y)]
+        if any(a not in reach for a in appr):               # entrance reachable FROM the gate
             return False
+        nb = set(_cells(e, x, y, 'B'))
+        if nb:                                              # connectivity-preserving: this
+            new_reach = flood(gate_seeds, nb)               # footprint must not strand any
+            if not (reach - nb) <= new_reach:               # currently-reachable cavern tile
+                return False
+            reach.clear(); reach.update(new_reach)
         for q in foot: occ.add(q)
+        blockedB.update(nb)
         objs.append({"type": e["type"], "subtype": e["subtype"], "animation": e["animation"],
                      "mask": e["mask"], "x": x, "y": y, "l": 1})
         return True
-
-    gate = wpick([e for e in pool_for("TRANSPORT", SUB) if e["type"] == "subterraneanGate"]
-                 or pool_for("TRANSPORT", SUB), rnd)
-    if gate: emit_u(gate, gx, gy)
 
     cells = [xy for xy in walk if xy not in occ]; rnd.shuffle(cells); cur = [0]
     def nxt():
@@ -580,7 +623,6 @@ def build_underground(W, H, rnd, density, p, gx, gy):
             if e and emit_u(e, x, y):
                 placed_xy.append((x, y)); need -= 1
 
-    NB8 = [(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)]
     gbudget = int(round(density.get("GUARD", 0) * W * H / 1000.0))
     rnd.shuffle(placed_xy)
     for ox, oy in placed_xy:
