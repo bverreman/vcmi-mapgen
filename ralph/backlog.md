@@ -27,9 +27,11 @@ marks it `[x]` with a one-line result, and commits. Add new tasks at the bottom.
       now caps total guards at the GUARD budget, spending it on must-objects first.
       King of Pain density 17.0->10.6, total 32.7->25.7, obj-dist 2.9->2.5; Dawn of
       War held at obj-dist 2.18; seed=4 24/24 reachable, loads (2 warns).
-- [ ] Multi-map fit report: script `src/deps_report.py` that fits N corpus maps and
-      writes `out/fit_report.md` (table: total/density/terrain/struct/obj-dist per
-      map + averages). Use it to track regressions.
+- [x] Multi-map fit report: `src/deps_report.py` fits an evenly-spaced slice of the
+      sorted corpus and writes `out/fit_report.md` (per-map total/density/terrain/
+      struct/obj-dist + seed + column averages, worst obj-dist flagged). Baseline
+      N=12/seeds=4: avg obj-dist 2.72, avg total 78.4. Exposes the large-map weak
+      spot (The Five Rings 3.98, Twins 3.36, Search for the Grail 3.24 all > 3).
 - [ ] Underground level: generate 2-level maps (surface + underground rock + a few
       subterranean gates) so 2-level targets (e.g. "All for One") match on terrain.
 - [ ] Cosmetic: resolve the 2 "animation failed" load warnings (identify the object

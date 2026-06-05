@@ -37,3 +37,12 @@ verify result (object-distance, load-test). Newest at the bottom.
   17.0->10.6, total 32.7->25.7, obj-dist 2.9->2.5 (slightly better). Dawn of War
   unchanged (obj-dist 2.18, total 34.4), seed=4 24/24 reachable, loads/2 warns.
   Guards stay passable-after-combat so the traversability gate is unaffected.
+- Multi-map fit report: added src/deps_report.py. Fits an evenly-spaced, sorted
+  slice of the corpus (deterministic, stable across runs) and writes a markdown
+  table to out/fit_report.md (per-map total/density/terrain/struct/obj-dist +
+  best seed, column averages, worst obj-dist flagged). Read-only tooling; does
+  not touch generation. Baseline N=12/seeds=4: avg obj-dist 2.72, avg total 78.4.
+  It surfaces the large-map weak spot that the single held-out gate (Dawn of War,
+  2.18) hides: The Five Rings 3.98, Twins 3.36, Search for the Grail 3.24 all
+  exceed the 3-tile bar -- a candidate next target. Verify PASS: seed=4 24/24
+  reachable, obj-dist 2.18, load loaded:True/2 warns.
