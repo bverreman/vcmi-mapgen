@@ -43,6 +43,20 @@ def generate_tree(W, H, levels=1, seed=0, deps_path=None,
     nodes = [{"id": 0, "depth": 0, "parent": None, "gate": None,
               "value": 0, "size_class": "commons"}]
     edges = []
+
+    def _spawn(par, cd):
+        """Append one child node of `par` at depth `cd`; return its id."""
+        cid = len(nodes)
+        g = grad.get(cd, grad.get(max(grad), {}))
+        is_portal = rnd.random() < portal_frac
+        gate = {"type": "portal" if is_portal else "guard",
+                "strength": 0 if is_portal else _interp_strength(g.get("guard_strength", {}), rnd)}
+        val = max(1, int(rnd.expovariate(1.0 / max(1.0, g.get("mean_child_value", 10)))))
+        nodes.append({"id": cid, "depth": cd, "parent": par, "gate": gate,
+                      "value": val, "size_class": "pocket"})
+        edges.append({"a": par, "b": cid, **gate})
+        return cid
+
     # grow the tree breadth-first; each node spawns ~branching_by_depth[depth] kids
     frontier = [0]
     while frontier and len(nodes) < n_target:
@@ -59,18 +73,21 @@ def generate_tree(W, H, levels=1, seed=0, deps_path=None,
             for _ in range(k):
                 if len(nodes) >= n_target:
                     break
-                cid = len(nodes)
-                cd = d + 1
-                g = grad.get(cd, grad.get(max(grad), {}))
-                is_portal = rnd.random() < portal_frac
-                gate = {"type": "portal" if is_portal else "guard",
-                        "strength": 0 if is_portal else _interp_strength(g.get("guard_strength", {}), rnd)}
-                val = max(1, int(rnd.expovariate(1.0 / max(1.0, g.get("mean_child_value", 10)))))
-                nodes.append({"id": cid, "depth": cd, "parent": par, "gate": gate,
-                              "value": val, "size_class": "pocket"})
-                edges.append({"a": par, "b": cid, **gate})
-                nxt.append(cid)
+                nxt.append(_spawn(par, d + 1))
         frontier = nxt
+
+    # Breadth-first fill exhausts the node budget on shallow levels before it can
+    # descend, capping the tree at depth ~4-5 vs the 5-7 of deep corpus maps and
+    # inflating the struct distance. When BFS falls short, extend the single deepest
+    # leaf into a thin "main quest" chain down to max_depth. This is a no-op when the
+    # target depth is already reached (so shallow maps are unchanged), and only ever
+    # appends a 1-wide chain off one leaf -- minimal reshaping, so the embedding keeps
+    # each new node adjacent to its parent (a bushy root spine seals zones instead).
+    cur_depth = max(n["depth"] for n in nodes)
+    if cur_depth < max_depth:
+        leaf = max(nodes, key=lambda n: n["depth"])["id"]
+        for cd in range(cur_depth + 1, max_depth + 1):
+            leaf = _spawn(leaf, cd)
 
     # a couple of portal cross-edges linking deep nodes on different branches
     deep = [n for n in nodes if n["depth"] >= 2]

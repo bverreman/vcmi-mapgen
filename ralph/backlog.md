@@ -13,9 +13,13 @@ marks it `[x]` with a one-line result, and commits. Add new tasks at the bottom.
       Exposed + fixed a stranding bug: town entrance tiles weren't reserved, so a
       later dwelling could seal a town (even the start town -> whole map unreachable).
       `realize` now reserves town approach tiles. seed=4 24/24 zones, obj-dist 2.32.
-- [ ] Tree-depth fidelity: the generator caps depth ~4 vs real 5–7, inflating the
-      `struct` distance. Raise `max_depth`/branching in `src/deps_gen.py` so a fit to
-      "Dawn of War" lowers struct distance, WITHOUT raising object-distance above 3.
+- [x] Tree-depth fidelity: BFS fill exhausted the node budget on shallow levels and
+      capped depth ~5. `deps_gen` now extends the single deepest leaf into a thin
+      chain down to `max_depth` when BFS falls short (no-op once depth is met, so
+      shallow maps + seed=4 are byte-identical and stay reachable). Dawn of War fit
+      now reaches depth 7 (was 5): struct 4.5->2.0, obj-distance 2.18. A root-seeded
+      spine was tried first but reshaped the tree enough to seal zones (6/12 seeds
+      unreachable) -- the leaf-extension avoids that.
 - [ ] Density outliers: some maps fit poorly on density (e.g. "King of Pain" ~35).
       Add a small script to print per-purpose real-vs-gen residuals for a given map,
       find the worst purposes, and adjust the scatter so they match.
