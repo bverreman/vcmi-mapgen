@@ -46,3 +46,23 @@ verify result (object-distance, load-test). Newest at the bottom.
   2.18) hides: The Five Rings 3.98, Twins 3.36, Search for the Grail 3.24 all
   exceed the 3-tile bar -- a candidate next target. Verify PASS: seed=4 24/24
   reachable, obj-dist 2.18, load loaded:True/2 warns.
+- Underground level: 103/159 corpus maps are TWO-LEVEL, and rock(9) is the single
+  biggest terrain (31% of all tiles) -- our surface-only generator produced 0% of
+  it, so 2-level targets had huge terrain AND density distance (gen divided object
+  counts by 1x tiles, real by 2x). Added: feats_gen counts both levels; tiles now
+  2x for 2-level. params_from_target(two_level): land biomes exclude subterranean(6)
+  & rock(9) (previously 6 leaked onto the surface), surface water frac doubled.
+  New build_underground() builds level 1 = rock fill + one connected subterranean
+  cavern grown by noise-weighted BFS from the gate tile, a subterranean-gate PAIR
+  sharing (x,y) (VCMI auto-links across levels), and the second half of each gameplay
+  purpose's per-1x budget scattered + guarded inside the cavern (entrances forced
+  into the cavern so they're reachable). All guarded by params["two_level"], so the
+  1-level default path is byte-identical (seed=4: 1 level, 1402 objs, 24/24). Marshland
+  Menace fit total 208.2->47.4 (density 102->4, terrain 81->18, obj-dist 4.8->3.6;
+  struct 1.1->7.6 from the 2x-tile region rate, net hugely positive). 2-level map
+  load-tested: loaded:True, 0 fatal, 0 visitable warns (980 surface + 164 cavern
+  objs; underground 4387 rock + 797 subterranean). Dawn of War gate held at 2.18.
+- Cosmetic warnings probe (closed, non-actionable): the 2 "Animation  failed to load"
+  warnings are NOT from our objects -- a zero-object map still emits them. They trace
+  to the user's broken mods (hota/phoenixHorde.def not found, third-upgrades dup
+  buildings) during mod init, independent of the map. No generator fix applies.

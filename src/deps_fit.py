@@ -44,8 +44,9 @@ def feats_real(m):
 
 def feats_gen(fm, tree):
     terr = collections.Counter()
-    for row in fm["terrain"][0]:
-        for c in row: terr[c["t"]] += 1
+    for lvl in fm["terrain"]:
+        for row in lvl:
+            for c in row: terr[c["t"]] += 1
     tiles = sum(terr.values())
     pur = collections.Counter(R.TYPE2PURPOSE.get(o["type"], "?") for o in fm["objects"])
     ne = max(1, len(tree["edges"]))
@@ -64,15 +65,24 @@ def distance(a, b):
     return dens + terr + st, dens, terr, st
 
 
-def params_from_target(tgt, W, H):
+def params_from_target(tgt, W, H, two_level=False):
     s = tgt["struct"]
-    biome = {t: tgt["terrain"][t] for t in range(8) if tgt["terrain"][t] > 0}  # land biomes
-    return {"n_target": max(6, round(s["regions_per_1000"] * W * H / 1000.0)),
-            "max_depth": max(2, round(s["max_depth"])),
-            "portal_frac": s["portal_frac"],
-            "biome_weights": biome,
-            "water_frac": tgt["terrain"].get(8, 0.0),
-            "density": dict(tgt["density"])}
+    # surface biomes exclude subterranean (6) and rock (9), which live underground,
+    # and water (8), which is carved separately.
+    biome = {t: tgt["terrain"][t] for t in (0, 1, 2, 3, 4, 5, 7) if tgt["terrain"][t] > 0}
+    # underground holds ~no water, so the surface water fraction is ~2x the per-map
+    # (over-both-levels) fraction on a two-level map.
+    water = tgt["terrain"].get(8, 0.0)
+    params = {"n_target": max(6, round(s["regions_per_1000"] * W * H / 1000.0)),
+              "max_depth": max(2, round(s["max_depth"])),
+              "portal_frac": s["portal_frac"],
+              "biome_weights": biome,
+              "water_frac": min(0.6, water * 2) if two_level else water,
+              "density": dict(tgt["density"])}
+    if two_level:
+        params["two_level"] = True
+        params["terrain_target"] = dict(tgt["terrain"])
+    return params
 
 
 def points_real(m):
@@ -93,7 +103,7 @@ def points_gen(fm):
 def fit(target_path, W=72, H=72, seeds=12):
     m = h3m.parse_file(target_path)
     tgt = feats_real(m)
-    params = params_from_target(tgt, W, H)
+    params = params_from_target(tgt, W, H, m.two_level)
     sig_real = deps_spatial.signature(points_real(m))
     params["sig"] = sig_real                       # target spatial signature as a placement knob
     best = None

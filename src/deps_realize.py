@@ -207,6 +207,19 @@ def realize(W=72, H=72, seed=7, params=None):
         if len(towns) >= town_target: break
         add_town(n["id"], int(pos[n["id"]][0]), int(pos[n["id"]][1]))
 
+    # SURFACE end of the subterranean gate (two-level maps): a free land tile near
+    # the start town. Its (x, y) is shared with the underground gate so VCMI links
+    # the pair. Placed before guards/scatter so the approach can be reserved.
+    ug_xy = None
+    if p.get("two_level") and root_town:
+        for x, y in free_near(0, int(pos[0][0]), int(pos[0][1]), r=16):
+            if (x - root_town[0]) ** 2 + (y - root_town[1]) ** 2 < 36 or (x, y) in water:
+                continue
+            pool = [e for e in pool_for("TRANSPORT", biome[zone[y][x]]) if e["type"] == "subterraneanGate"]
+            e = wpick(pool or pool_for("TRANSPORT", biome[zone[y][x]]), rnd)
+            if e and emit(e, x, y):
+                reserve_approach(objs[-1]); ug_xy = (x, y); break
+
     # guards at chokepoints
     for (cx, cy), c in chokes.items():
         lvl = guard_level(c["strength"])
@@ -381,7 +394,18 @@ def realize(W=72, H=72, seed=7, params=None):
         if e and emit(e, x, y): decor_n += 1
 
     objs = reachability_repair(objs, terr, W, H, water, biome, zone)
-    fm = {"name": f"deps_fit_s{seed}", "terrain": [terr], "objects": objs}
+
+    # UNDERGROUND LEVEL: ~65% of the corpus is two-level (rock-filled with
+    # subterranean caverns). Build level 1 only when the target is two-level so
+    # the single-level default path is byte-identical. The surface places half of
+    # each purpose's budget; the cavern places the other half -> together they hit
+    # the per-(2x-tile) corpus density, and rock/subterranean terrain now appears.
+    levels = [terr]
+    if p.get("two_level") and ug_xy:
+        terr_u, uobjs = build_underground(W, H, rnd, density, p, ug_xy[0], ug_xy[1])
+        levels.append(terr_u); objs += uobjs
+
+    fm = {"name": f"deps_fit_s{seed}", "terrain": levels, "objects": objs}
     # main town: the editor matches a player's mainTown to the town at
     # (anchor-2, anchor-2) -- the corpus offset for the town footprint anchor.
     if root_town:
@@ -482,6 +506,97 @@ def reachability_repair(objs, terr, W, H, water, biome, zone):
         b = biome[zone[y][x]]
         terr[y][x] = {"t": b, "view": VIEW.get(b, 0)}
     return [o for i, o in enumerate(objs) if i not in to_remove]
+
+
+def build_underground(W, H, rnd, density, p, gx, gy):
+    """Second map level for two-level targets: rock fill (terrain 9) + one connected
+    subterranean cavern (terrain 6) grown organically from the shared gate tile,
+    with gameplay objects + guards scattered in the cavern. Returns
+    (terrain_grid, objects[l=1]). The underground subterranean gate shares (gx, gy)
+    with the surface gate so VCMI auto-links the pair (descend/ascend works)."""
+    import heapq
+    ROCK, SUB = 9, 6
+    terr_u = [[{"t": ROCK, "view": VIEW.get(ROCK, 2)} for _ in range(W)] for _ in range(H)]
+    tt = p.get("terrain_target", {})
+    g = lambda k: tt.get(k, tt.get(str(k), 0.0))
+    f6, f9 = g(6), g(9)
+    sub_frac = f6 / (f6 + f9) if (f6 + f9) > 0 else 0.15
+    sub_frac = max(0.05, min(0.45, sub_frac))
+    target = max(20, int(sub_frac * W * H))
+    nf = deps_embed._noise(W, H, max(6, min(W, H) // 6), rnd)
+
+    def carve(x, y):
+        if 0 <= x < W and 0 <= y < H:
+            terr_u[y][x] = {"t": SUB, "view": VIEW.get(SUB, 53)}; walk.add((x, y))
+    walk = set(); carve(gx, gy)
+    pq = []
+    def push(x, y):
+        if 0 <= x < W and 0 <= y < H and (x, y) not in walk:
+            heapq.heappush(pq, (-(nf(x, y) + 1.0), x, y))
+    for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)): push(gx + dx, gy + dy)
+    while pq and len(walk) < target:
+        _, x, y = heapq.heappop(pq)
+        if (x, y) in walk: continue
+        carve(x, y)
+        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)): push(x + dx, y + dy)
+    for dx in (-1, 0, 1):                                   # guarantee the gate has clearance
+        for dy in (-1, 0, 1): carve(gx + dx, gy + dy)
+
+    occ = set(); objs = []
+    def emit_u(e, x, y):
+        foot = list(occ_tiles(x, y, e["mask"]))
+        if any(not (0 <= tx < W and 0 <= ty < H) or (tx, ty) in occ for tx, ty in foot):
+            return False
+        appr = [(cx, cy) for cx, cy, ch in _mask_cells(x, y, e["mask"]) if ch == 'A'] or [(x, y)]
+        if any((cx, cy) not in walk for cx, cy in appr):    # entrance must be in the cavern
+            return False
+        for q in foot: occ.add(q)
+        objs.append({"type": e["type"], "subtype": e["subtype"], "animation": e["animation"],
+                     "mask": e["mask"], "x": x, "y": y, "l": 1})
+        return True
+
+    gate = wpick([e for e in pool_for("TRANSPORT", SUB) if e["type"] == "subterraneanGate"]
+                 or pool_for("TRANSPORT", SUB), rnd)
+    if gate: emit_u(gate, gx, gy)
+
+    cells = [xy for xy in walk if xy not in occ]; rnd.shuffle(cells); cur = [0]
+    def nxt():
+        while cur[0] < len(cells):
+            xy = cells[cur[0]]; cur[0] += 1
+            if xy not in occ: return xy
+        return None
+    UND = ["MINE", "RESOURCE_PILE", "REWARD_PICKUP", "DWELLING", "BANK",
+           "STAT_PERMANENT", "SPELL_SKILL", "BONUS_TEMP", "MANA", "SPECIAL", "INFO"]
+    placed_xy = []
+    for purpose in UND:
+        need = int(round(density.get(purpose, 0) * W * H / 1000.0))
+        tries = 0
+        while need > 0 and tries < need * 30 + 5:
+            tries += 1
+            xy = nxt()
+            if xy is None: break
+            x, y = xy
+            e = wpick(pool_for(purpose, SUB), rnd)
+            if e and emit_u(e, x, y):
+                placed_xy.append((x, y)); need -= 1
+
+    NB8 = [(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)]
+    gbudget = int(round(density.get("GUARD", 0) * W * H / 1000.0))
+    rnd.shuffle(placed_xy)
+    for ox, oy in placed_xy:
+        if gbudget <= 0: break
+        nbs = NB8[:]; rnd.shuffle(nbs)
+        for dx, dy in nbs:
+            x, y = ox + dx, oy + dy
+            if (x, y) in walk and (x, y) not in occ:
+                e = wpick(pool_for("GUARD", SUB), rnd)
+                if e:
+                    occ.add((x, y))
+                    objs.append({"type": e["type"], "subtype": e["subtype"], "animation": e["animation"],
+                                 "mask": e["mask"], "x": x, "y": y, "l": 1})
+                    gbudget -= 1
+                break
+    return terr_u, objs
 
 
 if __name__ == "__main__":

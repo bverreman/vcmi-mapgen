@@ -32,7 +32,23 @@ marks it `[x]` with a one-line result, and commits. Add new tasks at the bottom.
       struct/obj-dist + seed + column averages, worst obj-dist flagged). Baseline
       N=12/seeds=4: avg obj-dist 2.72, avg total 78.4. Exposes the large-map weak
       spot (The Five Rings 3.98, Twins 3.36, Search for the Grail 3.24 all > 3).
-- [ ] Underground level: generate 2-level maps (surface + underground rock + a few
-      subterranean gates) so 2-level targets (e.g. "All for One") match on terrain.
-- [ ] Cosmetic: resolve the 2 "animation failed" load warnings (identify the object
-      type/animation that fails and substitute a valid one from the corpus pools).
+- [x] Underground level: 65% of the corpus is two-level. `deps_fit.params_from_target`
+      now detects `m.two_level` (routes subterranean/rock off the surface, doubles the
+      surface water frac) and `feats_gen` counts both levels. New
+      `deps_realize.build_underground` builds level 1 (rock fill + one connected
+      subterranean cavern grown from the gate) + a linked subterranean-gate pair, and
+      scatters the second half of each gameplay purpose's budget into the cavern.
+      Guarded by `two_level` so the 1-level default is byte-identical. Marshland Menace
+      fit total 208->47 (terrain 81->18, density 102->4, obj-dist 4.8->3.6); 2-level map
+      loads (loaded:True, 0 fatal/visit warns); Dawn of War held at 2.18; seed=4 24/24.
+- [x] Cosmetic: NOT a generator bug. The 2 "Animation  failed to load" warnings persist
+      with a ZERO-object map -> they come from the user's broken HotA/third-upgrades mods
+      (hota/phoenixHorde.def missing etc.), not our objects. No substitution possible or
+      needed; loaded:True/fatal:False regardless. Left as an environment artifact.
+- [ ] Two-level playability: a global traversability gate for the underground (the
+      surface gate's descend must reach the cavern objects; today only the surface
+      level is asserted reachable in verify.sh). Extend traverse.py across levels via
+      the subterranean-gate pair and add to the gate.
+- [ ] Underground object-distance: 2-level fits still sit ~3.5 obj-dist (Marshland 3.6).
+      The cavern scatter ignores the target's spatial signature (sep / town-bias) that
+      the surface scatter uses -- carry the signature into build_underground.
