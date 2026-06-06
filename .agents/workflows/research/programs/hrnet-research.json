@@ -1,0 +1,8 @@
+{
+  "repo_url": "git@github.com:GabrielCpp/assembler.git",
+  "repo_branch": "main",
+  "result_branch": "hrnet-research/auto",
+  "program_dir": "specs/hrnet/research",
+  "progress_path": "specs/hrnet/experiments/PROGRESS.md",
+  "code_root": "src/hrnet"
+}

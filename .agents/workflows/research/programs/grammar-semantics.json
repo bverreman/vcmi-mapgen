@@ -1,0 +1,8 @@
+{
+  "repo_url": "git@github.com:GabrielCpp/assembler.git",
+  "repo_branch": "master",
+  "result_branch": "grammar-semantics/auto",
+  "program_dir": "specs/grammar-semantics",
+  "progress_path": "specs/grammar-semantics/PROGRESS.md",
+  "code_root": "src/grammar_semantics"
+}

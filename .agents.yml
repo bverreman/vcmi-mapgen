@@ -1,0 +1,11 @@
+# Agent toolkit config — installs the local-worker `research` workflow + the
+# generic research-discipline skills/prompts so the gate-loop engine can drive
+# the map-generator research program (research/README.md gate ladder).
+repo:
+  name: vcmi-mapgen
+agents:
+  claude: true
+packs:
+  - hrnet-research      # research workflow + gate-loop prompts + scientific-method skills
+workflow:
+  branch: main
