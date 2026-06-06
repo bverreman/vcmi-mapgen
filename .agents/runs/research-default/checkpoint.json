@@ -1,0 +1,38 @@
+{
+  "workflow": "research",
+  "run_id": "default",
+  "current_id": "implement",
+  "seq": 8,
+  "context": {
+    "program": "vcmi-mapgen",
+    "max_reworks": "3",
+    "max_lead_reviews": "4",
+    "cfg": {
+      "repo_url": "/mnt/data/workspace/vcmi-mapgen",
+      "repo_branch": "main",
+      "result_branch": "research/auto",
+      "program_dir": "research",
+      "progress_path": "research/PROGRESS.md",
+      "code_root": "src",
+      "program": "vcmi-mapgen"
+    },
+    "setup_result": {
+      "repo_dir": "/mnt/data/workspace/vcmi-mapgen",
+      "status": "ok"
+    },
+    "lead_review_count": {
+      "value": 0
+    },
+    "gate_selection": {
+      "gate_id": "G0",
+      "gate_doc_path": "research/G0_benchmark_harness.md",
+      "depends_on_satisfied": true,
+      "program_killed": false,
+      "rationale": "G0 is NOT_STARTED with no dependencies; it is the lowest uncleared gate and must pass before G1/G2/G3 can be trusted \u2014 no kill criteria are tripped (G1 and G2 are FAIL, not KILLED)."
+    },
+    "rework_count": {
+      "value": 0
+    }
+  },
+  "updated_at": "2026-06-06T17:37:48.147897+00:00"
+}

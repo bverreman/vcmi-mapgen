@@ -1,0 +1,15 @@
+[project]
+name = "vcmi-mapgen"
+version = "0.1.0"
+description = "Hand-made-feel VCMI map generator + research benchmark"
+requires-python = ">=3.10"
+dependencies = [
+    "pillow>=10",   # rendering schematic PNGs (src/deps_render.py, deps_showcase.py)
+]
+
+# Everything else the generator/benchmark uses is the Python standard library.
+# Run anything with uv, e.g.:
+#   uv run python src/benchmark.py --maps 12 --seeds 10
+#   uv run python src/deps_realize.py 4
+[tool.uv]
+package = false

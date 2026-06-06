@@ -1,0 +1,9 @@
+{
+  "gate_selection": {
+    "gate_id": "G0",
+    "gate_doc_path": "research/G0_benchmark_harness.md",
+    "depends_on_satisfied": true,
+    "program_killed": false,
+    "rationale": "G0 is NOT_STARTED with no dependencies; it is the lowest uncleared gate and must pass before G1/G2/G3 can be trusted \u2014 no kill criteria are tripped (G1 and G2 are FAIL, not KILLED)."
+  }
+}

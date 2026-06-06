@@ -1,0 +1,1 @@
+bash /mnt/data/workspace/vcmi-mapgen/.agents/workflows/research/scripts/setup.sh /mnt/data/workspace/vcmi-mapgen main
