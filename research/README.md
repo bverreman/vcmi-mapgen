@@ -6,7 +6,7 @@ into falsifiable, control-relative gates. The autonomous engine works the lowest
 not-yet-PASS gate, implements, has an independent reviewer re-run the measurement,
 reworks on failure, and records.
 
-The fitness function for every gate is `python3 src/benchmark.py` (writes
+The fitness function for every gate is `uv run python src/benchmark.py` (writes
 `out/benchmark.json`). Claims must be **control-relative**: the graph generator
 must beat the SHUFFLED control (same objects, random positions) — improving in
 absolute terms is not enough.

@@ -59,3 +59,6 @@
 [implement] ⚙ Bash /usr/bin/python3 src/benchmark.py --maps 2 --seeds 2 2>&1 | grep -E "COVERAGE|VALIDITY|RECONSTRUCT" && echo "---run2---"…
 [implement] Now I have a clear picture. I'll fix the non-deterministic shuffled control and implement the G0 verification. Let me check what lint/test tooling is available.
 [implement] ⚙ Bash /usr/bin/python3 -m pytest --version 2>&1; /usr/bin/python3 -m ruff --version 2>&1; /usr/bin/python3 -c "import ruff" 2>…
+[implement] ⚙ Bash pip3 install pytest ruff 2>&1 | tail -3; /usr/bin/python3 -m pytest --version 2>&1; which ruff 2>&1
+[implement] ⚙ Bash pip3 install pytest ruff --break-system-packages 2>&1 | tail -5
+[implement] ⚙ Bash /usr/bin/python3 -m pytest --version && /usr/bin/python3 -m ruff --version

@@ -8,7 +8,7 @@ SHUFFLED control, writing `out/benchmark.json`.
 
 ## Exact success gate (all required)
 
-- `python3 src/benchmark.py --maps 8 --seeds 4` runs to completion, exit 0.
+- `uv run python src/benchmark.py --maps 8 --seeds 4` runs to completion, exit 0.
 - Output contains all three scores AND a `control_objdist` for coverage & reconstruct.
 - Re-running with the same args reproduces `mean_objdist` and `pass_rate` exactly
   (deterministic; seeds fixed).
