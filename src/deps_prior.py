@@ -3,9 +3,12 @@ per-purpose density, water fraction, land-biome proportions, and the object-dist
 signature (median nearest-neighbour distance per purpose pair). With this, a plain
 generate produces a corpus-typical map; passing a specific target still overrides it.
 """
+
 import sys, os, json, glob, collections, statistics
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import h3m, deps, vcmi_ids, deps_realize as R, deps_spatial
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
@@ -35,14 +38,16 @@ def build(paths):
         tc = collections.Counter()
         for lvl in m.terrain:
             for row in lvl:
-                for t in row: tc[t.terrain] += 1
+                for t in row:
+                    tc[t.terrain] += 1
         for code in range(10):
             terr_frac[code].append(tc.get(code, 0) / tiles)
         water.append(tc.get(8, 0) / tiles)
         pc = collections.Counter()
         for o in m.objects:
             r = vcmi_ids.resolve(o.obj_class, o.obj_subclass)
-            if r: pc[R.TYPE2PURPOSE.get(r[0], "?")] += 1
+            if r:
+                pc[R.TYPE2PURPOSE.get(r[0], "?")] += 1
         for p in R.TYPE2PURPOSE.values():
             pass
         for p, c in pc.items():
@@ -69,7 +74,12 @@ def build(paths):
 
 
 if __name__ == "__main__":
-    paths = sorted(glob.glob('/home/gabriel/.var/app/eu.vcmi.VCMI/data/vcmi/Maps/**/*.h3m', recursive=True))
+    paths = sorted(
+        glob.glob(
+            "/home/gabriel/.var/app/eu.vcmi.VCMI/data/vcmi/Maps/**/*.h3m",
+            recursive=True,
+        )
+    )
     prior, out = build(paths)
     print(f"prior over {prior['n_maps']} maps -> {out}")
     print(f"  water_frac={prior['water_frac']}  biomes={prior['biome_weights']}")

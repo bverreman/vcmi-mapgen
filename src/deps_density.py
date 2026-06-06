@@ -8,7 +8,9 @@ check whether a scatter/guard tweak closed the gap.
     python3 src/deps_density.py "King of Pain"        # by map name
     python3 src/deps_density.py /full/path/to/Map.h3m # by path
 """
+
 import sys, os
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import deps_fit as F
 
@@ -34,8 +36,10 @@ if __name__ == "__main__":
     total, dist, sp_mean = best[0], best[1], best[2]
     name = os.path.basename(path).replace(".h3m", "")
     print(f"=== density residuals: '{name}' (best seed={best[4]}) ===")
-    print(f"total={total:.1f}  density={dist[1]:.1f}  terrain={dist[2]:.1f}  "
-          f"struct={dist[3]:.1f}  object-distance={sp_mean:.1f}")
+    print(
+        f"total={total:.1f}  density={dist[1]:.1f}  terrain={dist[2]:.1f}  "
+        f"struct={dist[3]:.1f}  object-distance={sp_mean:.1f}"
+    )
     print(f"\n{'purpose':16} {'real/1k':>9} {'gen/1k':>9} {'|resid|':>9}")
     for d, p, r, ge in rows:
         flag = "  <-- worst" if d == rows[0][0] and d > 1 else ""

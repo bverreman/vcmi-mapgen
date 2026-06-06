@@ -13,3 +13,22 @@ dependencies = [
 #   uv run python src/deps_realize.py 4
 [tool.uv]
 package = false
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+# Pre-existing codebase style — do not touch these in bulk:
+#   E401/E402: multi-import lines + sys.path hacks before third-party imports
+#   F401: imports used for side-effects or available to callers without __all__
+#   E741: `l` used throughout as "level" variable name
+#   F841: intermediate computations stored but not always read
+#   E731: lambdas assigned to local helpers (idiom in embedding/noise code)
+#   E722: bare except in resilient loaders
+#   F821/F601/F541: minor pre-existing issues
+ignore = ["E401", "E402", "F401", "E741", "F841", "E731", "E722", "F821", "F601", "F541"]
+
+[tool.pytest.ini_options]
+testpaths = ["src"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]

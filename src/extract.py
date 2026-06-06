@@ -153,9 +153,7 @@ def main() -> int:
         "passed": passed,
         "summary_line": f"{passed}/{len(files)} clean",
         "total_objects": total_objects,
-        "top25_class_subclass": [
-            {"class": c, "subclass": s, "count": n} for (c, s), n in top25
-        ],
+        "top25_class_subclass": [{"class": c, "subclass": s, "count": n} for (c, s), n in top25],
     }
 
     with open(os.path.join(OUT_DIR, "validation_report.json"), "w") as fh:

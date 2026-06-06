@@ -8,13 +8,16 @@ that a single held-out map (Dawn of War in verify.sh) would miss.
     python3 src/deps_report.py            # default N=12 maps, seeds=4
     python3 src/deps_report.py 20 6       # 20 maps, 6 seeds each
 """
+
 import sys, os
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import deps_fit as F
 
 MAPS = "/home/gabriel/.var/app/eu.vcmi.VCMI/data/vcmi/Maps"
-OUT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                   "out", "fit_report.md")
+OUT = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "out", "fit_report.md"
+)
 
 
 def sample_maps(n):
@@ -36,14 +39,14 @@ def report(n=12, seeds=4):
             total, d, sp_mean = best[0], best[1], best[2]
             rows.append((name, total, d[1], d[2], d[3], sp_mean, best[4]))
             print(f"  {name:28} total={total:6.1f} obj-dist={sp_mean:.2f}")
-        except Exception as e:                         # skip unparseable corpus maps
+        except Exception as e:  # skip unparseable corpus maps
             print(f"  {name:28} SKIP ({type(e).__name__}: {e})")
     return rows
 
 
 def write_md(rows, seeds):
     n = len(rows)
-    cols = [1, 2, 3, 4, 5]                              # total, density, terrain, struct, obj-dist
+    cols = [1, 2, 3, 4, 5]  # total, density, terrain, struct, obj-dist
     avg = [sum(r[c] for r in rows) / n for c in cols] if n else [0] * 5
     worst = max(rows, key=lambda r: r[5]) if rows else None
     lines = [
@@ -56,10 +59,13 @@ def write_md(rows, seeds):
         "|---|---:|---:|---:|---:|---:|---:|",
     ]
     for name, total, dens, terr, st, sp, seed in rows:
-        lines.append(f"| {name} | {total:.1f} | {dens:.1f} | {terr:.1f} "
-                     f"| {st:.1f} | {sp:.2f} | {seed} |")
-    lines.append(f"| **average** | **{avg[0]:.1f}** | **{avg[1]:.1f}** "
-                 f"| **{avg[2]:.1f}** | **{avg[3]:.1f}** | **{avg[4]:.2f}** | |")
+        lines.append(
+            f"| {name} | {total:.1f} | {dens:.1f} | {terr:.1f} | {st:.1f} | {sp:.2f} | {seed} |"
+        )
+    lines.append(
+        f"| **average** | **{avg[0]:.1f}** | **{avg[1]:.1f}** "
+        f"| **{avg[2]:.1f}** | **{avg[3]:.1f}** | **{avg[4]:.2f}** | |"
+    )
     lines.append("")
     if worst:
         lines.append(f"Worst object-distance: **{worst[0]}** ({worst[5]:.2f}).")
@@ -76,5 +82,7 @@ if __name__ == "__main__":
     rows = report(n, seeds)
     avg = write_md(rows, seeds)
     print(f"\nwrote {OUT}")
-    print(f"averages: total={avg[0]:.1f} density={avg[1]:.1f} terrain={avg[2]:.1f} "
-          f"struct={avg[3]:.1f} object-distance={avg[4]:.2f}")
+    print(
+        f"averages: total={avg[0]:.1f} density={avg[1]:.1f} terrain={avg[2]:.1f} "
+        f"struct={avg[3]:.1f} object-distance={avg[4]:.2f}"
+    )

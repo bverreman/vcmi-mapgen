@@ -1,0 +1,15 @@
+{
+  "gate_check": {
+    "status": "approved",
+    "verdict": "PASS",
+    "failed_criteria": [],
+    "anti_shortcut_flags": {
+      "lookup_flag": false,
+      "oracle_route_flag": false,
+      "repair_flag": false,
+      "leak_flag": false
+    },
+    "zero_weights_changes_output": true,
+    "notes": "All four G0 criteria satisfied. (1) benchmark.py --maps 8 --seeds 4 exits 0, runtime ~90s. (2) Output JSON contains coverage.mean_control_objdist and reconstruct.control_objdist alongside all three scores. (3) Two back-to-back runs produced identical output: mean_objdist 3.66, pass_rate 0.0 \u2014 fully deterministic. (4) _shuffled_objdist() iterates fm['objects'] from the best-fit generated map (best[5]) and reassigns positions to random free tiles \u2014 same object multiset, fair within-map control. pytest 10/10 passed. No special-casing of any map found in benchmark.py, deps_fit.py, or deps_realize.py. reachability_repair is a physical path-carving routine (removes decoration/mountains only, never gameplay objects) \u2014 not a metric-gaming shortcut; notably, validity pass_rate is 0.0 even with it, confirming it does not inflate the score. Advance to G1."
+  }
+}

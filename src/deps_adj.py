@@ -15,7 +15,9 @@ Output (out/adjacency.json):
      neighbours: [ {type, share, offsets:[[dx,dy],...]} ]   # specific touching types
   }
 """
+
 import sys, os, json, glob, collections, random
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import h3m, vcmi_ids, deps
 
@@ -31,8 +33,13 @@ def footprint(o, tmpl):
 
 
 def build(paths):
-    model = collections.defaultdict(lambda: {"deg": [], "nbr": collections.Counter(),
-                                             "off": collections.defaultdict(list)})
+    model = collections.defaultdict(
+        lambda: {
+            "deg": [],
+            "nbr": collections.Counter(),
+            "off": collections.defaultdict(list),
+        }
+    )
     for pth in paths:
         try:
             m = h3m.parse_file(pth)
@@ -61,7 +68,7 @@ def build(paths):
             for i, (ax, ay, at, atr, fp) in enumerate(objs):
                 # objects touching this footprint (immediate grid neighbours)
                 touch = set()
-                for (fx, fy) in fp:
+                for fx, fy in fp:
                     for dx, dy in NB8:
                         j = owner.get((fx + dx, fy + dy))
                         if j is not None and j != i:
@@ -80,26 +87,52 @@ def build(paths):
         for t, c in d["nbr"].most_common(12):
             offs = d["off"][t]
             samp = random.sample(offs, min(MAX_OFF, len(offs)))
-            nlist.append({"type": t, "share": round(c / total, 3),
-                          "offsets": [[dx, dy] for dx, dy in samp]})
-        profiles[key] = {"avg_degree": round(sum(d["deg"]) / max(1, len(d["deg"])), 2),
-                         "neighbours": nlist}
+            nlist.append(
+                {
+                    "type": t,
+                    "share": round(c / total, 3),
+                    "offsets": [[dx, dy] for dx, dy in samp],
+                }
+            )
+        profiles[key] = {
+            "avg_degree": round(sum(d["deg"]) / max(1, len(d["deg"])), 2),
+            "neighbours": nlist,
+        }
     out = f"{os.path.dirname(os.path.dirname(os.path.abspath(__file__)))}/out/adjacency.json"
     json.dump({"kind": "immediate-touch", "profiles": profiles}, open(out, "w"))
     return profiles, out
 
 
-TN = {0: "dirt", 1: "sand", 2: "grass", 3: "snow", 4: "swamp", 5: "rough",
-      6: "subterr", 7: "lava", 8: "water", 9: "rock", -1: "?"}
+TN = {
+    0: "dirt",
+    1: "sand",
+    2: "grass",
+    3: "snow",
+    4: "swamp",
+    5: "rough",
+    6: "subterr",
+    7: "lava",
+    8: "water",
+    9: "rock",
+    -1: "?",
+}
 
 if __name__ == "__main__":
-    paths = sorted(glob.glob('/home/gabriel/.var/app/eu.vcmi.VCMI/data/vcmi/Maps/**/*.h3m', recursive=True))
+    paths = sorted(
+        glob.glob(
+            "/home/gabriel/.var/app/eu.vcmi.VCMI/data/vcmi/Maps/**/*.h3m",
+            recursive=True,
+        )
+    )
     prof, out = build(paths)
-    print(f"immediate-touch adjacency over {len(paths)} maps -> {out}  ({len(prof)} (terrain|type) keys)\n")
+    print(
+        f"immediate-touch adjacency over {len(paths)} maps -> {out}  ({len(prof)} (terrain|type) keys)\n"
+    )
     for key in ["2|mine", "3|mine", "2|randomMonsterLevel3", "2|oakTrees", "2|town"]:
         if key not in prof:
             continue
-        tr, ty = key.split("|"); pr = prof[key]
+        tr, ty = key.split("|")
+        pr = prof[key]
         print(f"{TN.get(int(tr)):7}/{ty:20} avg_touch={pr['avg_degree']:.2f}  touches:")
         for e in pr["neighbours"][:6]:
             print(f"     {e['type']:22} {e['share']:5.2f}")

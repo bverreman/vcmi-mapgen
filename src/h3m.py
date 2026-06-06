@@ -229,15 +229,13 @@ class Reader:
         # desync is caught immediately rather than propagating silently.
         chunk = self.d[self.pos : self.pos + n]
         if any(chunk):
-            raise DesyncError(
-                f"skip_zero({n}) at {self.pos}: non-zero bytes {chunk.hex()}"
-            )
+            raise DesyncError(f"skip_zero({n}) at {self.pos}: non-zero bytes {chunk.hex()}")
         self.pos += n
 
     def string(self) -> bytes:
         length = self.u32()
         if length > 1_000_000:
-            raise DesyncError(f"string length {length} at {self.pos-4} too large")
+            raise DesyncError(f"string length {length} at {self.pos - 4} too large")
         s = self.d[self.pos : self.pos + length]
         self.pos += length
         return s

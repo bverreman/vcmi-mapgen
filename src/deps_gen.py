@@ -8,7 +8,9 @@ Node  = a region/zone: {id, depth, parent, value (reward budget), size_class}
 Edge  = the gate you cross to reach a child: {type, strength}
 Plus a few portal cross-edges linking distant branches.
 """
+
 import sys, os, json, random
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
@@ -23,8 +25,16 @@ def _interp_strength(pcts, rnd):
     return int(p50 + (p90 - p50) * ((u - 0.5) / 0.5))
 
 
-def generate_tree(W, H, levels=1, seed=0, deps_path=None,
-                  n_target=None, max_depth=None, portal_frac=None):
+def generate_tree(
+    W,
+    H,
+    levels=1,
+    seed=0,
+    deps_path=None,
+    n_target=None,
+    max_depth=None,
+    portal_frac=None,
+):
     """Overrides (n_target / max_depth / portal_frac) let a caller dial the tree
     toward a specific target map; defaults come from the corpus distribution."""
     rnd = random.Random(seed)
@@ -40,8 +50,16 @@ def generate_tree(W, H, levels=1, seed=0, deps_path=None,
     branch = {int(k): v for k, v in D["branching_by_depth"].items()}
     grad = {int(k): v for k, v in D["gradient_by_depth"].items()}
 
-    nodes = [{"id": 0, "depth": 0, "parent": None, "gate": None,
-              "value": 0, "size_class": "commons"}]
+    nodes = [
+        {
+            "id": 0,
+            "depth": 0,
+            "parent": None,
+            "gate": None,
+            "value": 0,
+            "size_class": "commons",
+        }
+    ]
     edges = []
 
     def _spawn(par, cd):
@@ -49,11 +67,21 @@ def generate_tree(W, H, levels=1, seed=0, deps_path=None,
         cid = len(nodes)
         g = grad.get(cd, grad.get(max(grad), {}))
         is_portal = rnd.random() < portal_frac
-        gate = {"type": "portal" if is_portal else "guard",
-                "strength": 0 if is_portal else _interp_strength(g.get("guard_strength", {}), rnd)}
+        gate = {
+            "type": "portal" if is_portal else "guard",
+            "strength": 0 if is_portal else _interp_strength(g.get("guard_strength", {}), rnd),
+        }
         val = max(1, int(rnd.expovariate(1.0 / max(1.0, g.get("mean_child_value", 10)))))
-        nodes.append({"id": cid, "depth": cd, "parent": par, "gate": gate,
-                      "value": val, "size_class": "pocket"})
+        nodes.append(
+            {
+                "id": cid,
+                "depth": cd,
+                "parent": par,
+                "gate": gate,
+                "value": val,
+                "size_class": "pocket",
+            }
+        )
         edges.append({"a": par, "b": cid, **gate})
         return cid
 
@@ -69,7 +97,7 @@ def generate_tree(W, H, levels=1, seed=0, deps_path=None,
             # Poisson-ish small integer around the mean
             k = int(mean_kids) + (1 if rnd.random() < (mean_kids - int(mean_kids)) else 0)
             if d > 0:
-                k = min(k, 2)                      # deeper chains stay narrow
+                k = min(k, 2)  # deeper chains stay narrow
             for _ in range(k):
                 if len(nodes) >= n_target:
                     break
@@ -101,24 +129,36 @@ def generate_tree(W, H, levels=1, seed=0, deps_path=None,
         used.add((a, b))
         edges.append({"a": a, "b": b, "type": "portal", "strength": 0, "cross": True})
 
-    tree = {"W": W, "H": H, "levels": levels, "seed": seed,
-            "n_nodes": len(nodes), "max_depth": max(n["depth"] for n in nodes),
-            "nodes": nodes, "edges": edges}
+    tree = {
+        "W": W,
+        "H": H,
+        "levels": levels,
+        "seed": seed,
+        "n_nodes": len(nodes),
+        "max_depth": max(n["depth"] for n in nodes),
+        "nodes": nodes,
+        "edges": edges,
+    }
     return tree
 
 
 def describe(tree):
     import collections
+
     bydepth = collections.Counter(n["depth"] for n in tree["nodes"])
     gt = collections.Counter(e["type"] for e in tree["edges"])
-    print(f"tree {tree['W']}x{tree['H']}x{tree['levels']} seed={tree['seed']}: "
-          f"{tree['n_nodes']} nodes, max_depth={tree['max_depth']}, edges {dict(gt)}")
+    print(
+        f"tree {tree['W']}x{tree['H']}x{tree['levels']} seed={tree['seed']}: "
+        f"{tree['n_nodes']} nodes, max_depth={tree['max_depth']}, edges {dict(gt)}"
+    )
     for d in sorted(bydepth):
         kids = [n for n in tree["nodes"] if n["depth"] == d]
         gs = [n["gate"]["strength"] for n in kids if n["gate"] and n["gate"]["type"] == "guard"]
         mg = sum(gs) // len(gs) if gs else 0
-        print(f"  depth {d}: {bydepth[d]:2d} nodes  mean_guard={mg:4d}  "
-              f"value={sum(n['value'] for n in kids)}")
+        print(
+            f"  depth {d}: {bydepth[d]:2d} nodes  mean_guard={mg:4d}  "
+            f"value={sum(n['value'] for n in kids)}"
+        )
 
 
 if __name__ == "__main__":

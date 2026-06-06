@@ -8,16 +8,28 @@ of the euclidean distance to the nearest B-object.
 Comparing two maps' signatures measures whether the generated map places objects
 in the same euclidean relationships as the real one -- the "adjacency distribution".
 """
+
 import math, statistics, collections
 
-PURPOSES = ["TOWN", "GUARD", "MINE", "DWELLING", "BANK", "REWARD_PICKUP",
-            "RESOURCE_PILE", "TRANSPORT", "STAT_PERMANENT", "BONUS_TEMP", "SPELL_SKILL"]
+PURPOSES = [
+    "TOWN",
+    "GUARD",
+    "MINE",
+    "DWELLING",
+    "BANK",
+    "REWARD_PICKUP",
+    "RESOURCE_PILE",
+    "TRANSPORT",
+    "STAT_PERMANENT",
+    "BONUS_TEMP",
+    "SPELL_SKILL",
+]
 
 
 def signature(pts, purposes=PURPOSES):
     """pts: list of (x, y, purpose). Returns {(A,B): median nearest-neighbour dist}."""
     by = collections.defaultdict(list)
-    for (x, y, p) in pts:
+    for x, y, p in pts:
         if p in purposes:
             by[p].append((x, y))
     sig = {}
@@ -30,9 +42,9 @@ def signature(pts, purposes=PURPOSES):
             if not BB:
                 continue
             ds = []
-            for (ax, ay) in AA:
+            for ax, ay in AA:
                 best = None
-                for (bx, byy) in BB:
+                for bx, byy in BB:
                     if A == B and bx == ax and byy == ay:
                         continue
                     d = (ax - bx) ** 2 + (ay - byy) ** 2

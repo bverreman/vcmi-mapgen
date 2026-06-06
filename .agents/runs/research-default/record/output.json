@@ -1,0 +1,9 @@
+{
+  "record_result": {
+    "status": "recorded",
+    "outcome": "PASS",
+    "progress_updated": true,
+    "result_slot_updated": true,
+    "finding_path": ""
+  }
+}

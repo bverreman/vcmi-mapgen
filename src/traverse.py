@@ -10,7 +10,9 @@ This module BFS-walks passable land (through carved chokepoints) from the start
 town and asserts every zone, every town and every mine is reachable. Wired into
 `ralph/verify.sh`, an unreachable map FAILS the gate.
 """
+
 import sys, os, json, collections
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -23,7 +25,8 @@ NB8 = [(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)]
 
 
 def _mask_cells(x, y, mask):
-    h = len(mask); w = max(len(r) for r in mask)
+    h = len(mask)
+    w = max(len(r) for r in mask)
     for r, row in enumerate(mask):
         for c, ch in enumerate(row):
             yield (x - (w - 1 - c), y - (h - 1 - r), ch)
@@ -77,7 +80,7 @@ def _start_seed(fm, blocked, W, H):
     if mt is not None:
         ax, ay = mt["x"] + 2, mt["y"] + 2
         start = min(towns, key=lambda o: (o["x"] - ax) ** 2 + (o["y"] - ay) ** 2, default=None)
-    if start is None and towns:                     # fallback: town nearest map centre
+    if start is None and towns:  # fallback: town nearest map centre
         start = min(towns, key=lambda o: (o["x"] - W // 2) ** 2 + (o["y"] - H // 2) ** 2)
     if start is None:
         return set(), None
@@ -123,14 +126,16 @@ def traverse(fm, em=None):
     q = collections.deque(reached)
     while q:
         x, y, l = q.popleft()
-        for s in trigger.get((x, y, l), ()):                # gate teleport across levels
+        for s in trigger.get((x, y, l), ()):  # gate teleport across levels
             if s not in reached:
-                reached.add(s); q.append(s)
+                reached.add(s)
+                q.append(s)
         bl, lw, lh = grids[l]
         for dx, dy in NB4:
             nx, ny = x + dx, y + dy
             if 0 <= nx < lw and 0 <= ny < lh and not bl[ny][nx] and (nx, ny, l) not in reached:
-                reached.add((nx, ny, l)); q.append((nx, ny, l))
+                reached.add((nx, ny, l))
+                q.append((nx, ny, l))
 
     def obj_reachable(o):
         l = o.get("l", 0)
@@ -153,24 +158,33 @@ def traverse(fm, em=None):
     zones_reached = zones_total = None
     bad_zones = []
     if em is not None:
-        zone = em["zone"]; total = em["n_zones"]
+        zone = em["zone"]
+        total = em["n_zones"]
         seen_z = set(zone[y][x] for (x, y, l) in reached if l == 0)
         zones_reached, zones_total = len(seen_z), total
         bad_zones = sorted(set(range(total)) - seen_z)
 
     n_passable = sum(not blocked[y][x] for y in range(H) for x in range(W))
     cavern_reached = sum(1 for (x, y, l) in reached if l == 1) if len(grids) > 1 else None
-    ok = (start is not None and not bad_towns and not bad_mines and not bad_zones)
-    return {"ok": ok, "start": (start["x"], start["y"]) if start else None,
-            "levels": len(grids), "reached_tiles": len(reached), "passable_tiles": n_passable,
-            "cavern_reached_tiles": cavern_reached,
-            "zones_reached": zones_reached, "zones_total": zones_total,
-            "bad_zones": bad_zones, "unreachable_towns": bad_towns,
-            "unreachable_mines": bad_mines}
+    ok = start is not None and not bad_towns and not bad_mines and not bad_zones
+    return {
+        "ok": ok,
+        "start": (start["x"], start["y"]) if start else None,
+        "levels": len(grids),
+        "reached_tiles": len(reached),
+        "passable_tiles": n_passable,
+        "cavern_reached_tiles": cavern_reached,
+        "zones_reached": zones_reached,
+        "zones_total": zones_total,
+        "bad_zones": bad_zones,
+        "unreachable_towns": bad_towns,
+        "unreachable_mines": bad_mines,
+    }
 
 
 if __name__ == "__main__":
     import deps_realize as R
+
     seed = int(sys.argv[1]) if len(sys.argv) > 1 else 7
     fm, tree, em = R.realize(seed=seed)
     r = traverse(fm, em)
