@@ -34,3 +34,18 @@ touch rework. Diagnose which (the rows in `out/benchmark.json` list `reachable` 
 
 - Reachability must be the real BFS over passable land + chokepoints, not a proxy.
 - Density tolerance is the fixed [0.5, 2.0]x band; do not widen it to pass.
+
+## Result — PASS (2026-06-07)
+
+Independent reviewer re-ran `g2_validity.py --seeds 10`: pass-rate 1.0 (10/10 seeds).
+
+| Criterion | Requirement | Observed |
+|-----------|-------------|----------|
+| Pass-rate | ≥ 0.9 | 1.0 ✓ |
+| Seeds | ≥ 10 | 10 ✓ |
+| Reachability | All zones, towns, mines reachable from start | true for all 10 ✓ |
+| Density tolerance | within [0.5, 2.0]x corpus rate | no outliers (density_off=[]) ✓ |
+
+Anti-shortcut flags: all false. `traverse.py` is real 4-connected BFS from start town through subterranean gates; no proxy. `reachability_repair` uses Dijkstra + `all_removable` set to correctly clear all overlapping decoration blockers per tile. Adjacency weights are corpus-learned share×deg Poisson parameters (non-zero, real). Density band [0.5, 2.0]x is fixed, not widened. Editor load-test sampled (pytest 26/26).
+
+**Advance to G3.**

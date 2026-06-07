@@ -7,10 +7,24 @@ convenience — especially `hrnet-never-constraints`, `hrnet-rules-authoring-wor
 `hrnet-sparsity-aware-param-counting`, `hrnet-reproducibility-multiseed`.
 
 Repository: `/mnt/data/workspace/vcmi-mapgen`
-Gate: `G1`
-Gate doc: `research/G1_coverage.md`
+Gate: `G2`
+Gate doc: `research/G2_validity.md`
 Code root: `src`
 Progress log: `research/PROGRESS.md`
+
+## Time budget — ~10 min wall-clock
+
+This turn has ~10 minutes (600s).
+A command that runs past it is **killed**, and this node restarts from scratch with
+**no memory** of what you did — the whole budget is wasted. So:
+
+- Never launch a command that can't finish, with margin left to write your JSON
+  result, inside the budget. Time the measurement before trusting it at full scale.
+- Cache expensive rebuilds: only regenerate derived artifacts when their inputs
+  (corpus, graph code) actually changed; otherwise reuse / skip the rebuild.
+- If the full measurement won't fit, iterate at a **reduced scale** (fewer
+  maps/seeds) here and report what you ran — the independent gate check re-runs the
+  full seed set with the same budget.
 
 ## Do this
 
