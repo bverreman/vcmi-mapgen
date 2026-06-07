@@ -2,6 +2,6 @@
   "workflow": "research",
   "run_id": "default",
   "started_at": "2026-06-06T17:37:33.611151+00:00",
-  "ended_at": null,
-  "terminal": null
+  "ended_at": "2026-06-07T15:13:17.463989+00:00",
+  "terminal": "terminal"
 }

@@ -1,8 +1,8 @@
 {
   "workflow": "research",
   "run_id": "default",
-  "current_id": "publish_loop",
-  "seq": 47,
+  "current_id": "route_gate",
+  "seq": 49,
   "context": {
     "program": "vcmi-mapgen",
     "max_reworks": "3",
@@ -24,11 +24,11 @@
       "value": 0
     },
     "gate_selection": {
-      "gate_id": "G3",
-      "gate_doc_path": "research/G3_reconstruct.md",
+      "gate_id": "none",
+      "gate_doc_path": "none",
       "depends_on_satisfied": true,
       "program_killed": false,
-      "rationale": "G0, G1, G2 are all PASS. G3 is FAIL (object-distance margin \u22120.34 vs control on 'All for One'), dependencies satisfied (G0, G1 both PASS), no kill criteria tripped. Advance to reconstruction gate."
+      "rationale": "All reachable gates are PASS/WEAK_PASS: G0 PASS (harness), G1 PASS (coverage +1.04), G2 PASS (validity 1.0), G3 WEAK_PASS (reconstruction +0.76); no kill criteria triggered"
     },
     "rework_count": {
       "value": 0
@@ -90,5 +90,5 @@
       "status": "push_failed"
     }
   },
-  "updated_at": "2026-06-07T15:13:02.067181+00:00"
+  "updated_at": "2026-06-07T15:13:17.460511+00:00"
 }
