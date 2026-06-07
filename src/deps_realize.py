@@ -63,6 +63,21 @@ try:
     _ADJ = json.load(open(f"{ROOT}/out/adjacency.json")).get("profiles", {})
 except Exception:
     _ADJ = {}
+# Pre-process each neighbour's offset list: sort by distance then deduplicate.
+# The corpus samples many instances of the same offset (e.g. 40+ copies of
+# [-1,1] for mine→guard), so grow_touch[:16] would hammer the same tile
+# repeatedly. Deduplication gives 16 *distinct* positions spanning the full
+# corpus distance range so we can match the target signature distance.
+for _p in _ADJ.values():
+    for _n in _p.get("neighbours", []):
+        if _n.get("offsets"):
+            seen, deduped = set(), []
+            for _d in sorted(_n["offsets"], key=lambda d: d[0] ** 2 + d[1] ** 2):
+                _t = (_d[0], _d[1])
+                if _t not in seen:
+                    seen.add(_t)
+                    deduped.append(_d)
+            _n["offsets"] = deduped
 GAMEPLAY_PUR = [
     "MINE",
     "DWELLING",
@@ -296,16 +311,37 @@ def realize(W=72, H=72, seed=7, params=None):
             break
         add_town(n["id"], int(pos[n["id"]][0]), int(pos[n["id"]][1]))
 
-    # SURFACE end of the subterranean gate (two-level maps): a free land tile near
-    # the start town. Its (x, y) is shared with the underground gate so VCMI links
-    # the pair. Placed before guards/scatter so the approach can be reserved.
+    # SURFACE end of the subterranean gate (two-level maps): place at
+    # sig[(TRANSPORT, TOWN)] tiles from the start town when that distance is reachable
+    # within zone 0; fall back to r=16 scatter when no sig-distance tile exists.
+    # (Many maps have the dungeon entrance far from the start town — e.g. Twins 34 tiles,
+    # Search for the Grail 23 tiles — placing it at r=16 produces a large sig error.)
     ug_xy = None
     if p.get("two_level") and root_town:
-        for x, y in free_near(0, int(pos[0][0]), int(pos[0][1]), r=16):
-            if (x - root_town[0]) ** 2 + (y - root_town[1]) ** 2 < 36 or (
-                x,
-                y,
-            ) in water:
+        _cx0, _cy0 = int(pos[0][0]), int(pos[0][1])
+        _ug_tgt = sig.get(("TRANSPORT", "TOWN"))
+        _ug_sig_cands: list = []
+        if _ug_tgt is not None and _ug_tgt > 16:
+            _r_ug = int(_ug_tgt + 9) + 1
+            for _dy in range(-_r_ug, _r_ug + 1):
+                for _dx in range(-_r_ug, _r_ug + 1):
+                    _d = math.sqrt(_dx * _dx + _dy * _dy)
+                    if abs(_d - _ug_tgt) <= 8.0:
+                        _nx, _ny = _cx0 + _dx, _cy0 + _dy
+                        if (
+                            0 <= _nx < W and 0 <= _ny < H
+                            and zone[_ny][_nx] == 0
+                            and not barrier[_ny][_nx]
+                            and (_nx, _ny) not in water
+                            and (_nx - root_town[0]) ** 2 + (_ny - root_town[1]) ** 2 >= 36
+                        ):
+                            _ug_sig_cands.append((abs(_d - _ug_tgt), _nx, _ny))
+            _ug_sig_cands.sort()
+        _ug_iter = [(nx, ny) for _, nx, ny in _ug_sig_cands[:64]] + list(
+            free_near(0, _cx0, _cy0, r=16)
+        )
+        for x, y in _ug_iter:
+            if (x - root_town[0]) ** 2 + (y - root_town[1]) ** 2 < 36 or (x, y) in water:
                 continue
             pool = [
                 e
@@ -339,9 +375,13 @@ def realize(W=72, H=72, seed=7, params=None):
                 }
             )
 
-    # gated rewards in pockets (BANK left to the density layer so it isn't overshot)
+    # gated rewards in pockets (BANK left to the density layer so it isn't overshot;
+    # DWELLING excluded so _place_anchored handles all dwellings at the correct
+    # sig-derived town distance -- gated rewards placed dwellings at node centers
+    # (r=5 scatter) before _place_anchored fired, pre-filling the budget and leaving
+    # all dwellings 2-3 tiles from each other instead of sig-specified 14-16 tiles)
     TIERS = [
-        (12, ["DWELLING", "MINE"]),
+        (12, ["REWARD_PICKUP", "MINE"]),
         (6, ["MINE", "REWARD_PICKUP"]),
         (0, ["REWARD_PICKUP", "RESOURCE_PILE"]),
     ]
@@ -358,11 +398,59 @@ def realize(W=72, H=72, seed=7, params=None):
                 budget -= 6
             tries += 1
 
-    # portals
+    def _self_dist_ok(pur: str, nx: int, ny: int) -> bool:
+        """True if (nx,ny) is at least min_d tiles from all already-placed objects of
+        the same purpose.  min_d comes from sig[(pur,pur)] minus a 4-tile tolerance.
+        """
+        self_tgt = sig.get((pur, pur), 0.0)
+        min_d = self_tgt - 4.0
+        if min_d <= 2.0:
+            return True
+        min_d2 = min_d * min_d
+        for o in objs:
+            if o.get("l", 0) == 0 and TYPE2PURPOSE.get(o["type"]) == pur:
+                if (nx - o["x"]) ** 2 + (ny - o["y"]) ** 2 < min_d2:
+                    return False
+        return True
+
+    # portals: place at sig[(TRANSPORT, TOWN)] tiles from towns within the portal zone.
+    # r=4 from zone center ignores sig and lands portals at ~10 tiles from towns even
+    # when the real map has them at 30+ tiles (e.g. Twins: real=34.1, old gen=10.8).
+    _ptrans_tgt = sig.get(("TRANSPORT", "TOWN"))
+    _portal_town_pts = [
+        (o["x"], o["y"])
+        for o in objs
+        if TYPE2PURPOSE.get(o["type"]) == "TOWN" and o.get("l", 0) == 0
+    ]
     for pt in em["portals"]:
-        for x, y in free_near(pt["zone"], pt["x"], pt["y"], r=4):
-            if place("TRANSPORT", biome.get(pt["zone"], 2), x, y):
-                break
+        placed_portal = False
+        if _ptrans_tgt is not None and _portal_town_pts and _ptrans_tgt <= W:
+            r_t = int(_ptrans_tgt + 6) + 1
+            cands = []
+            for tx, ty in _portal_town_pts:
+                for dy in range(-r_t, r_t + 1):
+                    for dx in range(-r_t, r_t + 1):
+                        d_val = math.sqrt(dx * dx + dy * dy)
+                        if abs(d_val - _ptrans_tgt) <= 5.0:
+                            nx, ny = tx + dx, ty + dy
+                            if (
+                                0 <= nx < W
+                                and 0 <= ny < H
+                                and zone[ny][nx] == pt["zone"]
+                                and not barrier[ny][nx]
+                                and (nx, ny) not in occupied
+                                and not near_choke(nx, ny, 2)
+                            ):
+                                cands.append((abs(d_val - _ptrans_tgt), nx, ny))
+            cands.sort()
+            for _, nx, ny in cands[:32]:
+                if place("TRANSPORT", biome.get(pt["zone"], 2), nx, ny):
+                    placed_portal = True
+                    break
+        if not placed_portal:
+            for x, y in free_near(pt["zone"], pt["x"], pt["y"], r=40):
+                if place("TRANSPORT", biome.get(pt["zone"], 2), x, y):
+                    break
 
     # road overlay on gated paths
     def line(x0, y0, x1, y1):
@@ -545,25 +633,245 @@ def realize(W=72, H=72, seed=7, params=None):
             return placed["DECORATION"] < decor_target
         return pur in targets and placed[pur] < targets[pur]
 
-    for anchor in ("MINE", "DWELLING", "BANK"):  # seed cluster anchors
+    _town_pts = [
+        (o["x"], o["y"])
+        for o in objs
+        if TYPE2PURPOSE.get(o["type"]) == "TOWN" and o.get("l", 0) == 0
+    ]
+    _town_ci: dict = {}  # per-purpose round-robin index into _town_pts
+
+    def _place_anchored(pur: str) -> bool:
+        """Place one object of `pur` at sig[(pur,"TOWN")] tiles from a town.
+        Enforces a minimum self-distance between same-purpose objects so that
+        round-robin placement to the same town ring does not cluster them.
+        Returns True (after incrementing placed[pur]) on success, False if no
+        valid tile found within the ring (caller falls back to next_spot()).
+        """
+        if not _town_pts:
+            return False
+        tgt = sig.get((pur, "TOWN"))
+        if tgt is None or tgt > 35:
+            return False
+        ci = _town_ci.get(pur, 0)
+        r = int(tgt + 4) + 1
+        for attempt in range(len(_town_pts)):
+            tx, ty = _town_pts[(ci + attempt) % len(_town_pts)]
+            cands = []
+            for dy in range(-r, r + 1):
+                for dx in range(-r, r + 1):
+                    d = math.sqrt(dx * dx + dy * dy)
+                    if abs(d - tgt) <= 3.5:
+                        nx, ny = tx + dx, ty + dy
+                        if ok_tile(nx, ny) and _self_dist_ok(pur, nx, ny):
+                            cands.append((abs(d - tgt), nx, ny))
+            cands.sort()
+            for _, nx, ny in cands[:32]:
+                if ok_tile(nx, ny) and _self_dist_ok(pur, nx, ny) and place(pur, terr[ny][nx]["t"], nx, ny):
+                    placed[pur] += 1
+                    _town_ci[pur] = (ci + attempt + 1) % len(_town_pts)
+                    return True
+        return False
+
+    # Mine/dwelling/bank seeds: use town-relative placement so they land at the
+    # corpus-derived distance from towns rather than fully random scatter. This
+    # ensures the mine→guard grow motif ends up at approximately the right town
+    # distance, and fixes the main spreading problem (mines in random zones far
+    # from any town inflate every pair involving mines, overwhelming the adjacency
+    # signal). Falls back to next_spot() if no sig entry or no free ring tile.
+    #
+    # Bank exception: when sig[(MINE,BANK)] > sig[(MINE,TOWN)] + sig[(BANK,TOWN)],
+    # mines and banks CANNOT be on the same island (triangle inequality violated).
+    # Town-ring places banks near the same towns as mines → small mine-bank distance.
+    # Instead, use mine-anchored placement at the correct sig[(MINE,BANK)] distance,
+    # which lands banks on different islands from mines (matching real-map geometry).
+    _mb_tgt = sig.get(("MINE", "BANK"))
+    _mine_town_d = sig.get(("MINE", "TOWN")) or 0.0
+    _bank_town_d = sig.get(("BANK", "TOWN")) or 0.0
+    _use_mine_anch_bank = bool(
+        _mb_tgt is not None
+        and _mb_tgt <= 35
+        and _mb_tgt > _mine_town_d + _bank_town_d
+    )
+
+    for anchor in ("MINE", "DWELLING"):
         while placed[anchor] < targets.get(anchor, 0):
-            s = next_spot()
-            if s is None:
-                break
-            if place(anchor, terr[s[1]][s[0]]["t"], *s):
-                placed[anchor] += 1
+            if not _place_anchored(anchor):
+                s = next_spot()
+                if s is None:
+                    break
+                if place(anchor, terr[s[1]][s[0]]["t"], *s):
+                    placed[anchor] += 1
+
+    # Mine positions used for mine-anchored placement (BANK pre-placement + leftover fill).
+    _mine_pts = [
+        (o["x"], o["y"])
+        for o in objs
+        if TYPE2PURPOSE.get(o["type"]) == "MINE" and o.get("l", 0) == 0
+    ]
+    _mine_anch_ci: dict = {}  # per-purpose round-robin index into _mine_pts
+    def _place_mine_anchored(pur: str, tgt: float) -> bool:
+        """Place one pur object at tgt tiles from a mine (round-robin across mines).
+
+        Only fires when tgt ≤ 35 and there are mines to anchor to.  Used for:
+        - GUARD when tgt > 9.5 (grow step skipped this pair; mine-ring matches corpus)
+        - BANK when mines and banks must be on different islands (SEP condition)
+        """
+        if not _mine_pts or tgt > 35:
+            return False
+        ci = _mine_anch_ci.get(pur, 0)
+        r = int(tgt + 4) + 1
+        for attempt in range(len(_mine_pts)):
+            mx, my = _mine_pts[(ci + attempt) % len(_mine_pts)]
+            cands = []
+            for dy in range(-r, r + 1):
+                for dx in range(-r, r + 1):
+                    d = math.sqrt(dx * dx + dy * dy)
+                    if abs(d - tgt) <= 3.5:
+                        nx, ny = mx + dx, my + dy
+                        if ok_tile(nx, ny) and _self_dist_ok(pur, nx, ny):
+                            cands.append((abs(d - tgt), nx, ny))
+            cands.sort()
+            for _, nx, ny in cands[:32]:
+                if ok_tile(nx, ny) and _self_dist_ok(pur, nx, ny) and place(pur, terr[ny][nx]["t"], nx, ny):
+                    placed[pur] += 1
+                    _mine_anch_ci[pur] = (ci + attempt + 1) % len(_mine_pts)
+                    return True
+        return False
+
+    # Purpose-to-purpose anchored placement: when sig[(Q, P)] ≤ P2P_THRESH tiles,
+    # place P near already-placed Q objects at that corpus distance. This fixes the
+    # dominant failure mode where every purpose ends up in the same town rings
+    # (wrong inter-purpose distances): BANK→BANK clustering, GUARD near rewards, etc.
+    _P2P_THRESH = 17.0
+    _p2p_anch_ci: dict = {}  # per-(pur, anchor_pur) round-robin index
+
+    def _place_p2p_anchored(pur: str, anchor_pur: str, tgt: float) -> bool:
+        """Place one pur object at tgt tiles from an anchor_pur object on level 0.
+        Round-robins over already-placed anchor_pur objects. Mirrors _place_mine_anchored."""
+        if tgt > 35:
+            return False
+        anch_pts = [
+            (o["x"], o["y"])
+            for o in objs
+            if TYPE2PURPOSE.get(o["type"]) == anchor_pur and o.get("l", 0) == 0
+        ]
+        if not anch_pts:
+            return False
+        # Town-ring guard: only accept positions that are also within ±7 tiles of the
+        # purpose's target town distance.  Without this, self-anchor chains objects
+        # across the map (each placed 9-10 tiles from the last, drifting >35 tiles
+        # from any town and breaking all other pairs that depend on town proximity).
+        town_tgt = sig.get((pur, "TOWN"))
+        _P2P_TOWN_TOL = 7.0
+        ci_key = (pur, anchor_pur)
+        ci = _p2p_anch_ci.get(ci_key, 0)
+        r = int(tgt + 4) + 1
+        for attempt in range(len(anch_pts)):
+            px, py = anch_pts[(ci + attempt) % len(anch_pts)]
+            cands = []
+            for dy in range(-r, r + 1):
+                for dx in range(-r, r + 1):
+                    d = math.sqrt(dx * dx + dy * dy)
+                    if abs(d - tgt) <= 3.5:
+                        nx, ny = px + dx, py + dy
+                        if not ok_tile(nx, ny):
+                            continue
+                        if town_tgt is not None and town_tgt <= 30 and _town_pts:
+                            if not any(
+                                abs(math.sqrt((nx - tx) ** 2 + (ny - ty) ** 2) - town_tgt)
+                                <= _P2P_TOWN_TOL
+                                for tx, ty in _town_pts
+                            ):
+                                continue
+                        cands.append((abs(d - tgt), nx, ny))
+            cands.sort()
+            for _, nx, ny in cands[:32]:
+                if ok_tile(nx, ny) and _self_dist_ok(pur, nx, ny) and place(pur, terr[ny][nx]["t"], nx, ny):
+                    placed[pur] += 1
+                    _p2p_anch_ci[ci_key] = (ci + attempt + 1) % len(anch_pts)
+                    return True
+        return False
+
+    def _try_p2p(pur: str) -> bool:
+        """Self-cluster: place pur at sig[(pur,pur)] tiles from an already-placed pur
+        object.  Only fires when the self-distance is tight (≤ P2P_THRESH) and at
+        least one pur object is already placed.  Cross-purpose anchoring is deliberately
+        excluded: it moves objects away from their town rings, inflating town-distance
+        errors for other pairs."""
+        tgt = sig.get((pur, pur))
+        if tgt is None or tgt > _P2P_THRESH:
+            return False
+        return _place_p2p_anchored(pur, pur, tgt)
+
+    # When banks are naturally close-clustered (sig(BANK,BANK) ≤ _P2P_THRESH), alternate
+    # mine-anchor (even index = seed) and p2p (odd index = pair partner).  This replicates
+    # real maps where banks form pairs ~sig(BANK,BANK) tiles apart near different mines,
+    # giving correct BANK→BANK spacing without collapsing all banks into one cluster.
+    # (Full p2p chain: degeneration for large bank counts, e.g. Twins 12 banks → 2-tile median;
+    #  pure mine-anchor: over-disperses, e.g. Rebellion 5 banks → 24-tile median vs sig 9.8.)
+    _bank_bb = sig.get(("BANK", "BANK"))
+    _tight_bank = _bank_bb is not None and _bank_bb <= _P2P_THRESH
+
+    while placed["BANK"] < targets.get("BANK", 0):
+        _bank_is_pair = _tight_bank and placed["BANK"] % 2 == 1
+        if _bank_is_pair and _try_p2p("BANK"):
+            continue
+        if _use_mine_anch_bank and _place_mine_anchored("BANK", _mb_tgt):
+            continue
+        if _place_anchored("BANK"):
+            continue
+        if _tight_bank and not _bank_is_pair and _try_p2p("BANK"):
+            continue
+        s = next_spot()
+        if s is None:
+            break
+        if place("BANK", terr[s[1]][s[0]]["t"], *s):
+            placed["BANK"] += 1
 
     def grow_touch(o, T2, offs):
-        for _ in range(8):
-            dx, dy = offs[rnd.randrange(len(offs))] if offs else rnd.choice(NB8)
+        T2_pur = TYPE2PURPOSE.get(T2)
+        tgt_d = None
+        if not offs:
+            candidates = NB8
+        else:
+            anc_pur = TYPE2PURPOSE.get(o["type"])
+            tgt_d = sig.get((anc_pur, T2_pur)) if anc_pur and T2_pur else None
+            if tgt_d is not None:
+                # All adjacency offsets are immediate-touch (1–8 tiles). When the
+                # target places this pair further apart than any offset can reach,
+                # forced-close growth makes sp_mean larger, not smaller: the
+                # generated distance (~3 tiles) is more wrong than density-implied
+                # scatter (~tgt_d tiles). Skip; leftover fill matches target spacing.
+                max_off_d = max(math.sqrt(d[0] ** 2 + d[1] ** 2) for d in offs)
+                if tgt_d > max_off_d + 1.5:
+                    return False
+                # Sort deduplicated offsets by closeness to the target signature
+                # distance for this pair so placed objects match the real map's
+                # inter-object spacing rather than always landing at 1-2 tiles.
+                candidates = sorted(
+                    offs, key=lambda d: abs(math.sqrt(d[0] ** 2 + d[1] ** 2) - tgt_d)
+                )[:16]
+            else:
+                # No target signature (plain generation): prefer closest offsets.
+                candidates = offs[:16]
+        for dx, dy in candidates:
+            if tgt_d is not None:
+                actual_d = math.sqrt(dx ** 2 + dy ** 2)
+                if abs(actual_d - tgt_d) > 2.0:
+                    break  # remaining candidates are further from tgt_d (sorted)
             x, y = o["x"] + dx, o["y"] + dy
-            if ok_tile(x, y) and place_type(T2, x, y):
+            if not ok_tile(x, y):
+                continue
+            if place_type(T2, x, y):
                 return True
         return False
 
-    def drain(queue, allow_decor=True):
+    def drain(queue, allow_decor=True, seed_only=False):
         qi = 0
+        seed_end = len(queue) if seed_only else None
         while qi < len(queue) and qi < 40000:
+            if seed_end is not None and qi >= seed_end:
+                break  # don't cascade: only process objects that were seeds
             o = queue[qi]
             qi += 1
             X = terr[o["y"]][o["x"]]["t"] if 0 <= o["x"] < W and 0 <= o["y"] < H else 2
@@ -571,9 +879,22 @@ def realize(W=72, H=72, seed=7, params=None):
             if not prof:
                 continue
             deg = prof.get("avg_degree", 0)
+            anc_pur = TYPE2PURPOSE.get(o["type"])
             for entry in prof.get("neighbours", []):
                 T2 = entry["type"]
                 if not allow_decor and TYPE2PURPOSE.get(T2) == "DECORATION":
+                    continue
+                # In the gameplay pass (allow_decor=False), skip RESOURCE_PILE and
+                # REWARD_PICKUP growth.  Placing them adjacent to mines or chokepoint
+                # guards puts them at wrong cross-purpose distances from SPELL_SKILL,
+                # BANK, etc. — the shuffled control beats the graph for those pairs.
+                # Leftover fill places them at sig-derived town/mine distances instead.
+                if not allow_decor and TYPE2PURPOSE.get(T2) in ("RESOURCE_PILE", "REWARD_PICKUP"):
+                    continue
+                # Decoration anchors only grow decoration: gameplay objects placed by
+                # decoration-adjacency end up at tree positions, not at their target
+                # signature distances.  Leftover fill handles them with town-anchoring.
+                if anc_pur == "DECORATION" and TYPE2PURPOSE.get(T2) != "DECORATION":
                     continue
                 if not cap_ok(T2):
                     continue
@@ -589,6 +910,10 @@ def realize(W=72, H=72, seed=7, params=None):
 
     # grow GAMEPLAY motifs from anchors first (mine -> guard + resources); decoration
     # is handled by the forest blanket below so small rock doesn't crowd out trees.
+    # seed_only=True: stop after one level — grown objects do not cascade further.
+    # Without this limit the cascade packs mine/town zones with 4+ objects each,
+    # exhausting the good interior tiles and pushing BONUS_TEMP / BANK / etc. to
+    # the outer zones far from towns, which mirrors the shuffled control or worse.
     _PRI = {"MINE": 0, "DWELLING": 0, "BANK": 0, "TOWN": 1, "GUARD": 1}
     drain(
         sorted(
@@ -596,7 +921,33 @@ def realize(W=72, H=72, seed=7, params=None):
             key=lambda o: _PRI.get(TYPE2PURPOSE.get(o["type"]), 2),
         ),
         allow_decor=False,
+        seed_only=True,
     )
+
+    # Guarantee mine→guard coupling when the target map actually has tight coupling
+    # (sig MINE→GUARD < 3.0 tiles). Without this condition, forcing guards within
+    # 1-2 tiles of mines on maps where guards are far from mines increases the
+    # signature error, making the graph worse than the shuffled control on those maps.
+    _mg_sig = sig.get(("MINE", "GUARD"))
+    if _mg_sig is not None and _mg_sig < 3.0:
+        guard_xy = {(q["x"], q["y"]) for q in objs if TYPE2PURPOSE.get(q["type"]) == "GUARD"}
+        for anc in [o for o in objs if TYPE2PURPOSE.get(o["type"]) == "MINE"]:
+            if any(max(abs(gx - anc["x"]), abs(gy - anc["y"])) <= 5 for gx, gy in guard_xy):
+                continue
+            aterr = terr[anc["y"]][anc["x"]]["t"] if 0 <= anc["x"] < W and 0 <= anc["y"] < H else 2
+            aprof = _ADJ.get(f"{aterr}|{anc['type']}")
+            if not aprof:
+                continue
+            for aentry in sorted(
+                [e for e in aprof.get("neighbours", []) if TYPE2PURPOSE.get(e["type"]) == "GUARD"],
+                key=lambda e: -e["share"],
+            ):
+                if not cap_ok(aentry["type"]):
+                    continue
+                if grow_touch(anc, aentry["type"], aentry.get("offsets")):
+                    placed[TYPE2PURPOSE.get(aentry["type"], "?")] += 1
+                    guard_xy.add((objs[-1]["x"], objs[-1]["y"]))
+                    break
 
     # blanket the rest with terrain-correct decoration forests grown from seeds
     while placed["DECORATION"] < decor_target:
@@ -609,9 +960,64 @@ def realize(W=72, H=72, seed=7, params=None):
             placed["DECORATION"] += 1
             drain([objs[-1]])
 
-    # leftover fill: top up any gameplay purpose still under its cap
-    for pur in GAMEPLAY_PUR:
+    # leftover fill: top up any gameplay purpose still under its cap.
+    # Mine-anchored fill is used for:
+    #   GUARD: when the grow step skipped the mine→guard pair (tgt > adjacency reach
+    #          ≈ 9.5 tiles), mine-anchored leftover fill places guards at the corpus
+    #          mine→guard distance instead of clustering them in town rings.
+    #   BANK: when mines and banks are on different islands (SEP condition), continue
+    #         mine-anchored placement in leftover fill (same policy as pre-placement).
+    #   RESOURCE_PILE: grow step no longer places these adjacent to mines; mine-
+    #          anchored fill restores correct MINE→RESOURCE_PILE spacing when the sig
+    #          distance is small (≤ 12 tiles, reachable in a typical zone).
+    #
+    # Process rarest purposes first so high-count purposes (RESOURCE_PILE,
+    # REWARD_PICKUP) do not saturate the town-adjacent rings before rare auxiliaries
+    # (SPELL_SKILL, MANA, BONUS_TEMP, STAT_PERMANENT) get their correct positions.
+    # Tight self-clustering: when sig[(pur,pur)] ≤ _TIGHT_SELF tiles, try p2p
+    # BEFORE town-ring once the first object is placed.  This prevents purposes that
+    # should cluster (BONUS_TEMP self-dist 5.5 tiles, REWARD_PICKUP 1-3 tiles, etc.)
+    # from scattering to separate town rings, which makes graph worse than shuffle.
+    _TIGHT_SELF = 12.0
+    _fill_order = sorted(GAMEPLAY_PUR, key=lambda pur: targets.get(pur, 0))
+    for pur in _fill_order:
         while placed[pur] < targets.get(pur, 0):
+            if pur == "GUARD":
+                _mg_tgt = sig.get(("MINE", "GUARD"))
+                if _mg_tgt is not None and _mg_tgt > 9.5 and _place_mine_anchored("GUARD", _mg_tgt):
+                    continue
+            elif pur == "BANK":
+                _bank_is_pair = _tight_bank and placed["BANK"] % 2 == 1
+                if _bank_is_pair and _try_p2p("BANK"):
+                    continue
+                if _use_mine_anch_bank and _place_mine_anchored("BANK", _mb_tgt):
+                    continue
+            elif pur == "SPELL_SKILL":
+                # Mine-far: some maps have SPELL_SKILL far from mines (sig > 15 tiles).
+                # Town-ring placement puts SS near mines (when mines are near towns);
+                # mine-anchored placement at sig(MINE,SS) ensures the correct distance.
+                _ms_ss = sig.get(("MINE", "SPELL_SKILL"))
+                if _ms_ss is not None and _ms_ss > 15 and _place_mine_anchored("SPELL_SKILL", _ms_ss):
+                    continue
+            elif pur == "RESOURCE_PILE":
+                # Restore MINE→RESOURCE_PILE spacing: grow step no longer places these
+                # adjacent to mines, so use mine-anchored fill when the sig distance is
+                # reachable within a zone (≤ 12 tiles).
+                _mr_tgt = sig.get(("MINE", "RESOURCE_PILE"))
+                if _mr_tgt is not None and _mr_tgt <= 12 and _place_mine_anchored("RESOURCE_PILE", _mr_tgt):
+                    continue
+            # Tight self-clustering: for purposes that should cluster tightly (small
+            # self-distance in the real map), prefer p2p over town-ring scatter once
+            # the first object is correctly placed.  This prevents objects with small
+            # real-map self-distance (e.g. BONUS_TEMP=5.5 tiles) from ending up in
+            # separate town rings 20+ tiles apart, which the shuffled control beats.
+            _pur_self_d = sig.get((pur, pur), 99)
+            if _pur_self_d <= _TIGHT_SELF and placed[pur] >= 1 and _try_p2p(pur):
+                continue
+            if _place_anchored(pur):
+                continue
+            if _try_p2p(pur):
+                continue
             s = next_spot()
             if s is None:
                 break
