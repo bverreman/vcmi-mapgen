@@ -400,10 +400,12 @@ def realize(W=72, H=72, seed=7, params=None):
 
     def _self_dist_ok(pur: str, nx: int, ny: int) -> bool:
         """True if (nx,ny) is at least min_d tiles from all already-placed objects of
-        the same purpose.  min_d comes from sig[(pur,pur)] minus a 4-tile tolerance.
+        the same purpose.  min_d = sig[(pur,pur)] - 2.0 so the median self-distance
+        tracks the target closely (tolerance 2 instead of 4 prevents packing at the
+        minimum and causing the graph to be no better than random scatter).
         """
         self_tgt = sig.get((pur, pur), 0.0)
-        min_d = self_tgt - 4.0
+        min_d = self_tgt - 2.0
         if min_d <= 2.0:
             return True
         min_d2 = min_d * min_d
@@ -646,6 +648,11 @@ def realize(W=72, H=72, seed=7, params=None):
         round-robin placement to the same town ring does not cluster them.
         Returns True (after incrementing placed[pur]) on success, False if no
         valid tile found within the ring (caller falls back to next_spot()).
+
+        On small canvases (e.g. 36×36) the sig ring often lands mostly off the
+        map.  When the primary tgt produces no candidates for any town, a
+        fallback capped to 40% of the smaller axis is tried so objects still
+        get placed near towns rather than scattering via next_spot().
         """
         if not _town_pts:
             return False
@@ -653,23 +660,32 @@ def realize(W=72, H=72, seed=7, params=None):
         if tgt is None or tgt > 35:
             return False
         ci = _town_ci.get(pur, 0)
-        r = int(tgt + 4) + 1
-        for attempt in range(len(_town_pts)):
-            tx, ty = _town_pts[(ci + attempt) % len(_town_pts)]
-            cands = []
-            for dy in range(-r, r + 1):
-                for dx in range(-r, r + 1):
-                    d = math.sqrt(dx * dx + dy * dy)
-                    if abs(d - tgt) <= 3.5:
-                        nx, ny = tx + dx, ty + dy
-                        if ok_tile(nx, ny) and _self_dist_ok(pur, nx, ny):
-                            cands.append((abs(d - tgt), nx, ny))
-            cands.sort()
-            for _, nx, ny in cands[:32]:
-                if ok_tile(nx, ny) and _self_dist_ok(pur, nx, ny) and place(pur, terr[ny][nx]["t"], nx, ny):
-                    placed[pur] += 1
-                    _town_ci[pur] = (ci + attempt + 1) % len(_town_pts)
-                    return True
+        # Candidate ring distances: try the real sig target first; if that ring
+        # falls mostly off-map (no candidates for any town), also try a ring
+        # capped at 60% of the smaller canvas axis.  60% is chosen so the fallback
+        # only fires when the ring genuinely overshoots the canvas (e.g.
+        # sig(BANK,TOWN)=23.5 on a 36×36 map → cap=21), not for rings that merely
+        # reach the edges (e.g. sig(SP,TOWN)=18 on 36×36 → still has in-bounds tiles).
+        _cap = int(min(W, H) * 0.60)
+        use_tgts = [tgt] if tgt <= _cap else [tgt, _cap]
+        for use_tgt in use_tgts:
+            r = int(use_tgt + 4) + 1
+            for attempt in range(len(_town_pts)):
+                tx, ty = _town_pts[(ci + attempt) % len(_town_pts)]
+                cands = []
+                for dy in range(-r, r + 1):
+                    for dx in range(-r, r + 1):
+                        d = math.sqrt(dx * dx + dy * dy)
+                        if abs(d - use_tgt) <= 3.5:
+                            nx, ny = tx + dx, ty + dy
+                            if ok_tile(nx, ny) and _self_dist_ok(pur, nx, ny):
+                                cands.append((abs(d - use_tgt), nx, ny))
+                cands.sort()
+                for _, nx, ny in cands[:32]:
+                    if ok_tile(nx, ny) and _self_dist_ok(pur, nx, ny) and place(pur, terr[ny][nx]["t"], nx, ny):
+                        placed[pur] += 1
+                        _town_ci[pur] = (ci + attempt + 1) % len(_town_pts)
+                        return True
         return False
 
     # Mine/dwelling/bank seeds: use town-relative placement so they land at the
@@ -692,6 +708,73 @@ def realize(W=72, H=72, seed=7, params=None):
         and _mb_tgt <= 35
         and _mb_tgt > _mine_town_d + _bank_town_d
     )
+
+    # Purpose-to-purpose anchored placement — defined early so it is available
+    # for the MINE/DWELLING pre-placement loop below.
+    _P2P_THRESH = 17.0
+    _p2p_anch_ci: dict = {}  # per-(pur, anchor_pur) round-robin index
+
+    def _place_p2p_anchored(pur: str, anchor_pur: str, tgt: float) -> bool:
+        """Place one pur object at tgt tiles from an anchor_pur object on level 0.
+        Round-robins over already-placed anchor_pur objects. Mirrors _place_mine_anchored."""
+        if tgt > 35:
+            return False
+        anch_pts = [
+            (o["x"], o["y"])
+            for o in objs
+            if TYPE2PURPOSE.get(o["type"]) == anchor_pur and o.get("l", 0) == 0
+        ]
+        if not anch_pts:
+            return False
+        # Town-ring guard: only accept positions that are also within ±TOL tiles of the
+        # purpose's target town distance.  Without this, self-anchor chains objects
+        # across the map (each placed 9-10 tiles from the last, drifting >35 tiles
+        # from any town and breaking all other pairs that depend on town proximity).
+        # On small canvases (< 64 tiles) _place_anchored may have used its off-map
+        # fallback ring (40% of canvas), placing anchors inside the nominal ±7 band
+        # but outside the intended ring.  A wider tolerance lets p2p cluster near those
+        # fallback-placed anchors rather than failing and falling to scatter.
+        town_tgt = sig.get((pur, "TOWN"))
+        _P2P_TOWN_TOL = 7.0
+        ci_key = (pur, anchor_pur)
+        ci = _p2p_anch_ci.get(ci_key, 0)
+        r = int(tgt + 4) + 1
+        for attempt in range(len(anch_pts)):
+            px, py = anch_pts[(ci + attempt) % len(anch_pts)]
+            cands = []
+            for dy in range(-r, r + 1):
+                for dx in range(-r, r + 1):
+                    d = math.sqrt(dx * dx + dy * dy)
+                    if abs(d - tgt) <= 3.5:
+                        nx, ny = px + dx, py + dy
+                        if not ok_tile(nx, ny):
+                            continue
+                        if town_tgt is not None and town_tgt <= 30 and _town_pts:
+                            if not any(
+                                abs(math.sqrt((nx - tx) ** 2 + (ny - ty) ** 2) - town_tgt)
+                                <= _P2P_TOWN_TOL
+                                for tx, ty in _town_pts
+                            ):
+                                continue
+                        cands.append((abs(d - tgt), nx, ny))
+            cands.sort()
+            for _, nx, ny in cands[:32]:
+                if ok_tile(nx, ny) and _self_dist_ok(pur, nx, ny) and place(pur, terr[ny][nx]["t"], nx, ny):
+                    placed[pur] += 1
+                    _p2p_anch_ci[ci_key] = (ci + attempt + 1) % len(anch_pts)
+                    return True
+        return False
+
+    def _try_p2p(pur: str) -> bool:
+        """Self-cluster: place pur at sig[(pur,pur)] tiles from an already-placed pur
+        object.  Only fires when the self-distance is tight (≤ P2P_THRESH) and at
+        least one pur object is already placed.  Cross-purpose anchoring is deliberately
+        excluded: it moves objects away from their town rings, inflating town-distance
+        errors for other pairs."""
+        tgt = sig.get((pur, pur))
+        if tgt is None or tgt > _P2P_THRESH:
+            return False
+        return _place_p2p_anchored(pur, pur, tgt)
 
     for anchor in ("MINE", "DWELLING"):
         while placed[anchor] < targets.get(anchor, 0):
@@ -737,71 +820,6 @@ def realize(W=72, H=72, seed=7, params=None):
                     _mine_anch_ci[pur] = (ci + attempt + 1) % len(_mine_pts)
                     return True
         return False
-
-    # Purpose-to-purpose anchored placement: when sig[(Q, P)] ≤ P2P_THRESH tiles,
-    # place P near already-placed Q objects at that corpus distance. This fixes the
-    # dominant failure mode where every purpose ends up in the same town rings
-    # (wrong inter-purpose distances): BANK→BANK clustering, GUARD near rewards, etc.
-    _P2P_THRESH = 17.0
-    _p2p_anch_ci: dict = {}  # per-(pur, anchor_pur) round-robin index
-
-    def _place_p2p_anchored(pur: str, anchor_pur: str, tgt: float) -> bool:
-        """Place one pur object at tgt tiles from an anchor_pur object on level 0.
-        Round-robins over already-placed anchor_pur objects. Mirrors _place_mine_anchored."""
-        if tgt > 35:
-            return False
-        anch_pts = [
-            (o["x"], o["y"])
-            for o in objs
-            if TYPE2PURPOSE.get(o["type"]) == anchor_pur and o.get("l", 0) == 0
-        ]
-        if not anch_pts:
-            return False
-        # Town-ring guard: only accept positions that are also within ±7 tiles of the
-        # purpose's target town distance.  Without this, self-anchor chains objects
-        # across the map (each placed 9-10 tiles from the last, drifting >35 tiles
-        # from any town and breaking all other pairs that depend on town proximity).
-        town_tgt = sig.get((pur, "TOWN"))
-        _P2P_TOWN_TOL = 7.0
-        ci_key = (pur, anchor_pur)
-        ci = _p2p_anch_ci.get(ci_key, 0)
-        r = int(tgt + 4) + 1
-        for attempt in range(len(anch_pts)):
-            px, py = anch_pts[(ci + attempt) % len(anch_pts)]
-            cands = []
-            for dy in range(-r, r + 1):
-                for dx in range(-r, r + 1):
-                    d = math.sqrt(dx * dx + dy * dy)
-                    if abs(d - tgt) <= 3.5:
-                        nx, ny = px + dx, py + dy
-                        if not ok_tile(nx, ny):
-                            continue
-                        if town_tgt is not None and town_tgt <= 30 and _town_pts:
-                            if not any(
-                                abs(math.sqrt((nx - tx) ** 2 + (ny - ty) ** 2) - town_tgt)
-                                <= _P2P_TOWN_TOL
-                                for tx, ty in _town_pts
-                            ):
-                                continue
-                        cands.append((abs(d - tgt), nx, ny))
-            cands.sort()
-            for _, nx, ny in cands[:32]:
-                if ok_tile(nx, ny) and _self_dist_ok(pur, nx, ny) and place(pur, terr[ny][nx]["t"], nx, ny):
-                    placed[pur] += 1
-                    _p2p_anch_ci[ci_key] = (ci + attempt + 1) % len(anch_pts)
-                    return True
-        return False
-
-    def _try_p2p(pur: str) -> bool:
-        """Self-cluster: place pur at sig[(pur,pur)] tiles from an already-placed pur
-        object.  Only fires when the self-distance is tight (≤ P2P_THRESH) and at
-        least one pur object is already placed.  Cross-purpose anchoring is deliberately
-        excluded: it moves objects away from their town rings, inflating town-distance
-        errors for other pairs."""
-        tgt = sig.get((pur, pur))
-        if tgt is None or tgt > _P2P_THRESH:
-            return False
-        return _place_p2p_anchored(pur, pur, tgt)
 
     # When banks are naturally close-clustered (sig(BANK,BANK) ≤ _P2P_THRESH), alternate
     # mine-anchor (even index = seed) and p2p (odd index = pair partner).  This replicates
@@ -862,6 +880,8 @@ def realize(W=72, H=72, seed=7, params=None):
             x, y = o["x"] + dx, o["y"] + dy
             if not ok_tile(x, y):
                 continue
+            if T2_pur not in (None, "DECORATION") and not _self_dist_ok(T2_pur, x, y):
+                continue
             if place_type(T2, x, y):
                 return True
         return False
@@ -884,13 +904,14 @@ def realize(W=72, H=72, seed=7, params=None):
                 T2 = entry["type"]
                 if not allow_decor and TYPE2PURPOSE.get(T2) == "DECORATION":
                     continue
-                # In the gameplay pass (allow_decor=False), skip RESOURCE_PILE and
-                # REWARD_PICKUP growth.  Placing them adjacent to mines or chokepoint
-                # guards puts them at wrong cross-purpose distances from SPELL_SKILL,
-                # BANK, etc. — the shuffled control beats the graph for those pairs.
-                # Leftover fill places them at sig-derived town/mine distances instead.
+                # In the gameplay pass (allow_decor=False), allow RESOURCE_PILE and
+                # REWARD_PICKUP only from MINE anchors.  The visit_mask fix extends
+                # mine offsets to 1–8 tiles; grow_touch's tgt_d filter places them at
+                # sig(MINE,RP) distance, creating correct mine→RP motifs.  From non-mine
+                # anchors (guards, towns) the cross-purpose geometry is wrong, so skip.
                 if not allow_decor and TYPE2PURPOSE.get(T2) in ("RESOURCE_PILE", "REWARD_PICKUP"):
-                    continue
+                    if anc_pur != "MINE":
+                        continue
                 # Decoration anchors only grow decoration: gameplay objects placed by
                 # decoration-adjacency end up at tree positions, not at their target
                 # signature distances.  Leftover fill handles them with town-anchoring.
@@ -983,8 +1004,16 @@ def realize(W=72, H=72, seed=7, params=None):
     for pur in _fill_order:
         while placed[pur] < targets.get(pur, 0):
             if pur == "GUARD":
+                # p2p clustering before mine-anchor: round-robin mine dispersion
+                # places one guard per mine across all mines, maximally spreading
+                # them and inflating GUARD-GUARD distance above the shuffled control.
+                # Instead: first guard seeds via mine-anchor; subsequent guards
+                # cluster near it (p2p) until that mine's region is full, then
+                # mine-anchor seeds the next cluster at the next mine.
+                if placed["GUARD"] >= 1 and _try_p2p("GUARD"):
+                    continue
                 _mg_tgt = sig.get(("MINE", "GUARD"))
-                if _mg_tgt is not None and _mg_tgt > 9.5 and _place_mine_anchored("GUARD", _mg_tgt):
+                if _mg_tgt is not None and _place_mine_anchored("GUARD", _mg_tgt):
                     continue
             elif pur == "BANK":
                 _bank_is_pair = _tight_bank and placed["BANK"] % 2 == 1
@@ -999,12 +1028,31 @@ def realize(W=72, H=72, seed=7, params=None):
                 _ms_ss = sig.get(("MINE", "SPELL_SKILL"))
                 if _ms_ss is not None and _ms_ss > 15 and _place_mine_anchored("SPELL_SKILL", _ms_ss):
                     continue
+            elif pur == "BONUS_TEMP":
+                # p2p before mine-anchor: same clustering logic as GUARD — prevent
+                # round-robin dispersion that spreads BONUS_TEMP across all mines.
+                if placed["BONUS_TEMP"] >= 1 and _try_p2p("BONUS_TEMP"):
+                    continue
+                _mb_bt = sig.get(("MINE", "BONUS_TEMP"))
+                # Only mine-anchor when the layout is symmetric (BT→MINE not much
+                # larger than MINE→BT).  When sig(BT,MINE) >> sig(MINE,BT) the map
+                # has most BTs far from mines; anchoring all of them near mines
+                # inflates sig(BT,MINE) far above target.
+                _bt_mine = sig.get(("BONUS_TEMP", "MINE"))
+                _bt_mine_sym = _bt_mine is None or _bt_mine <= (_mb_bt or 99) + 8
+                if _mb_bt is not None and _mb_bt <= 20 and _bt_mine_sym and _place_mine_anchored("BONUS_TEMP", _mb_bt):
+                    continue
+            elif pur == "REWARD_PICKUP":
+                if placed["REWARD_PICKUP"] >= 1 and _try_p2p("REWARD_PICKUP"):
+                    continue
+                _mr_rwp = sig.get(("MINE", "REWARD_PICKUP"))
+                if _mr_rwp is not None and _mr_rwp <= 20 and _place_mine_anchored("REWARD_PICKUP", _mr_rwp):
+                    continue
             elif pur == "RESOURCE_PILE":
-                # Restore MINE→RESOURCE_PILE spacing: grow step no longer places these
-                # adjacent to mines, so use mine-anchored fill when the sig distance is
-                # reachable within a zone (≤ 12 tiles).
+                if placed["RESOURCE_PILE"] >= 1 and _try_p2p("RESOURCE_PILE"):
+                    continue
                 _mr_tgt = sig.get(("MINE", "RESOURCE_PILE"))
-                if _mr_tgt is not None and _mr_tgt <= 12 and _place_mine_anchored("RESOURCE_PILE", _mr_tgt):
+                if _mr_tgt is not None and _mr_tgt <= 20 and _place_mine_anchored("RESOURCE_PILE", _mr_tgt):
                     continue
             # Tight self-clustering: for purposes that should cluster tightly (small
             # self-distance in the real map), prefer p2p over town-ring scatter once

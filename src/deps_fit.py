@@ -132,23 +132,44 @@ def points_gen(fm):
     ]
 
 
-def fit(target_path, W=72, H=72, seeds=12):
+def fit(target_path, W=None, H=None, seeds=12):
     m = h3m.parse_file(target_path)
+    # Use the real map's canvas size for small maps (< 72 tiles); cap at 72×72
+    # for large maps.  Running a 36×36 real map on a 72×72 canvas spreads
+    # objects over 4× the area: sig targets from the real map become unreachable
+    # on the larger canvas, so _place_anchored falls back to next_spot() scatter
+    # and the graph is no better than shuffled.  Using the real canvas size lets
+    # sig values land where placement can satisfy them.
+    if W is None:
+        W = min(m.width, 72)
+    if H is None:
+        H = min(m.height, 72)
     tgt = feats_real(m)
     params = params_from_target(tgt, W, H, m.two_level)
     sig_real = deps_spatial.signature(points_real(m))
-    params["sig"] = sig_real  # target spatial signature as a placement knob
+    # Real maps larger than the generator canvas produce sig distances proportional
+    # to their size.  Scale distances down so placement targets are reachable.
+    if m.width > W:
+        _scale = W / m.width
+        sig_target = {k: v * _scale for k, v in sig_real.items()}
+    else:
+        sig_target = sig_real
+    params["sig"] = sig_target
     best = None
     for seed in range(seeds):
         fm, tree, em = R.realize(W, H, seed=seed, params=params)
         g = feats_gen(fm, tree)
         d = distance(tgt, g)  # (total, dens, terr, struct)
         sig_gen = deps_spatial.signature(points_gen(fm))
-        sp_mean, sp_diffs = deps_spatial.compare(sig_real, sig_gen)
-        total = d[0] + 5.0 * sp_mean  # object-distance now part of the objective
+        sp_mean, sp_diffs = deps_spatial.compare(sig_target, sig_gen)
+        # Quadratic over-bar penalty strongly penalizes high-sp seeds so a seed
+        # with near-zero density error but sp_mean=3.5 can't beat one with
+        # density_error=150 and sp_mean=2.36.  Without this, the wrong seed is
+        # selected on dense/small maps (Dawn of War, Jihad, Elbow Room).
+        total = d[0] + 90.0 * sp_mean + 600.0 * max(0.0, sp_mean - 2.5) ** 2
         if best is None or total < best[0]:
             best = (total, d, sp_mean, sp_diffs, seed, fm, tree, g, sig_gen)
-    return m, tgt, params, sig_real, best
+    return m, tgt, params, sig_target, best
 
 
 if __name__ == "__main__":
