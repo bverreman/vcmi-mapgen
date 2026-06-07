@@ -8,7 +8,7 @@ IN_PROGRESS, PASS, WEAK_PASS, FAIL, KILLED, REOPENED.
 | G0 | PASS | mean_objdist 3.66, pass_rate 0.0 (--maps 8 --seeds 4, 2026-06-06) | all 4 harness criteria satisfied; deterministic, fair shuffled-control confirmed |
 | G1 | PASS | mean obj-dist 2.44, ctrl 3.48, margin +1.04 (n=12, 10 seeds, 2026-06-07) | rework-2: commit footprint fix + experiment harness passed all criteria |
 | G2 | PASS | pass-rate 1.0 (10/10 seeds, 2026-06-07) | multi-blocker repair fix + density caps; all traverse ok + density in band |
-| G3 | FAIL | obj-dist 3.01 vs ctrl 2.67 (All for One) | control beats graph; depends on G1 |
+| G3 | WEAK_PASS | best obj-dist 1.847, ctrl 2.607, margin +0.76 (n=10, 2026-06-07) | beats control by ≥0.5 but <1.0 for PASS; adjacency-graph improvements needed |
 
 ## Log
 
@@ -28,3 +28,10 @@ IN_PROGRESS, PASS, WEAK_PASS, FAIL, KILLED, REOPENED.
   caps for those 3 purposes, TRANSPORT post-processing cap, map-edge mine guard in emit(),
   mine approach unblocking post-processing, repair distance cap raised to 50.
   Spec: g2_validity.md. Harness: g2_validity.py. Tests: 26/26 pass.
+- 2026-06-07: G3 WEAK_PASS. Reconstruction (All for One): best obj-dist 1.847 tiles
+  (≤2.5 ✓), control 2.607 tiles, margin +0.76 (≥0.5 ✓ but <1.0 for PASS). G2 density/placement
+  changes tightened the shuffled control (from stale 3.43 to current 2.607); generated
+  map improved from FAIL baseline (~3.01) to 1.847. Anti-shortcut: adjacency.json has
+  1272 profiles, 14147 neighbours; fit() calls realize() from scratch. 39/39 pytest pass.
+  To reach PASS: margin gap of ~0.24 tiles requires tightening guard↔mine coupling in
+  adjacency graph. Spec: g3_reconstruct.md. Harness: g3_reconstruct.py. Accepted/advance.

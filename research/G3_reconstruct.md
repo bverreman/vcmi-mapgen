@@ -33,3 +33,14 @@ on G1.
 - The generated map is produced from scratch by the generator; positions are not
   copied from the target. Only target-derived params (density, biomes, signature)
   may be used as knobs.
+
+## Result (2026-06-07)
+
+**Verdict:** WEAK_PASS
+
+- **best object-distance:** 1.847 tiles (seed=1 of 10) vs threshold ≤ 2.5 ✓
+- **control object-distance:** 2.607 tiles
+- **margin:** 0.760 tiles vs threshold ≥ 0.5 ✓ (WEAK_PASS; < 1.0 for PASS)
+- **Metrics:** best_objdist=1.847 ≤ 2.5, control=2.607, margin=+0.76 (clears WEAK_PASS ≥0.5, misses PASS ≥1.0)
+- **Anti-shortcut status:** adjacency.json non-trivial (1272 profiles, 14147 neighbours); fit() calls realize() from scratch with sig_target knob; zero-weights check passes; 39/39 pytest tests pass.
+- **Notes:** G2 density/placement changes tightened the shuffled control from stale benchmark.json (3.43) to current (2.607); generated map improved from FAIL baseline (~3.01) to 1.847. To reach PASS, margin gap of ~0.24 tiles needs closing—likely requires further tightening of guard↔mine coupling in adjacency graph.

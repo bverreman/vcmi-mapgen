@@ -1,8 +1,15 @@
 {
   "gate_check": {
     "status": "approved",
-    "verdict": "PASS",
-    "failed_criteria": [],
+    "verdict": "WEAK_PASS",
+    "failed_criteria": [
+      {
+        "criterion": "control margin (ctrl \u2212 best) \u2265 1.0 for PASS",
+        "expected": "\u2265 1.0 tile",
+        "observed": "0.760 tiles",
+        "severity": "non-blocking (meets WEAK_PASS bar of \u2265 0.5)"
+      }
+    ],
     "anti_shortcut_flags": {
       "lookup_flag": false,
       "oracle_route_flag": false,
@@ -10,6 +17,6 @@
       "leak_flag": false
     },
     "zero_weights_changes_output": true,
-    "notes": "Re-ran g2_validity.py --seeds 10: pass_rate=1.0 (10/10 seeds), exceeding the \u22650.9 bar. pytest 26/26. Density band confirmed [0.5, 2.0]x \u2014 not widened. traverse.py is real 4-connected BFS from start town through subterranean gates; no proxy or lookup shortcut. reachability_repair uses Dijkstra + all_removable set (correctly clears all overlapping decoration blockers per tile, not just the first). Adjacency weights are corpus-learned share*deg Poisson parameters \u2014 non-zero, real. The 'oracle' in extract.py is corpus extraction only, not on the generation path. No banned patterns found. Gate is clean."
+    "notes": "Independent re-run of 10 seeds confirms the implementer's numbers exactly: best_objdist=1.847 (well inside the 2.5 PASS bar), control=2.607, margin=0.76. The margin clears WEAK_PASS (\u2265 0.5) but not PASS (\u2265 1.0). Adjacency graph is non-trivial (1272 profiles, 14147 neighbours); fit() calls realize() with sig_target knob; no position-copy shortcut found. All 39 pytest tests pass. The G3 kill criterion from the README is tied to G1 (not G3), so WEAK_PASS routes as approved/accept-and-advance. To reach PASS, the margin gap of ~0.24 tiles needs closing \u2014 likely requires further tightening of guard\u2194mine coupling in the adjacency graph."
   }
 }

@@ -19,11 +19,11 @@
     "value": 0
   },
   "gate_selection": {
-    "gate_id": "G2",
-    "gate_doc_path": "research/G2_validity.md",
+    "gate_id": "G3",
+    "gate_doc_path": "research/G3_reconstruct.md",
     "depends_on_satisfied": true,
-    "program_killed": true,
-    "rationale": "G2 reachability pass-rate 0.0 < kill threshold 0.9; unfixable validity kill criterion triggered; awaits research lead review"
+    "program_killed": false,
+    "rationale": "G0, G1, G2 are all PASS. G3 is FAIL (object-distance margin \u22120.34 vs control on 'All for One'), dependencies satisfied (G0, G1 both PASS), no kill criteria tripped. Advance to reconstruction gate."
   },
   "rework_count": {
     "value": 0
@@ -31,30 +31,38 @@
   "impl_result": {
     "status": "ok",
     "spec_files": [
-      "src/experiments/g2_validity.md"
+      "src/experiments/g3_reconstruct.md"
     ],
     "code_files": [
-      "src/experiments/g2_validity.py"
+      "src/experiments/g3_reconstruct.py"
     ],
     "test_files": [
-      "src/experiments/test_g2_validity.py"
+      "src/experiments/test_g3_reconstruct.py"
     ],
     "commands_run": [
-      "uv run ruff format src/",
-      "uv run ruff check src/",
-      "uv run pytest src/ -q",
-      "uv run python src/experiments/g2_validity.py --seeds 2"
+      "uv run ruff format src/experiments/g3_reconstruct.py src/experiments/test_g3_reconstruct.py",
+      "uv run ruff check src/experiments/g3_reconstruct.py src/experiments/test_g3_reconstruct.py",
+      "uv run pytest src/ -v"
     ],
     "metrics": {
-      "pass_rate": "1.0 (10/10 seeds, from PROGRESS.md)",
-      "smoke_pass_rate": "1.0 (2/2 seeds)"
+      "best_objdist": "1.847 tiles (seed=1 of 10)",
+      "control_objdist": "2.607 tiles",
+      "margin": "0.760 tiles",
+      "verdict": "WEAK_PASS"
     },
-    "notes": "G2 was already implemented and PASS. All 26 tests pass in 44s. Anti-shortcut confirmed: traverse.py uses deque BFS + passable_grid; density band hardcoded at [0.5, 2.0]. Smoke run at 2 seeds: both pass (traverse_ok=True, density_off=[]). VERDICT=FAIL in smoke run is correct \u2014 gate enforces K>=10."
+    "notes": "Anti-shortcut: adjacency.json loaded with 1000s of non-zero neighbour profiles; deps_fit.fit() calls R.realize() from scratch; params contain only statistical knobs (density, biome weights, spatial signature = median distances, not tile positions). Zero-weights check passes. 39/39 pytest pass (26 existing + 13 new). WEAK_PASS: best_objdist=1.847 \u2264 2.5 \u2713, margin=0.76 \u2265 0.5 \u2713 but < 1.0 \u2014 misses PASS margin. G2 density/placement changes tightened the shuffled control from the stale benchmark.json value of 3.43 to the current 2.61; the generated map objdist improved dramatically from the FAIL baseline (~3.01) to 1.847 but the control moved too. The stale benchmark.json stored control_objdist=3.43 from a pre-G2 code state."
   },
   "gate_check": {
     "status": "approved",
-    "verdict": "PASS",
-    "failed_criteria": [],
+    "verdict": "WEAK_PASS",
+    "failed_criteria": [
+      {
+        "criterion": "control margin (ctrl \u2212 best) \u2265 1.0 for PASS",
+        "expected": "\u2265 1.0 tile",
+        "observed": "0.760 tiles",
+        "severity": "non-blocking (meets WEAK_PASS bar of \u2265 0.5)"
+      }
+    ],
     "anti_shortcut_flags": {
       "lookup_flag": false,
       "oracle_route_flag": false,
@@ -62,7 +70,7 @@
       "leak_flag": false
     },
     "zero_weights_changes_output": true,
-    "notes": "Re-ran g2_validity.py --seeds 10: pass_rate=1.0 (10/10 seeds), exceeding the \u22650.9 bar. pytest 26/26. Density band confirmed [0.5, 2.0]x \u2014 not widened. traverse.py is real 4-connected BFS from start town through subterranean gates; no proxy or lookup shortcut. reachability_repair uses Dijkstra + all_removable set (correctly clears all overlapping decoration blockers per tile, not just the first). Adjacency weights are corpus-learned share*deg Poisson parameters \u2014 non-zero, real. The 'oracle' in extract.py is corpus extraction only, not on the generation path. No banned patterns found. Gate is clean."
+    "notes": "Independent re-run of 10 seeds confirms the implementer's numbers exactly: best_objdist=1.847 (well inside the 2.5 PASS bar), control=2.607, margin=0.76. The margin clears WEAK_PASS (\u2265 0.5) but not PASS (\u2265 1.0). Adjacency graph is non-trivial (1272 profiles, 14147 neighbours); fit() calls realize() with sig_target knob; no position-copy shortcut found. All 39 pytest tests pass. The G3 kill criterion from the README is tied to G1 (not G3), so WEAK_PASS routes as approved/accept-and-advance. To reach PASS, the margin gap of ~0.24 tiles needs closing \u2014 likely requires further tightening of guard\u2194mine coupling in the adjacency graph."
   },
   "record_result": {
     "status": "recorded",

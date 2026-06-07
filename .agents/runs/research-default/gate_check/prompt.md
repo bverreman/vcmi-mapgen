@@ -5,8 +5,8 @@ trust the implementer's self-report — re-verify. `hrnet-scientific-method-cont
 and `hrnet-never-constraints` define the bar.
 
 Repository: `/mnt/data/workspace/vcmi-mapgen`
-Gate: `G2`
-Gate doc: `research/G2_validity.md`
+Gate: `G3`
+Gate doc: `research/G3_reconstruct.md`
 
 ## Time budget — ~10 min wall-clock
 

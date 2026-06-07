@@ -1,9 +1,9 @@
 {
   "gate_selection": {
-    "gate_id": "G2",
-    "gate_doc_path": "research/G2_validity.md",
+    "gate_id": "G3",
+    "gate_doc_path": "research/G3_reconstruct.md",
     "depends_on_satisfied": true,
-    "program_killed": true,
-    "rationale": "G2 reachability pass-rate 0.0 < kill threshold 0.9; unfixable validity kill criterion triggered; awaits research lead review"
+    "program_killed": false,
+    "rationale": "G0, G1, G2 are all PASS. G3 is FAIL (object-distance margin \u22120.34 vs control on 'All for One'), dependencies satisfied (G0, G1 both PASS), no kill criteria tripped. Advance to reconstruction gate."
   }
 }

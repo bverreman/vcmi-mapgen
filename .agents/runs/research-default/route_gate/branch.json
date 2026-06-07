@@ -1,5 +1,5 @@
 {
   "path": "gate_selection.gate_id",
-  "value": "G2",
+  "value": "G3",
   "next": "check_killed_pre"
 }

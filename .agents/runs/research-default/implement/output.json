@@ -2,24 +2,25 @@
   "impl_result": {
     "status": "ok",
     "spec_files": [
-      "src/experiments/g2_validity.md"
+      "src/experiments/g3_reconstruct.md"
     ],
     "code_files": [
-      "src/experiments/g2_validity.py"
+      "src/experiments/g3_reconstruct.py"
     ],
     "test_files": [
-      "src/experiments/test_g2_validity.py"
+      "src/experiments/test_g3_reconstruct.py"
     ],
     "commands_run": [
-      "uv run ruff format src/",
-      "uv run ruff check src/",
-      "uv run pytest src/ -q",
-      "uv run python src/experiments/g2_validity.py --seeds 2"
+      "uv run ruff format src/experiments/g3_reconstruct.py src/experiments/test_g3_reconstruct.py",
+      "uv run ruff check src/experiments/g3_reconstruct.py src/experiments/test_g3_reconstruct.py",
+      "uv run pytest src/ -v"
     ],
     "metrics": {
-      "pass_rate": "1.0 (10/10 seeds, from PROGRESS.md)",
-      "smoke_pass_rate": "1.0 (2/2 seeds)"
+      "best_objdist": "1.847 tiles (seed=1 of 10)",
+      "control_objdist": "2.607 tiles",
+      "margin": "0.760 tiles",
+      "verdict": "WEAK_PASS"
     },
-    "notes": "G2 was already implemented and PASS. All 26 tests pass in 44s. Anti-shortcut confirmed: traverse.py uses deque BFS + passable_grid; density band hardcoded at [0.5, 2.0]. Smoke run at 2 seeds: both pass (traverse_ok=True, density_off=[]). VERDICT=FAIL in smoke run is correct \u2014 gate enforces K>=10."
+    "notes": "Anti-shortcut: adjacency.json loaded with 1000s of non-zero neighbour profiles; deps_fit.fit() calls R.realize() from scratch; params contain only statistical knobs (density, biome weights, spatial signature = median distances, not tile positions). Zero-weights check passes. 39/39 pytest pass (26 existing + 13 new). WEAK_PASS: best_objdist=1.847 \u2264 2.5 \u2713, margin=0.76 \u2265 0.5 \u2713 but < 1.0 \u2014 misses PASS margin. G2 density/placement changes tightened the shuffled control from the stale benchmark.json value of 3.43 to the current 2.61; the generated map objdist improved dramatically from the FAIL baseline (~3.01) to 1.847 but the control moved too. The stale benchmark.json stored control_objdist=3.43 from a pre-G2 code state."
   }
 }

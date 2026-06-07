@@ -7,8 +7,8 @@ convenience — especially `hrnet-never-constraints`, `hrnet-rules-authoring-wor
 `hrnet-sparsity-aware-param-counting`, `hrnet-reproducibility-multiseed`.
 
 Repository: `/mnt/data/workspace/vcmi-mapgen`
-Gate: `G2`
-Gate doc: `research/G2_validity.md`
+Gate: `G3`
+Gate doc: `research/G3_reconstruct.md`
 Code root: `src`
 Progress log: `research/PROGRESS.md`
 

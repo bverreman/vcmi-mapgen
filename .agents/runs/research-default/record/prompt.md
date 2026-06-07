@@ -5,7 +5,7 @@ The gate resolved. Persist the outcome per the PROGRESS protocol in
 
 Repository: `/mnt/data/workspace/vcmi-mapgen`
 Program: `research`
-Gate: `G2`
+Gate: `G3`
 Progress log: `research/PROGRESS.md`
 Forced outcome (if escalated): ``
 

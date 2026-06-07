@@ -1,5 +1,5 @@
 {
   "path": "gate_selection.program_killed",
-  "value": true,
+  "value": false,
   "next": "reset_rework"
 }

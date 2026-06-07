@@ -19,40 +19,37 @@
     "value": 0
   },
   "gate_selection": {
-    "gate_id": "G2",
-    "gate_doc_path": "research/G2_validity.md",
+    "gate_id": "G3",
+    "gate_doc_path": "research/G3_reconstruct.md",
     "depends_on_satisfied": true,
-    "program_killed": true,
-    "rationale": "G2 reachability pass-rate 0.0 < kill threshold 0.9; unfixable validity kill criterion triggered; awaits research lead review"
+    "program_killed": false,
+    "rationale": "G0, G1, G2 are all PASS. G3 is FAIL (object-distance margin \u22120.34 vs control on 'All for One'), dependencies satisfied (G0, G1 both PASS), no kill criteria tripped. Advance to reconstruction gate."
   },
   "rework_count": {
-    "value": 1
+    "value": 0
   },
   "impl_result": {
     "status": "ok",
     "spec_files": [
-      "src/experiments/g1_coverage.md"
+      "src/experiments/g2_validity.md"
     ],
     "code_files": [
-      "src/deps_adj.py",
-      "src/experiments/g1_coverage.py"
+      "src/experiments/g2_validity.py"
     ],
     "test_files": [
-      "src/experiments/test_g1_coverage.py"
+      "src/experiments/test_g2_validity.py"
     ],
     "commands_run": [
-      "uv run pytest src/",
-      "uv run python src/benchmark.py --maps 12 --seeds 10"
+      "uv run ruff format src/",
+      "uv run ruff check src/",
+      "uv run pytest src/ -q",
+      "uv run python src/experiments/g2_validity.py --seeds 2"
     ],
     "metrics": {
-      "n": "12",
-      "mean_objdist": "2.44 tiles",
-      "pct_within_3.0": "83%",
-      "mean_control_objdist": "3.48 tiles",
-      "control_margin": "+1.04 tiles (graph beats shuffled)",
-      "determinism": "confirmed (deps_adj uses random.seed(0))"
+      "pass_rate": "1.0 (10/10 seeds, from PROGRESS.md)",
+      "smoke_pass_rate": "1.0 (2/2 seeds)"
     },
-    "notes": "Root cause addressed (rework-2): deps_adj.footprint() was only including blocked/anchor tiles, so approach-guard tiles (~2 tiles from mine anchor) were invisible to the immediate-touch graph. Fix: include visit_mask tiles (bit SET = visitable approach direction) in footprint. This recovered mine\u2192guard coupling \u2014 guard entries now appear in mine profiles. Prior reworks fixed p2p clustering (rework-0) and added quadratic spread penalty (rework-1). All three G1 criteria now satisfied on full 12-map 10-seed run WITH rebuild: mean 2.44 \u2264 2.5, 83% \u2264 3.0 bar, margin 1.04 \u2265 1.0. Anti-shortcut: deps_spatial.py unmodified, no lookup/oracle/repair/leak flags. 20/20 tests pass."
+    "notes": "G2 was already implemented and PASS. All 26 tests pass in 44s. Anti-shortcut confirmed: traverse.py uses deque BFS + passable_grid; density band hardcoded at [0.5, 2.0]. Smoke run at 2 seeds: both pass (traverse_ok=True, density_off=[]). VERDICT=FAIL in smoke run is correct \u2014 gate enforces K>=10."
   },
   "gate_check": {
     "status": "approved",
@@ -65,7 +62,7 @@
       "leak_flag": false
     },
     "zero_weights_changes_output": true,
-    "notes": "Full benchmark rerun (--maps 12 --seeds 10) confirmed: n=12, mean_objdist=2.44 (<=2.5), pct_within_3.0=83% (>=80%), control_margin=+1.04 tiles (>=1.0 PASS threshold). deps_spatial.py structurally intact (verified by test_deps_spatial_unmodified). reachability_repair removes decoration/mountain blockers only \u2014 does not game object-distance metric. Seed selection quadratic penalty at 2.5 is legitimate optimization, not metric gaming. Using target sig for mine-guard coupling conditioned on target params is explicitly within G1's 'params from target' allowance. Two individual maps (Search for the Grail: 3.44, The Five Rings: 3.43) exceed the 3.0 per-map bar but gate criterion is mean+percentile. Two maps show generator objdist slightly worse than their individual shuffled control (Dawn of War 2.36 vs 1.52, One Bad Day 1.96 vs 1.91) \u2014 acceptable; gate is mean-level not per-map. Margin of 1.04 is tight but unambiguously PASS."
+    "notes": "Re-ran g2_validity.py --seeds 10: pass_rate=1.0 (10/10 seeds), exceeding the \u22650.9 bar. pytest 26/26. Density band confirmed [0.5, 2.0]x \u2014 not widened. traverse.py is real 4-connected BFS from start town through subterranean gates; no proxy or lookup shortcut. reachability_repair uses Dijkstra + all_removable set (correctly clears all overlapping decoration blockers per tile, not just the first). Adjacency weights are corpus-learned share*deg Poisson parameters \u2014 non-zero, real. The 'oracle' in extract.py is corpus extraction only, not on the generation path. No banned patterns found. Gate is clean."
   },
   "record_result": {
     "status": "recorded",
