@@ -26,13 +26,25 @@ NB8 = [(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)]
 
 
 def footprint(o, tmpl):
-    """Solid tiles an object occupies (blocked body + its anchor)."""
+    """Tiles an object occupies: blocked body + anchor + visitable entry tiles.
+
+    Including visit_mask tiles ensures that a guard placed at a mine's approach
+    tile (2 tiles off, outside the blocked footprint) still counts as immediately
+    touching the mine — recovering the mine→guard coupling lost by the strict
+    immediate-touch graph.
+    """
     s = set(deps.blocked_tiles(o, tmpl))
     s.add((o.x, o.y))
+    for r in range(6):
+        b = tmpl.visit_mask[r]
+        for c in range(8):
+            if (b >> (7 - c)) & 1:  # bit SET = visitable/approach tile
+                s.add((o.x - (7 - c), o.y - (5 - r)))
     return s
 
 
 def build(paths):
+    random.seed(0)  # deterministic offset sampling so adjacency.json is reproducible
     model = collections.defaultdict(
         lambda: {
             "deg": [],
