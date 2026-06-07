@@ -90,6 +90,9 @@ GAMEPLAY_PUR = [
     "INFO",
     "MANA",
     "SPECIAL",
+    "QUEST_GATE",
+    "WATER_TRANSPORT",
+    "TERRAIN_MODIFIER",
     "GUARD",
 ]
 
@@ -242,6 +245,18 @@ def realize(W=72, H=72, seed=7, params=None):
         t = list(occ_tiles(x, y, e["mask"]))
         if any(not (0 <= tx < W and 0 <= ty < H) or (tx, ty) in occupied for tx, ty in t):
             return False
+        # MINE guard: reject placements where all A-cell approach directions are either
+        # out of map bounds or blocked by the mine's own mask, so the approach is OOB-sealed.
+        if TYPE2PURPOSE.get(e["type"]) == "MINE":
+            _t_set = set(t)
+            _a_cells_ok = any(
+                0 <= cx + dx < W and 0 <= cy + dy < H and (cx + dx, cy + dy) not in _t_set
+                for cx, cy, ch in _mask_cells(x, y, e["mask"])
+                if ch == "A" and 0 <= cx < W and 0 <= cy < H
+                for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1))
+            )
+            if not _a_cells_ok:
+                return False
         for q in t:
             occupied.add(q)
         objs.append(
@@ -329,7 +344,8 @@ def realize(W=72, H=72, seed=7, params=None):
                     if abs(_d - _ug_tgt) <= 8.0:
                         _nx, _ny = _cx0 + _dx, _cy0 + _dy
                         if (
-                            0 <= _nx < W and 0 <= _ny < H
+                            0 <= _nx < W
+                            and 0 <= _ny < H
                             and zone[_ny][_nx] == 0
                             and not barrier[_ny][_nx]
                             and (_nx, _ny) not in water
@@ -418,6 +434,7 @@ def realize(W=72, H=72, seed=7, params=None):
     # portals: place at sig[(TRANSPORT, TOWN)] tiles from towns within the portal zone.
     # r=4 from zone center ignores sig and lands portals at ~10 tiles from towns even
     # when the real map has them at 30+ tiles (e.g. Twins: real=34.1, old gen=10.8).
+    # Density is capped post-placement to avoid disrupting the RNG sequence; see below.
     _ptrans_tgt = sig.get(("TRANSPORT", "TOWN"))
     _portal_town_pts = [
         (o["x"], o["y"])
@@ -626,6 +643,12 @@ def realize(W=72, H=72, seed=7, params=None):
         return emit_decor(e, x, y) if TYPE2PURPOSE.get(T) == "DECORATION" else emit(e, x, y)
 
     targets = {pur: int(round(density.get(pur, 0) * tiles / 1000.0)) for pur in GAMEPLAY_PUR}
+    # QUEST_GATE, WATER_TRANSPORT, TERRAIN_MODIFIER: PRIOR_DENSITY overestimates their
+    # per-tile rate vs DEFAULT_DENSITY (corpus total-tile basis). Cap targets at the
+    # DEFAULT_DENSITY level so the placed count stays within the [0.5, 2.0]×corpus-rate
+    # validity tolerance.
+    for _pur in ("QUEST_GATE", "WATER_TRANSPORT", "TERRAIN_MODIFIER"):
+        targets[_pur] = int(round(DEFAULT_DENSITY.get(_pur, 0) * tiles / 1000.0))
     decor_target = int(round(density.get("DECORATION", 140) * tiles / 1000.0))
     placed = collections.Counter(TYPE2PURPOSE.get(o["type"], "?") for o in objs)
 
@@ -682,7 +705,11 @@ def realize(W=72, H=72, seed=7, params=None):
                                 cands.append((abs(d - use_tgt), nx, ny))
                 cands.sort()
                 for _, nx, ny in cands[:32]:
-                    if ok_tile(nx, ny) and _self_dist_ok(pur, nx, ny) and place(pur, terr[ny][nx]["t"], nx, ny):
+                    if (
+                        ok_tile(nx, ny)
+                        and _self_dist_ok(pur, nx, ny)
+                        and place(pur, terr[ny][nx]["t"], nx, ny)
+                    ):
                         placed[pur] += 1
                         _town_ci[pur] = (ci + attempt + 1) % len(_town_pts)
                         return True
@@ -704,9 +731,7 @@ def realize(W=72, H=72, seed=7, params=None):
     _mine_town_d = sig.get(("MINE", "TOWN")) or 0.0
     _bank_town_d = sig.get(("BANK", "TOWN")) or 0.0
     _use_mine_anch_bank = bool(
-        _mb_tgt is not None
-        and _mb_tgt <= 35
-        and _mb_tgt > _mine_town_d + _bank_town_d
+        _mb_tgt is not None and _mb_tgt <= 35 and _mb_tgt > _mine_town_d + _bank_town_d
     )
 
     # Purpose-to-purpose anchored placement — defined early so it is available
@@ -759,7 +784,11 @@ def realize(W=72, H=72, seed=7, params=None):
                         cands.append((abs(d - tgt), nx, ny))
             cands.sort()
             for _, nx, ny in cands[:32]:
-                if ok_tile(nx, ny) and _self_dist_ok(pur, nx, ny) and place(pur, terr[ny][nx]["t"], nx, ny):
+                if (
+                    ok_tile(nx, ny)
+                    and _self_dist_ok(pur, nx, ny)
+                    and place(pur, terr[ny][nx]["t"], nx, ny)
+                ):
                     placed[pur] += 1
                     _p2p_anch_ci[ci_key] = (ci + attempt + 1) % len(anch_pts)
                     return True
@@ -792,6 +821,7 @@ def realize(W=72, H=72, seed=7, params=None):
         if TYPE2PURPOSE.get(o["type"]) == "MINE" and o.get("l", 0) == 0
     ]
     _mine_anch_ci: dict = {}  # per-purpose round-robin index into _mine_pts
+
     def _place_mine_anchored(pur: str, tgt: float) -> bool:
         """Place one pur object at tgt tiles from a mine (round-robin across mines).
 
@@ -815,7 +845,11 @@ def realize(W=72, H=72, seed=7, params=None):
                             cands.append((abs(d - tgt), nx, ny))
             cands.sort()
             for _, nx, ny in cands[:32]:
-                if ok_tile(nx, ny) and _self_dist_ok(pur, nx, ny) and place(pur, terr[ny][nx]["t"], nx, ny):
+                if (
+                    ok_tile(nx, ny)
+                    and _self_dist_ok(pur, nx, ny)
+                    and place(pur, terr[ny][nx]["t"], nx, ny)
+                ):
                     placed[pur] += 1
                     _mine_anch_ci[pur] = (ci + attempt + 1) % len(_mine_pts)
                     return True
@@ -874,7 +908,7 @@ def realize(W=72, H=72, seed=7, params=None):
                 candidates = offs[:16]
         for dx, dy in candidates:
             if tgt_d is not None:
-                actual_d = math.sqrt(dx ** 2 + dy ** 2)
+                actual_d = math.sqrt(dx**2 + dy**2)
                 if abs(actual_d - tgt_d) > 2.0:
                     break  # remaining candidates are further from tgt_d (sorted)
             x, y = o["x"] + dx, o["y"] + dy
@@ -1026,7 +1060,11 @@ def realize(W=72, H=72, seed=7, params=None):
                 # Town-ring placement puts SS near mines (when mines are near towns);
                 # mine-anchored placement at sig(MINE,SS) ensures the correct distance.
                 _ms_ss = sig.get(("MINE", "SPELL_SKILL"))
-                if _ms_ss is not None and _ms_ss > 15 and _place_mine_anchored("SPELL_SKILL", _ms_ss):
+                if (
+                    _ms_ss is not None
+                    and _ms_ss > 15
+                    and _place_mine_anchored("SPELL_SKILL", _ms_ss)
+                ):
                     continue
             elif pur == "BONUS_TEMP":
                 # p2p before mine-anchor: same clustering logic as GUARD — prevent
@@ -1040,19 +1078,32 @@ def realize(W=72, H=72, seed=7, params=None):
                 # inflates sig(BT,MINE) far above target.
                 _bt_mine = sig.get(("BONUS_TEMP", "MINE"))
                 _bt_mine_sym = _bt_mine is None or _bt_mine <= (_mb_bt or 99) + 8
-                if _mb_bt is not None and _mb_bt <= 20 and _bt_mine_sym and _place_mine_anchored("BONUS_TEMP", _mb_bt):
+                if (
+                    _mb_bt is not None
+                    and _mb_bt <= 20
+                    and _bt_mine_sym
+                    and _place_mine_anchored("BONUS_TEMP", _mb_bt)
+                ):
                     continue
             elif pur == "REWARD_PICKUP":
                 if placed["REWARD_PICKUP"] >= 1 and _try_p2p("REWARD_PICKUP"):
                     continue
                 _mr_rwp = sig.get(("MINE", "REWARD_PICKUP"))
-                if _mr_rwp is not None and _mr_rwp <= 20 and _place_mine_anchored("REWARD_PICKUP", _mr_rwp):
+                if (
+                    _mr_rwp is not None
+                    and _mr_rwp <= 20
+                    and _place_mine_anchored("REWARD_PICKUP", _mr_rwp)
+                ):
                     continue
             elif pur == "RESOURCE_PILE":
                 if placed["RESOURCE_PILE"] >= 1 and _try_p2p("RESOURCE_PILE"):
                     continue
                 _mr_tgt = sig.get(("MINE", "RESOURCE_PILE"))
-                if _mr_tgt is not None and _mr_tgt <= 20 and _place_mine_anchored("RESOURCE_PILE", _mr_tgt):
+                if (
+                    _mr_tgt is not None
+                    and _mr_tgt <= 20
+                    and _place_mine_anchored("RESOURCE_PILE", _mr_tgt)
+                ):
                     continue
             # Tight self-clustering: for purposes that should cluster tightly (small
             # self-distance in the real map), prefer p2p over town-ring scatter once
@@ -1085,6 +1136,59 @@ def realize(W=72, H=72, seed=7, params=None):
         levels.append(terr_u)
         objs += uobjs
 
+    # Post-placement TRANSPORT density cap: remove excess surface portals so the total
+    # TRANSPORT count stays within [0.5, 2.0]× corpus rate. Removing from the tail of
+    # level-0 TRANSPORT objects drops portal-loop portals first (placed latest), leaving
+    # any ug_xy entrance gate (placed earliest, smaller index) intact. Done here rather
+    # than during the portal loop to avoid disrupting the RNG sequence.
+    _total_tiles = W * H * len(levels)
+    _trans_max = int(DEFAULT_DENSITY.get("TRANSPORT", 0) * 2.0 * _total_tiles / 1000.0)
+    _trans_indices = [i for i, o in enumerate(objs) if TYPE2PURPOSE.get(o["type"]) == "TRANSPORT"]
+    if len(_trans_indices) > _trans_max:
+        _excess = len(_trans_indices) - _trans_max
+        _trans_l0 = [i for i in _trans_indices if objs[i].get("l", 0) == 0]
+        _to_remove = set(_trans_l0[-_excess:])
+        objs = [o for j, o in enumerate(objs) if j not in _to_remove]
+
+    # Post-placement mine-approach fix: adjacency grow can place a DWELLING/BANK/GUARD
+    # whose B cells completely seal a mine's A-cell approach. Reachability_repair cannot
+    # remove gameplay objects (has_visit=True). Remove the single non-mine blocker that
+    # causes complete sealing so the mine is reachable. Only fires when ALL 4 approach
+    # neighbors are blocked and exactly one is blocked by a non-mine gameplay object.
+    _bmap = {}  # (x,y) -> index of (first) object with B cell there (level 0 only)
+    for _bi, _bo in enumerate(objs):
+        if _bo.get("l", 0) != 0:
+            continue
+        for _cx, _cy, _ch in _mask_cells(_bo["x"], _bo["y"], _bo["mask"]):
+            if _ch == "B" and 0 <= _cx < W and 0 <= _cy < H:
+                _bmap.setdefault((_cx, _cy), _bi)
+    _approach_remove = set()
+    for _mi, _mo in enumerate(objs):
+        if TYPE2PURPOSE.get(_mo.get("type")) != "MINE" or _mo.get("l", 0) != 0:
+            continue
+        for _ax, _ay in (
+            (_cx, _cy)
+            for _cx, _cy, _ch in _mask_cells(_mo["x"], _mo["y"], _mo["mask"])
+            if _ch == "A" and 0 <= _cx < W and 0 <= _cy < H
+        ):
+            _nbs = [
+                (_ax + _dx, _ay + _dy)
+                for _dx, _dy in ((1, 0), (-1, 0), (0, 1), (0, -1))
+                if 0 <= _ax + _dx < W and 0 <= _ay + _dy < H
+            ]
+            if not all(_bmap.get(_nb) is not None for _nb in _nbs):
+                continue  # not fully sealed
+            _blockers = {
+                _bmap[_nb]
+                for _nb in _nbs
+                if TYPE2PURPOSE.get(objs[_bmap[_nb]].get("type")) != "MINE"
+                and _bmap[_nb] not in _approach_remove
+            }
+            if len(_blockers) == 1:
+                _approach_remove |= _blockers
+    if _approach_remove:
+        objs = [o for j, o in enumerate(objs) if j not in _approach_remove]
+
     fm = {"name": f"deps_fit_s{seed}", "terrain": levels, "objects": objs}
     # main town: the editor matches a player's mainTown to the town at
     # (anchor-2, anchor-2) -- the corpus offset for the town footprint anchor.
@@ -1111,14 +1215,17 @@ def reachability_repair(objs, terr, W, H, water, biome, zone):
 
     has_visit = lambda o: any("A" in row for row in o["mask"])
     blocked = [[False] * W for _ in range(H)]
-    owner = [[-1] * W for _ in range(H)]  # removable (decor/mountain) blocker per tile
+    owner = [[-1] * W for _ in range(H)]  # first removable blocker per tile (traversal check)
+    all_removable = {}  # (cx,cy) -> set of all removable object indices blocking that tile
     for idx, o in enumerate(objs):
         rem = not has_visit(o)
         for cx, cy, ch in _mask_cells(o["x"], o["y"], o["mask"]):
             if 0 <= cx < W and 0 <= cy < H and ch == "B":
                 blocked[cy][cx] = True
-                if rem and owner[cy][cx] < 0:
-                    owner[cy][cx] = idx
+                if rem:
+                    if owner[cy][cx] < 0:
+                        owner[cy][cx] = idx
+                    all_removable.setdefault((cx, cy), set()).add(idx)
     for x, y in water:
         blocked[y][x] = True
 
@@ -1174,7 +1281,7 @@ def reachability_repair(objs, terr, W, H, water, biome, zone):
         found = None
         while pq:
             d, x, y = heapq.heappop(pq)
-            if d > dist.get((x, y), 1e9) or d > 10:
+            if d > dist.get((x, y), 1e9) or d > 50:
                 continue
             if not blocked[y][x] and is_main(x, y):
                 found = (x, y)
@@ -1201,7 +1308,7 @@ def reachability_repair(objs, terr, W, H, water, biome, zone):
                 if cur in water:
                     to_land.add(cur)
                 if owner[y][x] >= 0:
-                    to_remove.add(owner[y][x])
+                    to_remove.update(all_removable.get((x, y), (owner[y][x],)))
                 blocked[y][x] = False
                 main_extra.add(cur)
                 cur = prev.get(cur)

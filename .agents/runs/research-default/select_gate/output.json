@@ -1,9 +1,9 @@
 {
   "gate_selection": {
-    "gate_id": "G1",
-    "gate_doc_path": "research/G1_coverage.md",
+    "gate_id": "G2",
+    "gate_doc_path": "research/G2_validity.md",
     "depends_on_satisfied": true,
-    "program_killed": false,
-    "rationale": "G0 is PASS; G1 is the lowest FAIL gate with satisfied dependency \u2014 coverage is the next question to answer."
+    "program_killed": true,
+    "rationale": "G2 reachability pass-rate 0.0 < kill threshold 0.9; unfixable validity kill criterion triggered; awaits research lead review"
   }
 }
