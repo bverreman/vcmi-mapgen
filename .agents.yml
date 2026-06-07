@@ -6,11 +6,14 @@ agents:
   claude: true
 packs:
   - vcmi-mapgen
+  - cli-writer
 localInstructions:
-  - skill: vcmi-mapgen          # always-loaded repo-root CLAUDE.md (uv + pipeline)
+  - skills:
+      - vcmi-mapgen
+      - cli-writer # always-loaded repo-root CLAUDE.md (uv + pipeline)
     paths: ["."]
     includeReadme: none
-  - skill: vcmi-mapgen-maps     # loaded when working under src/ (formats, metrics, graph)
+  - skill: vcmi-mapgen-maps # loaded when working under src/ (formats, metrics, graph)
     paths: ["src"]
 workflow:
   branch: main

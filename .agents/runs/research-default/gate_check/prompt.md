@@ -5,8 +5,17 @@ trust the implementer's self-report — re-verify. `hrnet-scientific-method-cont
 and `hrnet-never-constraints` define the bar.
 
 Repository: `/mnt/data/workspace/vcmi-mapgen`
-Gate: `G0`
-Gate doc: `research/G0_benchmark_harness.md`
+Gate: `G1`
+Gate doc: `research/G1_coverage.md`
+
+## Time budget — ~10 min wall-clock
+
+This turn has ~10 minutes (600s)
+— sized to re-run the full seed set. A command that runs past it is **killed** and
+this node restarts from scratch with no memory, so leave margin to write your JSON
+verdict. Time the measurement first; if the full set genuinely cannot fit the
+budget, run the largest subset that does and record it as a partial check in
+`notes` rather than letting the turn be killed.
 
 ## Do this
 

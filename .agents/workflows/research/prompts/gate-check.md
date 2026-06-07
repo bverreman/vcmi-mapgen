@@ -8,6 +8,15 @@ Repository: `{{ repo_dir | default('.') }}`
 Gate: `{{ gate_id }}`
 Gate doc: `{{ gate_doc_path }}`
 
+## Time budget — ~{{ node_timeout_min | default(10) }} min wall-clock
+
+This turn has ~{{ node_timeout_min | default(10) }} minutes ({{ node_timeout_s | default(600) }}s)
+— sized to re-run the full seed set. A command that runs past it is **killed** and
+this node restarts from scratch with no memory, so leave margin to write your JSON
+verdict. Time the measurement first; if the full set genuinely cannot fit the
+budget, run the largest subset that does and record it as a partial check in
+`notes` rather than letting the turn be killed.
+
 ## Do this
 
 1. Read the gate doc's **exact success gate** (numeric thresholds). Read the

@@ -58,6 +58,9 @@ nodes:
   # ── Pick the next gate ─────────────────────────────────────────────────────
   - id: select_gate
     type: agent
+    # haiku: reads the program README ladder + progress and picks the next gate id —
+    # bounded selection over existing docs, no deep reasoning needed.
+    model: haiku
     prompt: prompts/select-next-gate.md
     args:
       repo_dir: "{{ setup_result.repo_dir }}"
@@ -92,6 +95,12 @@ nodes:
   - id: implement
     type: agent
     prompt: prompts/implement-experiment.md
+    # 20 min wall-clock (also the engine default): implementing an experiment runs
+    # the program's measurement — a multi-map/multi-seed benchmark — which the old
+    # 600s ceiling could not fit. Stated here so the budget is explicit at the node.
+    # It's surfaced to the prompt (node_timeout_min) so the agent sizes its runs to
+    # finish — a turn killed at the budget restarts the node from scratch.
+    timeout: 1200
     args:
       repo_dir: "{{ setup_result.repo_dir }}"
       program_dir: "{{ cfg.program_dir }}"
@@ -107,6 +116,9 @@ nodes:
   - id: gate_check
     type: agent
     prompt: prompts/gate-check.md
+    # 20 min wall-clock: the reviewer re-runs the measurement over the FULL seed set
+    # — the most expensive run in the loop — so it gets the full implement budget.
+    timeout: 1200
     args:
       repo_dir: "{{ setup_result.repo_dir }}"
       program_dir: "{{ cfg.program_dir }}"
@@ -138,6 +150,8 @@ nodes:
   - id: do_rework
     type: agent
     prompt: prompts/rework-experiment.md
+    # 20 min wall-clock: same as implement — rework re-runs the measurement.
+    timeout: 1200
     args:
       repo_dir: "{{ setup_result.repo_dir }}"
       code_root: "{{ cfg.code_root }}"
@@ -161,6 +175,8 @@ nodes:
   # ── Record outcomes ────────────────────────────────────────────────────────
   - id: record
     type: agent
+    # haiku: writes the gate outcome to the progress file — mechanical bookkeeping.
+    model: haiku
     prompt: prompts/record-result.md
     args:
       repo_dir: "{{ setup_result.repo_dir }}"
@@ -173,6 +189,8 @@ nodes:
 
   - id: record_kill
     type: agent
+    # haiku: writes the kill outcome to the progress file — mechanical bookkeeping.
+    model: haiku
     prompt: prompts/record-result.md
     args:
       repo_dir: "{{ setup_result.repo_dir }}"
@@ -185,6 +203,8 @@ nodes:
 
   - id: escalate
     type: agent
+    # haiku: writes the forced FAIL_MAX_REWORKS outcome — mechanical bookkeeping.
+    model: haiku
     prompt: prompts/record-result.md
     args:
       repo_dir: "{{ setup_result.repo_dir }}"
@@ -202,6 +222,10 @@ nodes:
   # sound, then either submits the gate back (revive) or defines a new direction.
   - id: lead_review
     type: agent
+    # opus: the research lead — judges whether a kill was scientifically right or the
+    # gate was killed for the wrong reason. The program's direction turns on this call,
+    # so it's worth the stronger reasoning (mirrors epic-coder's opus review_plan gate).
+    model: opus
     prompt: prompts/research-lead-review.md
     args:
       repo_dir: "{{ setup_result.repo_dir }}"
@@ -234,6 +258,9 @@ nodes:
 
   - id: revive_gate
     type: agent
+    # opus: acts on the lead's verdict to revive a wrongly-killed gate — a
+    # course-correcting decision, kept on the same tier as the lead_review that drove it.
+    model: opus
     prompt: prompts/revive-gate.md
     args:
       repo_dir: "{{ setup_result.repo_dir }}"
@@ -248,6 +275,9 @@ nodes:
 
   - id: set_new_direction
     type: agent
+    # opus: defines a new research direction after a justified kill — the most
+    # open-ended, high-leverage call in the loop, so it runs on the strongest tier.
+    model: opus
     prompt: prompts/define-new-direction.md
     args:
       repo_dir: "{{ setup_result.repo_dir }}"
@@ -271,6 +301,8 @@ nodes:
 
   - id: lead_halt
     type: agent
+    # haiku: writes the forced HALTED_LEAD_REVIEW_BUDGET outcome — mechanical bookkeeping.
+    model: haiku
     prompt: prompts/record-result.md
     args:
       repo_dir: "{{ setup_result.repo_dir }}"

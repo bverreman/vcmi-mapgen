@@ -8,6 +8,15 @@ Gate: `{{ gate_id }}`
 Code root: `{{ code_root }}`
 Rework round: `{{ rework_count | default('?') }}`
 
+## Time budget — ~{{ node_timeout_min | default(10) }} min wall-clock
+
+This turn has ~{{ node_timeout_min | default(10) }} minutes ({{ node_timeout_s | default(600) }}s).
+A command that runs past it is **killed** and this node restarts from scratch with
+**no memory** — the budget is wasted and the same fix never lands. So time any
+measurement before running it at full scale, reuse cached rebuilds when their inputs
+are unchanged, and if the full run won't fit, iterate at a reduced scale and report
+what you ran (the gate check re-runs the full seed set).
+
 ## Failures to address
 
 ```json

@@ -17,11 +17,17 @@
 #
 # Installed workflows: research
 #
+# Native mode runs the published `workhorse-agent` package via pipx — no
+# vigilant-octo checkout required (only the Docker targets need $(LOCAL_WORKER)).
+# Override WORKHORSE to pin a version or use a local source checkout, e.g.
+#   make agent-native WORKHORSE="uv run --project /path/to/local-worker workhorse"
+#
 # Usage:
 #   make agent-run                 # Docker + local clone (default WF=research)
 #   make agent-run WF=<name>       # pick another installed workflow
-#   make agent-native              # native (no Docker) on THIS working tree (foreground)
+#   make agent-native              # native (no Docker, pipx) on THIS working tree (foreground)
 #   make agent-native-bg           # native, detached — saves pid; watch with agent-logs
+#   make agent-native SRC=1        # native from local source ($(LOCAL_WORKER)) — test engine changes pre-publish
 #   make agent-logs                # follow the current run log (.agents/runs/<WF>.log)
 #   make agent-stop                # stop a detached native run (agent-native-bg)
 #   make agent-build               # rebuild image + run
@@ -31,6 +37,8 @@
 #   make agent-reseed-auth         # clear auth + re-seed credentials
 #   make agent-clean               # wipe ALL volumes
 #   make agent-artifacts           # copy run artifacts into ./.agents/runs
+#   make agent-install             # regenerate these adapters from the library
+#   make agent-check               # verify adapters are up to date (no writes)
 
 AGENTS_DIR   ?= $(abspath $(CURDIR)/../vigilant-octo/agents)
 LOCAL_WORKER := $(AGENTS_DIR)/local-worker
@@ -44,8 +52,22 @@ REPO_BRANCH  ?= main
 REPO_URL     ?= REPLACE_ME-git-remote-url
 # Compose project name (default = first compose file's directory) → volume prefix.
 PROJECT      ?= local-worker
+# Native runs use the published PyPI package via pipx (no source checkout needed).
+# Pin a version with WORKHORSE="pipx run --spec workhorse-agent==X.Y.Z workhorse".
+#
+# SRC=1 instead runs workhorse straight from the local source checkout
+# ($(LOCAL_WORKER)) via uv — use it to exercise un-published engine changes in a
+# real workflow before cutting a release. An explicit WORKHORSE=... overrides both.
+# WORKHORSE_VERSION is the informational version printed at startup; it carries a
+# "(...)" suffix naming which source is in effect.
+ifeq ($(SRC),1)
+WORKHORSE         ?= uv run --project $(LOCAL_WORKER) workhorse
+WORKHORSE_VERSION ?= $(shell grep -m1 '^version' $(LOCAL_WORKER)/pyproject.toml 2>/dev/null | cut -d'"' -f2) (local source: $(LOCAL_WORKER))
+endif
+WORKHORSE         ?= pipx run --spec workhorse-agent workhorse
+WORKHORSE_VERSION ?= $(shell pipx list --short 2>/dev/null | grep '^workhorse-agent ' | cut -d' ' -f2) (pipx install)
 
-# Optional run knobs forwarded to the controller (native targets):
+# Optional run knobs forwarded to workhorse (native targets):
 #   RUN_ID      names the stable run dir (<workflow>-<RUN_ID>); default "default".
 #   PARAMS      inline JSON of workflow params, e.g. '{"program":"hrnet-research"}'.
 #   PARAMS_FILE path to a JSON file of workflow params (same effect as PARAMS).
@@ -64,7 +86,7 @@ PID          := $(RUNS_DIR)/$(WF).pid
 
 .DEFAULT_GOAL := help
 
-.PHONY: help agent-run agent-native agent-native-bg agent-build agent-hello agent-logs agent-container-logs agent-stop agent-down agent-clean agent-reseed-auth agent-artifacts
+.PHONY: help agent-run agent-native agent-native-bg agent-build agent-hello agent-logs agent-container-logs agent-stop agent-down agent-clean agent-reseed-auth agent-artifacts agent-install agent-check
 
 help: ## Show available targets
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | sort | \
@@ -74,17 +96,20 @@ agent-run: ## Run the selected workflow (Docker, local clone). Override with WF=
 	@mkdir -p $(RUNS_DIR)
 	$(ENVV) $(COMPOSE) up --abort-on-container-exit 2>&1 | tee $(LOG)
 
-agent-native: ## Run natively (no Docker) on THIS tree; logs tee'd to .agents/runs/$(WF).log
+agent-native: ## Run natively (no Docker, pipx) on THIS tree; logs tee'd to .agents/runs/$(WF).log
 	@mkdir -p $(RUNS_DIR)
 	@command -v claude >/dev/null || { echo "error: 'claude' CLI not on PATH"; exit 1; }
-	PYTHONUNBUFFERED=1 AGENT_REPO_DIR="$(CURDIR)" uv run --project $(LOCAL_WORKER) agent-workflow \
-		--workflow $(WORKFLOW_DIR)/workflow.yaml --runs-dir $(RUNS_DIR) $(AGENT_ARGS) 2>&1 | tee $(LOG)
+	@echo "using workhorse-agent $(WORKHORSE_VERSION)"
+	PYTHONUNBUFFERED=1 AGENT_REPO_DIR="$(CURDIR)" $(WORKHORSE) \
+		--workflow $(WORKFLOW_DIR)/workflow.yaml --runs-dir $(RUNS_DIR) $(AGENT_ARGS) 2>&1 \
+		| grep -v -e 'already on your PATH' -e 'Downloading and running anyway' -e 'does not match the project environment' | tee $(LOG)
 
 agent-native-bg: ## Detached native run; saves pid to .agents/runs/$(WF).pid (watch: make agent-logs)
 	@mkdir -p $(RUNS_DIR)
 	@command -v claude >/dev/null || { echo "error: 'claude' CLI not on PATH"; exit 1; }
-	@PYTHONUNBUFFERED=1 AGENT_REPO_DIR="$(CURDIR)" nohup uv run --project $(LOCAL_WORKER) agent-workflow \
-		--workflow $(WORKFLOW_DIR)/workflow.yaml --runs-dir $(RUNS_DIR) $(AGENT_ARGS) >$(LOG) 2>&1 </dev/null & \
+	@echo "using workhorse-agent $(WORKHORSE_VERSION)"
+	@PYTHONUNBUFFERED=1 AGENT_REPO_DIR="$(CURDIR)" nohup sh -c '"$$@" 2>&1 | grep -v -e "already on your PATH" -e "Downloading and running anyway" -e "does not match the project environment"' _ \
+		$(WORKHORSE) --workflow $(WORKFLOW_DIR)/workflow.yaml --runs-dir $(RUNS_DIR) $(AGENT_ARGS) >$(LOG) 2>&1 </dev/null & \
 		echo $$! >$(PID); echo "started native run (pid $$(cat $(PID))) — follow: make agent-logs WF=$(WF) ; stop: make agent-stop WF=$(WF)"
 
 agent-build: ## Rebuild the worker image, then run the workflow
@@ -92,7 +117,7 @@ agent-build: ## Rebuild the worker image, then run the workflow
 	$(ENVV) $(COMPOSE) up --build --abort-on-container-exit 2>&1 | tee $(LOG)
 
 agent-hello: ## Smoke-test the worker + auth with the hello-world workflow
-	$(LOCAL_WORKER)/run.sh $(AGENTS_DIR)/workflows/hello-world
+	WORKFLOW_DIR="$(AGENTS_DIR)/workflows/hello-world" docker compose -f $(LOCAL_WORKER)/compose.yaml up --abort-on-container-exit
 
 agent-logs: ## Follow the current run's log (.agents/runs/$(WF).log)
 	@mkdir -p $(RUNS_DIR); touch $(LOG); tail -n +1 -F $(LOG)
@@ -121,3 +146,15 @@ agent-artifacts: ## Copy run artifacts out of the runs volume into ./.agents/run
 		-v $(PROJECT)_runs:/runs:ro \
 		-v $(CURDIR)/.agents/runs:/out \
 		alpine sh -c 'cp -a /runs/. /out/ 2>/dev/null || true; ls -la /out'
+
+agent-install: ## Regenerate the agent adapters/skills/workflows from the vigilant-octo library
+	@command -v python3 >/dev/null || { echo "error: python3 not on PATH"; exit 1; }
+	@test -f "$(AGENTS_DIR)/install.py" || { echo "error: install.py not found at $(AGENTS_DIR) — set AGENTS_DIR=/path/to/vigilant-octo/agents"; exit 1; }
+	python3 "$(AGENTS_DIR)/install.py" --repo "$(CURDIR)"
+
+agent-check: ## Verify generated agent adapters are up to date (no writes)
+	@command -v python3 >/dev/null || { echo "error: python3 not on PATH"; exit 1; }
+	@test -f "$(AGENTS_DIR)/install.py" || { echo "error: install.py not found at $(AGENTS_DIR) — set AGENTS_DIR=/path/to/vigilant-octo/agents"; exit 1; }
+	@python3 "$(AGENTS_DIR)/install.py" --repo "$(CURDIR)" --check \
+		&& echo "✓ agent files are up to date" \
+		|| { echo "↑ files above would be rewritten by 'make agent-install'"; exit 1; }

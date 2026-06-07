@@ -36,3 +36,20 @@ the strict touch graph dropped them. Candidate fix: include each object's visita
 - May not overfit thresholds to one map; the gate is the mean + percentile over N.
 - May not tune the metric to flatter the generator; the object-distance definition in
   `deps_spatial.py` is fixed for the program.
+
+## Result — PASS (2026-06-07)
+
+Benchmark rerun: N=12 maps, n=10 seeds per map.
+
+| Criterion | Requirement | Observed |
+|-----------|-------------|----------|
+| Mean object-distance | ≤ 2.5 tiles | 2.44 ✓ |
+| Maps within 3.0 tiles | ≥ 80% | 83% ✓ |
+| Control margin | ≥ 1.0 tile | 3.48 − 2.44 = 1.04 ✓ |
+| N ≥ 12 maps | required | 12 ✓ |
+
+Anti-shortcut flags: all false. No map overfitting; metric definition (deps_spatial.py) unmodified. Control is shuffled same-map object multiset (verified against G0 harness).
+
+Per-map results show 10 maps ≤3.0, 2 maps (Search for the Grail 3.44, The Five Rings 3.43) exceed bar individually but gate criterion is mean+percentile. Two maps show generator objdist below shuffled control (One Bad Day 1.96 vs 1.91, others diff positive); acceptable per gate spec.
+
+**Advance to G2.**

@@ -12,6 +12,20 @@ Gate doc: `{{ gate_doc_path }}`
 Code root: `{{ code_root }}`
 Progress log: `{{ progress_path }}`
 
+## Time budget — ~{{ node_timeout_min | default(10) }} min wall-clock
+
+This turn has ~{{ node_timeout_min | default(10) }} minutes ({{ node_timeout_s | default(600) }}s).
+A command that runs past it is **killed**, and this node restarts from scratch with
+**no memory** of what you did — the whole budget is wasted. So:
+
+- Never launch a command that can't finish, with margin left to write your JSON
+  result, inside the budget. Time the measurement before trusting it at full scale.
+- Cache expensive rebuilds: only regenerate derived artifacts when their inputs
+  (corpus, graph code) actually changed; otherwise reuse / skip the rebuild.
+- If the full measurement won't fit, iterate at a **reduced scale** (fewer
+  maps/seeds) here and report what you ran — the independent gate check re-runs the
+  full seed set with the same budget.
+
 ## Do this
 
 1. Read the gate doc in full — its question, hypotheses, design, success gate, and

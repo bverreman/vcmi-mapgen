@@ -11,3 +11,5 @@ ralph/loop.log
 ralph/STOP
 __pycache__/
 *.pyc
+
+.agents/runs
