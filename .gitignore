@@ -1,5 +1,6 @@
 # transient generated artifacts (keep only the corpus-derived priors below)
 out/*
+!out/maps
 !out/deps.json
 !out/objlib.json
 !out/factors.json
