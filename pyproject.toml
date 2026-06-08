@@ -5,6 +5,8 @@ description = "Hand-made-feel VCMI map generator + research benchmark"
 requires-python = ">=3.10"
 dependencies = [
     "pillow>=10",   # rendering schematic PNGs (src/deps_render.py, deps_showcase.py)
+    "numpy>=1.26,<2",  # array math; <2 for torch 2.2 (compiled against numpy 1.x)
+    "torch>=2.2.0,<2.3.0",  # CPU-only; trains the terrain->placement heatmap CNN from scratch
 ]
 
 # Everything else the generator/benchmark uses is the Python standard library.
@@ -13,6 +15,16 @@ dependencies = [
 #   uv run python src/deps_realize.py 4
 [tool.uv]
 package = false
+
+# CPU torch build. Avoids the ~1.3GB nvidia_* CUDA wheels and keeps training honest
+# about running on CPU (the user's constraint).
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [tool.ruff]
 line-length = 100

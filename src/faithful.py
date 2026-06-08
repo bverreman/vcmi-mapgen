@@ -76,21 +76,29 @@ def to_vmap(fm, out_path, name=None):
     header, _, _, _ = vmapwrite.read_raw(
         glob.glob("/home/gabriel/.var/app/eu.vcmi.VCMI/data/vcmi/Maps/RandomMaps/*.vmap")[0]
     )
-    # Give player 0 a starting town + generated hero so the map is playable; the
-    # remaining players stay town-less. mt points at the root-zone town (realizer).
+    # Wire EACH player slot to its own starting town so the map is actually playable.
+    # VCMI links a player to a town via mainTown = town_anchor - (2,2) (verified against
+    # the random-map template); the town object itself stays owner=None. Earlier we
+    # only gave player 0 a town, leaving every other player town-less => not playable.
+    # Surface towns first, then put the start town (fm["main_town"]) on player 0.
+    import traverse as TR
+    towns = [o for o in fm["objects"] if TR.TYPE2PURPOSE.get(o.get("type")) == "TOWN"]
+    towns.sort(key=lambda o: (o.get("l", 0), o["y"], o["x"]))
     mt = fm.get("main_town")
+    if mt is not None:  # start town first => player 0
+        towns.sort(key=lambda o: not (o.get("l", 0) == mt["l"]
+                                      and o["x"] - 2 == mt["x"] and o["y"] - 2 == mt["y"]))
     pids = sorted(p for p, pl in header.get("players", {}).items() if isinstance(pl, dict))
     for i, pid in enumerate(pids):
         pl = header["players"][pid]
-        if i == 0 and mt:
-            pl["mainTown"] = {
-                "generateHero": True,
-                "l": mt["l"],
-                "x": mt["x"],
-                "y": mt["y"],
-            }
-        else:
+        if i < len(towns):
+            t = towns[i]
+            pl["mainTown"] = {"generateHero": True, "l": t.get("l", 0),
+                              "x": t["x"] - 2, "y": t["y"] - 2}
+            pl["canPlay"] = "PlayerOrAI"
+        else:                       # no town for this slot -> not a participant
             pl["mainTown"] = None
+            pl["canPlay"] = "false"
     vmapwrite.write_vmap(out_path, header, levels, objs, name=name or fm.get("name", "generated"))
     return out_path
 

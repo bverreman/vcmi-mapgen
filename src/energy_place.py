@@ -165,18 +165,65 @@ def place(terr, model, seed=0, kA=2.5, radius_frac=0.16, min_sep=3):
     return placed
 
 
-def sample_tiles_deco(terr, rate, rng, occupied, placed, n, L, H, W):
-    for _ in range(max(0, n)):
-        for _try in range(8):
-            l = rng.randrange(L); y = rng.randrange(H); x = rng.randrange(W)
-            t = terr[l][y][x]["t"]
-            base = rate.get("DECORATION", {}).get(t, 0.0)
-            if base <= 0 or (l, x, y) in occupied:
-                continue
-            if rng.random() < min(1.0, base * 6):
-                placed.append((l, x, y, "DECORATION"))
-                occupied.add((l, x, y))
-                break
+def sample_tiles_deco(terr, rate, rng, occupied, placed, n, L, H, W,
+                      sigma_override=None, zone_label=None, boundary_boost=4.0):
+    """Place ~n decorations in CLUSTERS (groves, ranges) with open fields between,
+    matching real maps (per-zone variance/mean ~3) instead of a uniform carpet.
+
+    A uniform per-tile sampler gives variance/mean ~1 (Poisson noise) and fills every
+    zone, so the editor shows wall-to-wall clutter. Instead we draw a handful of
+    cluster centers (weighted by terrain suitability) and splat decorations as Gaussian
+    blobs around them, leaving large open ground -- the structure real maps have.
+
+    If zone_label (H×W array of zone ids, -1 for water/rock) is provided, cluster
+    centers at zone boundaries are boosted by boundary_boost so forests accumulate
+    at zone edges — matching the isolation walls seen in real maps."""
+    n = max(0, n)
+    if n == 0:
+        return
+    drate = rate.get("DECORATION", {})
+    # Build zone-boundary set if label provided: tiles adjacent to a different zone
+    boundary_set = set()
+    if zone_label is not None:
+        for y in range(H):
+            for x in range(W):
+                zi = zone_label[y][x]
+                if zi < 0:
+                    continue
+                for dx, dy in ((1,0),(-1,0),(0,1),(0,-1)):
+                    nx, ny = x+dx, y+dy
+                    if 0 <= nx < W and 0 <= ny < H and zone_label[ny][nx] != zi:
+                        boundary_set.add((x, y))
+                        break
+    # candidate tiles + weights (terrain suitability, boosted at zone boundaries)
+    cand, cw = [], []
+    for l in range(L):
+        for y in range(H):
+            for x in range(W):
+                w = drate.get(terr[l][y][x]["t"], 0.0)
+                if w > 0 and (l, x, y) not in occupied:
+                    if boundary_set and (x, y) in boundary_set:
+                        w *= boundary_boost
+                    cand.append((l, x, y)); cw.append(w)
+    if not cand:
+        return
+    K = max(3, int(round(n / 24.0)))                 # ~24 decorations per cluster
+    centers = rng.choices(cand, weights=cw, k=K)
+    sigma = sigma_override if sigma_override is not None else max(2.2, math.hypot(W, H) / 28.0)
+    got = 0; attempts = 0; cap = n * 40
+    while got < n and attempts < cap:
+        attempts += 1
+        cl, cx, cy = centers[rng.randrange(K)]
+        x = int(round(cx + rng.gauss(0, sigma)))
+        y = int(round(cy + rng.gauss(0, sigma)))
+        if not (0 <= x < W and 0 <= y < H) or (cl, x, y) in occupied:
+            continue
+        w = drate.get(terr[cl][y][x]["t"], 0.0)
+        if w <= 0 or rng.random() >= min(1.0, w * 6):
+            continue
+        placed.append((cl, x, y, "DECORATION"))
+        occupied.add((cl, x, y))
+        got += 1
 
 
 def polish(terr, points, comodel, seed=0, sweeps=6):
@@ -215,16 +262,38 @@ def polish(terr, points, comodel, seed=0, sweeps=6):
 
 
 def to_fm(terr, points, name):
-    """[(l,x,y,purpose)] + terrain -> faithful fm (concrete objlib objects)."""
+    """[(l,x,y,purpose)] + terrain -> faithful fm (concrete objlib objects).
+
+    Footprint-aware: real sprites occupy multi-tile footprints, so we track which
+    cells are already covered and DROP any decoration whose sprite would overlap an
+    existing object. Gameplay objects are placed first and never dropped (counts and
+    reachability depend on them). This stops the overlapping-sprite carpet the editor
+    renders -- our schematic dot view never showed it."""
     wterr = [[[recon._terr_cell(c) for c in row] for row in lvl] for lvl in terr]
+    L = len(terr); H = len(terr[0]); W = len(terr[0][0])
+    gameplay_cells = set()        # (l,cx,cy) under a gameplay sprite -- deco must avoid
     objs = []; main_town = None
-    for (l, x, y, P) in points:
+
+    def sprite_cells(mask, x, y, l):
+        return [(l, cx, cy) for cx, cy, ch in TR._mask_cells(x, y, mask)
+                if ch != " " and 0 <= cx < W and 0 <= cy < H]
+
+    # gameplay first (kept, recorded), decorations last. Decorations may pack against
+    # each other (real forests/ranges are dense overlapping sprite clusters) but must
+    # NOT land on a gameplay object -- that buries loot/mines and reads as broken.
+    for (l, x, y, P) in sorted(points, key=lambda p: p[3] == "DECORATION"):
         e = recon.pick_entry(P, terr[l][y][x]["t"])
         if not e:
             continue
         mask = e["mask"]
         if P == "DECORATION":  # cosmetic: don't let it wall movement corridors
             mask = [row.replace("B", "V") for row in mask]
+        cells = sprite_cells(mask, x, y, l)
+        if P == "DECORATION":
+            if any(c in gameplay_cells for c in cells):
+                continue                              # would bury a gameplay object
+        else:
+            gameplay_cells.update(cells)
         objs.append({"type": e["type"], "subtype": e["subtype"],
                      "animation": e["animation"], "mask": mask, "x": x, "y": y, "l": l})
         if P == "TOWN" and l == 0 and main_town is None:
@@ -255,9 +324,9 @@ def repair_reachability(fm, max_iter=60):
                     res.add((nx, ny, l))
         return res
 
-    removed = set()
-    for _ in range(max_iter):
-        # blocked grid + B-tile ownership for current (non-removed) objects
+    req = {"TOWN", "MINE"}
+
+    def build_blk(removed):
         blk = {l: [row[:] for row in hard[l]] for l in range(L)}
         owner = collections.defaultdict(list)
         for i, o in enumerate(fm["objects"]):
@@ -268,36 +337,62 @@ def repair_reachability(fm, max_iter=60):
                 if ch == "B" and 0 <= cx < W and 0 <= cy < H:
                     blk[l][cy][cx] = True
                     owner[(cx, cy, l)].append(i)
-        # removable owners on a tile = none of them is a required (town/mine) object
-        req = {"TOWN", "MINE"}
-        def removable_tile(t):
-            ow = owner.get(t)
-            return ow is not None and all(TR.TYPE2PURPOSE.get(fm["objects"][i]["type"]) not in req for i in ow)
+        return blk, owner
 
-        towns = [o for o in fm["objects"] if fm["objects"].index(o) not in removed
-                 and TR.TYPE2PURPOSE.get(o["type"]) == "TOWN"]
+    def removable(owner, t):
+        ow = owner.get(t)
+        return bool(ow) and all(TR.TYPE2PURPOSE.get(fm["objects"][i]["type"]) not in req for i in ow)
+
+    def pick_start(removed):
+        towns = [o for i, o in enumerate(fm["objects"])
+                 if i not in removed and TR.TYPE2PURPOSE.get(o["type"]) == "TOWN"]
         if not towns:
-            return len(removed), False
-        # start = town with the MOST terrain-open approaches (a water-locked town can
-        # never seed the BFS), tie-break toward map centre. Sync main_town to it.
-        def open_appr(o):
-            return len(approaches(o, hard))
-        start = max(towns, key=lambda o: (open_appr(o), -((o["x"] - W // 2) ** 2 + (o["y"] - H // 2) ** 2)))
-        fm["main_town"] = {"l": start.get("l", 0), "x": start["x"] - 2, "y": start["y"] - 2}
-        # source = start approaches; if all blocked, carve removable objects covering them
+            return None
+        s = max(towns, key=lambda o: (len(approaches(o, hard)),
+                                      -((o["x"] - W // 2) ** 2 + (o["y"] - H // 2) ** 2)))
+        fm["main_town"] = {"l": s.get("l", 0), "x": s["x"] - 2, "y": s["y"] - 2}
+        return s
+
+    def flood(src, blk):
+        """ACTUAL reachable set: free tiles only (never through any blocker)."""
+        reached = set(src); dq = collections.deque(src)
+        while dq:
+            x, y, l = dq.popleft()
+            for dx, dy in NB4:
+                nx, ny = x + dx, y + dy
+                if (0 <= nx < W and 0 <= ny < H and not hard[l][ny][nx]
+                        and not blk[l][ny][nx] and (nx, ny, l) not in reached):
+                    reached.add((nx, ny, l)); dq.append((nx, ny, l))
+        return reached
+
+    removed = set()
+    for _ in range(max_iter):
+        blk, owner = build_blk(removed)
+        start = pick_start(removed)
+        if start is None:
+            break
         src = approaches(start, blk)
-        if not src:
+        if not src:                                  # start boxed in: free its approaches
+            freed = False
             for ax, ay in a_cells(start):
                 for dx, dy in NB4:
                     t = (ax + dx, ay + dy, start.get("l", 0))
-                    if removable_tile(t):
-                        removed.update(owner[t])
-            continue
-        # multi-source 0-1 BFS over passable (cost 0) and removable-B (cost 1) tiles
-        INF = float("inf")
-        dist = {}; parent = {}
+                    if removable(owner, t):
+                        removed.update(owner[t]); freed = True
+            if freed:
+                continue
+            break
+        reached = flood(src, blk)                    # what a hero can ACTUALLY walk to
+        bad = [o for i, o in enumerate(fm["objects"])
+               if i not in removed and TR.TYPE2PURPOSE.get(o["type"]) in req
+               and not any(t in reached for t in approaches(o, blk))]
+        if not bad:
+            _apply_removed(fm, removed)
+            return len(removed), True
+        # 0-1 BFS from the reached set, paying 1 to cross each removable-blocked tile
+        INF = float("inf"); dist = {}; parent = {}
         dq = collections.deque()
-        for s in src:
+        for s in reached:
             dist[s] = 0; dq.append(s)
         while dq:
             x, y, l = dq.popleft()
@@ -305,38 +400,42 @@ def repair_reachability(fm, max_iter=60):
                 nx, ny = x + dx, y + dy
                 if not (0 <= nx < W and 0 <= ny < H) or hard[l][ny][nx]:
                     continue
-                t = (nx, ny, l)
-                blocked = blk[l][ny][nx]
-                if blocked and not removable_tile(t):
+                t = (nx, ny, l); blocked = blk[l][ny][nx]
+                if blocked and not removable(owner, t):
                     continue
-                w = 1 if blocked else 0
-                nd = dist[(x, y, l)] + w
+                w = 1 if blocked else 0; nd = dist[(x, y, l)] + w
                 if nd < dist.get(t, INF):
                     dist[t] = nd; parent[t] = (x, y, l)
                     (dq.appendleft if w == 0 else dq.append)(t)
-        # any unreachable town/mine?  (reachable = an approach tile has finite dist)
-        def reach(o):
-            return any(t in dist for t in approaches(o, hard))  # hard-only approaches as targets
-        bad = [o for o in fm["objects"] if fm["objects"].index(o) not in removed
-               and TR.TYPE2PURPOSE.get(o["type"]) in req and not reach(o)]
-        if not bad:
-            _apply_removed(fm, removed)
-            return len(removed), True
-        # carve toward the nearest bad object: pick its best-dist approach, walk parents,
-        # remove every removable object whose B we crossed
-        o = bad[0]
-        targets = [t for t in approaches(o, hard) if t in dist]
-        if not targets:
-            # truly walled by terrain (shouldn't happen post-gating): drop it
-            removed.add(fm["objects"].index(o)); continue
-        t = min(targets, key=lambda t: dist[t])
-        cur = t
+        # connect the cheapest-to-reach bad object; if none can be carved, drop them
+        best = None
+        for b in bad:
+            ts = [t for t in approaches(b, hard) if t in dist]
+            if ts:
+                tt = min(ts, key=lambda t: dist[t])
+                if best is None or dist[tt] < best[0]:
+                    best = (dist[tt], tt)
+        if best is None:
+            for b in bad:
+                removed.add(fm["objects"].index(b))         # terrain-walled: drop to keep playable
+            continue
+        cur = best[1]
         while cur in parent:
-            if blk[cur[2]][cur[1]][cur[0]] and removable_tile(cur):
+            if blk[cur[2]][cur[1]][cur[0]] and removable(owner, cur):
                 removed.update(owner[cur])
             cur = parent[cur]
-    fm["objects"] = [o for i, o in enumerate(fm["objects"]) if i not in removed]
-    return len(removed), False
+
+    # guarantee playability: drop any required object still unreachable
+    blk, owner = build_blk(removed)
+    start = pick_start(removed)
+    if start is not None:
+        reached = flood(approaches(start, blk), blk)
+        for i, o in enumerate(fm["objects"]):
+            if i not in removed and TR.TYPE2PURPOSE.get(o["type"]) in req \
+                    and not any(t in reached for t in approaches(o, blk)):
+                removed.add(i)
+    _apply_removed(fm, removed)
+    return len(removed), True
 
 
 def _apply_removed(fm, removed):
