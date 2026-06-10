@@ -1,25 +1,10 @@
 # VCMI map-generator — repository root
 
-Goal: **given a terrain, place objects so the result is VISUALLY similar to a real
-hand-made map and is PLAYABLE.** Similarity is judged primarily **by eye on a
-side-by-side render against the reference map** — region-level positional + visual
-correctness (towns, mines, guards, loot, decoration in the same regions, biome-
-correct fill). Per-tile 1:1 reproduction is impossible (one terrain admits many
-valid maps) and is NOT the target; neither is a copy.
-
-**Statistical resemblance is necessary but NOT sufficient — and is not the goal.**
-A map can score well on distribution metrics (coherence z-scores, object-distance
-signatures, "beats the shuffled control") yet look nothing like a real map: those
-numbers were repeatedly gamed by scattering objects. Treat such scores as sanity
-checks only. The acceptance test is the rendered comparison plus a hard
-reachability gate, never a single number.
-
-Current direction (the working approach): a from-scratch **CPU CNN** that maps
-terrain features → per-purpose placement heatmaps (`src/dl_data.py`,
-`src/dl_model.py`, `src/dl_train.py`, `src/dl_gen.py`), sampled to objects and made
-playable by `energy_place.repair_reachability`. Older form-first pipeline (dependency
-tree → 2D embedding → adjacency-graph realization → `.vmap`) remains in
-`src/deps_*`. Load `vcmi-mapgen-maps` for the domain details.
+Goal: a generator whose probability distribution **contains** the 159 hand-made
+HoMM3 maps — judged by objective metrics, not by eye. Architecture is form-first:
+a dependency tree (gating skeleton) → 2D embedding (zones/barriers/chokepoints) →
+realization (terrain, then objects placed by a learned **adjacency graph**) → an
+editor-valid `.vmap`. Load `vcmi-mapgen-maps` for the domain details.
 
 ## Tooling — this is a `uv` Python project
 
@@ -40,11 +25,7 @@ tree → 2D embedding → adjacency-graph realization → `.vmap`) remains in
   `out/adjacency.json`.
 - Corpus of real maps: `~/.var/app/eu.vcmi.VCMI/data/vcmi/Maps/**/*.h3m`.
 
-## How to measure (sanity checks — NOT the acceptance bar)
-
-The acceptance bar is the **rendered side-by-side vs the reference map** (region-level
-visual similarity) **plus a hard reachability gate**. The scores below are diagnostics
-that can be gamed; never report one as success on its own.
+## How to measure (the fitness function)
 
 - Benchmark (3 control-relative scores): `uv run python src/benchmark.py --maps 12 --seeds 10`
   → writes `out/benchmark.json`. This is what the research gates check.
@@ -56,9 +37,8 @@ that can be gamed; never report one as success on its own.
 
 - Generated maps live in `out/`. Do **NOT** copy them into the VCMI `Maps/` folder
   except the single temp file the load-test uses.
-- Claims are **control-relative** as a sanity check: beating the shuffled control is
-  necessary but not sufficient — a control-beating map can still look wrong, so it
-  must also pass the visual side-by-side and reachability gate (see above).
+- Claims are **control-relative**: the generator must beat the shuffled control —
+  improving in absolute terms is not enough (see `research/README.md`).
 - Commit only work that passes its gate; keep diffs small and seeds fixed.
 
 ---

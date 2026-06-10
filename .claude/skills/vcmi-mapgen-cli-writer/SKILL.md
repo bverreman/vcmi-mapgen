@@ -1,6 +1,6 @@
 ---
 name: vcmi-mapgen-cli-writer
-description: "Use for vcmi-mapgen repository work involving CLI & Makefile Command Timeouts. Applies to **/Makefile,**/*.mk,scripts/**/*.sh,scripts/**."
+description: "CLI & Makefile Command Timeouts. Applies to **/Makefile,**/*.mk,scripts/**/*.sh,scripts/**."
 ---
 
 # CLI & Makefile Command Timeouts
