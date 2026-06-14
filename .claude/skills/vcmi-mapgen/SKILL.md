@@ -1,6 +1,10 @@
 ---
 name: vcmi-mapgen
 description: "VCMI map-generator repo root — what the project is, uv tooling, the generation pipeline, and how to run the benchmark / load-test. Load first for any work in this repo."
+metadata:
+  generated_by: farrier
+  source: library/skills/vcmi-mapgen/vcmi-mapgen/SKILL.md
+  do_not_edit: "edit the source in the central prompt library and re-run `make agent-install` to regenerate"
 ---
 
 # VCMI map-generator — repository root

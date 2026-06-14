@@ -1,6 +1,10 @@
 ---
 name: vcmi-mapgen-maps
 description: "VCMI maps domain — h3m/vmap formats, object identifiers, the metrics (object-distance, density, traversability), the adjacency-graph placement model, and the controls. Load when changing src/ generation or measurement code."
+metadata:
+  generated_by: farrier
+  source: library/skills/vcmi-mapgen/maps/SKILL.md
+  do_not_edit: "edit the source in the central prompt library and re-run `make agent-install` to regenerate"
 ---
 
 # VCMI maps — domain & measurement

@@ -1,16 +1,13 @@
-# transient generated artifacts (keep only the corpus-derived priors below)
-out/*
-!out/maps
-!out/deps.json
-!out/objlib.json
-!out/factors.json
-!out/spatial_prior.json
-!out/lift.json
-!out/palette.json
+# transient generated artifacts (templates, features, renders, rebuilt maps)
+out/
 
-ralph/loop.log
-ralph/STOP
 __pycache__/
 *.pyc
+.pytest_cache/
+.ruff_cache/
 
 .agents/runs
+
+/.agents/*
+!/.agents/agents.mk
+!/.agents/flavors/

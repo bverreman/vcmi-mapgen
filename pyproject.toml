@@ -1,30 +1,19 @@
 [project]
 name = "vcmi-mapgen"
 version = "0.1.0"
-description = "Hand-made-feel VCMI map generator + research benchmark"
+description = "Shape-driven VCMI zone-rebuilding engine + learned terrain generator"
 requires-python = ">=3.10"
 dependencies = [
-    "pillow>=10",   # rendering schematic PNGs (src/deps_render.py, deps_showcase.py)
-    "numpy>=1.26,<2",  # array math; <2 for torch 2.2 (compiled against numpy 1.x)
-    "torch>=2.2.0,<2.3.0",  # CPU-only; trains the terrain->placement heatmap CNN from scratch
+    "pillow>=10",  # editor-quality H3 sprite rendering (vcmi_mapgen/render_editor.py)
+    "numpy>=1.26",  # terrain segmentation + zone transform math
 ]
 
-# Everything else the generator/benchmark uses is the Python standard library.
-# Run anything with uv, e.g.:
-#   uv run python src/benchmark.py --maps 12 --seeds 10
-#   uv run python src/deps_realize.py 4
+# Everything else is the Python standard library. Run via uv, e.g.:
+#   uv run python -m vcmi_mapgen.zone_engine run "All for One"
+#   uv run python -m vcmi_mapgen.markov_terrain
+#   uv run pytest
 [tool.uv]
 package = false
-
-# CPU torch build. Avoids the ~1.3GB nvidia_* CUDA wheels and keeps training honest
-# about running on CPU (the user's constraint).
-[tool.uv.sources]
-torch = [{ index = "pytorch-cpu" }]
-
-[[tool.uv.index]]
-name = "pytorch-cpu"
-url = "https://download.pytorch.org/whl/cpu"
-explicit = true
 
 [tool.ruff]
 line-length = 100
@@ -41,6 +30,6 @@ line-length = 100
 ignore = ["E401", "E402", "F401", "E741", "F841", "E731", "E722", "F821", "F601", "F541"]
 
 [tool.pytest.ini_options]
-testpaths = ["src"]
+testpaths = ["vcmi_mapgen"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
