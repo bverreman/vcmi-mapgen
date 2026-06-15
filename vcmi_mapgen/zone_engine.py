@@ -377,6 +377,129 @@ def _pick_identity(entry_list, rng):
     return rng.choices(ids, weights=ws, k=1)[0]
 
 
+# ---------------------------------------------------------------------------
+# Decoration as a density FIELD over the shape-intrinsic frame.
+#
+# The look of a zone's decoration (a thin constant-thickness mountain RIM + a
+# sparse INTERIOR) is a function of interior-depth, not of zone size. A single
+# global density is biased HIGH by the rim (rim objects ~ perimeter ~ linear in
+# size; interior ~ area ~ quadratic) so applying it to a larger interior floods
+# it = clutter. Binning density by depth makes it resolution-stable: the rim
+# stays a wall, the interior stays sparse, at any target size.
+# ---------------------------------------------------------------------------
+
+DEPTH_BINS = 6
+
+
+def _depth_bin(d, K=DEPTH_BINS):
+    return min(int(d * K), K - 1)
+
+
+def _stochastic_round(x, rng):
+    """Integer count whose expectation is x (seeded, expectation-preserving)."""
+    n = int(x)
+    return n + (1 if rng.random() < (x - n) else 0)
+
+
+def _obj_canon(o, canon_zone, tiles_set):
+    """Shape-intrinsic (depth, sweep) for an object: the RIM-MOST zone tile its
+    footprint overlaps (min depth). Rim mountains are anchored OUTSIDE the zone
+    (on neighbour/rock tiles) and gathered by footprint overlap, so anchor-canon
+    would miss them — overlap-canon classifies them as the rim (depth~0)."""
+    best = None
+    for tx, ty, _ in OR.mask_cells(o["mask"], o["x"], o["y"]):
+        if (tx, ty) in tiles_set:
+            d, s = canon_zone[(tx, ty)]
+            if best is None or d < best[0]:
+                best = (d, s)
+    if best is not None:
+        return best
+    if (o["x"], o["y"]) in canon_zone:
+        return canon_zone[(o["x"], o["y"])]
+    return (0.0, 0.0)
+
+
+def _tiles_by_depth_bin(canon_zone, tiles_set, K=DEPTH_BINS):
+    """(tile_hist[k], tiles_in_bin[k]) for a zone's tiles (deterministic order)."""
+    hist = [0] * K
+    by_bin = [[] for _ in range(K)]
+    for t in sorted(tiles_set):
+        k = _depth_bin(canon_zone[t][0], K)
+        hist[k] += 1
+        by_bin[k].append(t)
+    return hist, by_bin
+
+
+def decor_bins(decor_objs, canon_zone, tiles_set, K=DEPTH_BINS):
+    """Per-depth-bin density / spacing / identities for DECORATION (the 'look').
+
+    dens[k]    = objects-in-bin / zone-tiles-in-bin  (resolution-stable areal density)
+    spacing[k] = within-bin median nearest-neighbour (>=1.0; rim packs at ~1)
+    identities[k] = the kinds that sat at that depth (rim->mountains, core->trees)
+    """
+    hist, _ = _tiles_by_depth_bin(canon_zone, tiles_set, K)
+    obj_bins = [[] for _ in range(K)]
+    for o in decor_objs:
+        d, _s = _obj_canon(o, canon_zone, tiles_set)
+        obj_bins[_depth_bin(d, K)].append(o)
+    dens, spacing, idents = [], [], []
+    for k in range(K):
+        pts = [(o["x"], o["y"]) for o in obj_bins[k]]
+        dens.append(len(obj_bins[k]) / hist[k] if hist[k] else 0.0)
+        spacing.append(_median_nn(pts) if len(pts) >= 2 else 1.0)
+        idents.append(_dedup_identities(obj_bins[k]))
+    glob = _dedup_identities(decor_objs)
+    return {"K": K, "tile_hist": hist, "dens": dens, "spacing": spacing,
+            "identities": idents, "global_identities": glob}
+
+
+def _bin_pool(prof, k):
+    """Identity pool for bin k, falling back outward then to the global pool."""
+    idents = prof["identities"]
+    K = len(idents)
+    if idents[k]:
+        return idents[k]
+    for r in range(1, K):
+        for kk in (k - r, k + r):
+            if 0 <= kk < K and idents[kk]:
+                return idents[kk]
+    return prof["global_identities"]
+
+
+def _place_decor_cells(cells_by_key, key_dens, key_spacing, key_pool, tgt_tiles,
+                       hard_block, used, rng, level=0):
+    """Shared decoration placer: for each spatial key (a depth bin, or a
+    depth x sweep cell) put n = dens * |target tiles in cell| objects, weighted
+    uniformly within the cell and min-spaced by the cell's own grain. Never buries
+    gameplay (skips stamps whose blocking footprint hits hard_block). Rim first
+    (lowest depth bin) so the wall is laid before interior fill competes for tiles."""
+    placed = []
+    for key in sorted(cells_by_key, key=lambda kk: (kk[0] if isinstance(kk, tuple) else kk)):
+        tiles = [t for t in cells_by_key[key] if t not in used]
+        if not tiles:
+            continue
+        dens = key_dens.get(key, 0.0)
+        if dens <= 0:
+            continue
+        n = _stochastic_round(dens * len(cells_by_key[key]), rng)
+        if n <= 0:
+            continue
+        min_sep = max(1.0, key_spacing.get(key, 1.0))
+        chosen = _weighted_spaced(tiles, [1.0] * len(tiles), n, min_sep, rng,
+                                  decoration=False)
+        pool = key_pool(key)
+        if not pool:
+            continue
+        for (x, y) in chosen:
+            ident = _pick_identity(pool, rng)
+            cells = [(cx, cy) for cx, cy, blk in OR.mask_cells(ident["mask"], x, y) if blk]
+            if any(c in hard_block for c in cells):
+                continue              # VCMI: decoration must not bury gameplay
+            placed.append({**ident, "x": x, "y": y, "l": level, "_purpose": "DECORATION"})
+            used.add((x, y))
+    return placed
+
+
 def reconstruct_zone(zone, canon_zone, profile, seed=0, level=0):
     """Generate placement for a target zone from a feature profile (the code path).
 
@@ -416,6 +539,118 @@ def reconstruct_zone(zone, canon_zone, profile, seed=0, level=0):
             used.add((x, y))
         report[p] = {"target": n, "placed": sum(1 for o in placed if o["_purpose"] == p)}
     return placed, report
+
+
+# ---------------------------------------------------------------------------
+# Three decoration-fill models (compared side-by-side). Each takes the SOURCE
+# decoration + source shape frame and a TARGET zone, and returns placed
+# decoration for the target. Gameplay is placed separately (shared) so the
+# panels differ ONLY in decoration. All deterministic for a given seed.
+# ---------------------------------------------------------------------------
+
+SWEEP_BINS = 8
+
+
+def deco_binned(src_decor, src_canon, src_tiles, tgt_zone, tgt_canon, hard_block,
+                seed, level=0, K=DEPTH_BINS):
+    """Model A — depth-binned density field. Density per interior-depth band is
+    resolution-stable, so the rim stays a constant-thickness wall and the interior
+    stays sparse at any size. Radially faithful; ignores angular (sweep) structure."""
+    rng = random.Random(seed)
+    prof = decor_bins(src_decor, src_canon, src_tiles, K)
+    tgt = tgt_zone["tiles_set"]
+    _hist, by_bin = _tiles_by_depth_bin(tgt_canon, tgt, K)
+    cells = {k: by_bin[k] for k in range(K) if by_bin[k]}
+    key_dens = {k: prof["dens"][k] for k in range(K)}
+    key_spacing = {k: prof["spacing"][k] for k in range(K)}
+    return _place_decor_cells(cells, key_dens, key_spacing,
+                              lambda k: _bin_pool(prof, k), tgt, hard_block,
+                              set(), rng, level)
+
+
+def deco_quilt(src_decor, src_canon, src_tiles, tgt_zone, tgt_canon, hard_block,
+               seed, level=0, K=DEPTH_BINS, S=SWEEP_BINS):
+    """Model B — density field over (depth x sweep) cells (quilt-lite). Preserves
+    BOTH radial and angular texture, so a one-sided rim or a clump that only sits
+    on the north edge stays where it was. Falls back to the depth-bin pool where a
+    cell is empty."""
+    rng = random.Random(seed)
+    binprof = decor_bins(src_decor, src_canon, src_tiles, K)
+
+    def cell_of(d, s):
+        return (_depth_bin(d, K), min(int(s * S), S - 1))
+
+    src_hist = collections.Counter(cell_of(*src_canon[t]) for t in src_tiles)
+    obj_cells = collections.defaultdict(list)
+    for o in src_decor:
+        d, s = _obj_canon(o, src_canon, src_tiles)
+        obj_cells[cell_of(d, s)].append(o)
+    key_dens, key_spacing, key_ident = {}, {}, {}
+    for key, cnt in src_hist.items():
+        objs = obj_cells.get(key, [])
+        key_dens[key] = len(objs) / cnt if cnt else 0.0
+        pts = [(o["x"], o["y"]) for o in objs]
+        key_spacing[key] = _median_nn(pts) if len(pts) >= 2 else 1.0
+        key_ident[key] = _dedup_identities(objs)
+
+    tgt = tgt_zone["tiles_set"]
+    cells = collections.defaultdict(list)
+    for t in sorted(tgt):
+        cells[cell_of(*tgt_canon[t])].append(t)
+
+    def pool(key):
+        return key_ident.get(key) or _bin_pool(binprof, key[0])
+
+    return _place_decor_cells(cells, key_dens, key_spacing, pool, tgt, hard_block,
+                              set(), rng, level)
+
+
+def deco_split(src_decor, src_canon, src_tiles, tgt_zone, tgt_canon, hard_block,
+               seed, level=0, K=DEPTH_BINS):
+    """Model C — wall/field structural split. The packed rim bins (source density
+    >= 0.5) are a WALL: re-laid as a continuous constant-thickness band along the
+    target rim. The rest are FIELDS: scattered at the source's interior density.
+    Most explicit wall continuity."""
+    rng = random.Random(seed)
+    prof = decor_bins(src_decor, src_canon, src_tiles, K)
+    wall_k = 0
+    for k in range(K):
+        if prof["dens"][k] >= 0.5:
+            wall_k = k + 1
+        else:
+            break
+    tgt = tgt_zone["tiles_set"]
+    _hist, by_bin = _tiles_by_depth_bin(tgt_canon, tgt, K)
+    used, placed = set(), []
+    if wall_k > 0:
+        wall_pool = [e for k in range(wall_k) for e in prof["identities"][k]] \
+            or prof["global_identities"]
+        wall_tiles = sorted(t for k in range(wall_k) for t in by_bin[k])
+        placed += _place_decor_cells({0: wall_tiles}, {0: 1.0}, {0: 1.0},
+                                     lambda key: wall_pool, tgt, hard_block, used,
+                                     rng, level)
+    cells = {k: by_bin[k] for k in range(wall_k, K) if by_bin[k]}
+    key_dens = {k: prof["dens"][k] for k in range(wall_k, K)}
+    key_spacing = {k: prof["spacing"][k] for k in range(wall_k, K)}
+    placed += _place_decor_cells(cells, key_dens, key_spacing,
+                                 lambda k: _bin_pool(prof, k), tgt, hard_block,
+                                 used, rng, level)
+    return placed
+
+
+def _stretch_gameplay(src_zone, objs, tgt_zone, seed):
+    """Place gameplay (non-decoration) on the target via the existing forward-map
+    stretch (rigid one-tile, no overlap). Returns (gameplay, hard_block) so a
+    decoration model can avoid burying it. Shared by all models for a fair compare."""
+    gp_all, _ = transform_zone(src_zone, objs, tgt_zone, level=0, seed=seed)
+    gameplay = [o for o in gp_all if o["_purpose"] != "DECORATION"]
+    hard = set()
+    tgt = tgt_zone["tiles_set"]
+    for o in gameplay:
+        for cx, cy, blk in OR.mask_cells(o["mask"], o["x"], o["y"]):
+            if blk and (cx, cy) in tgt:
+                hard.add((cx, cy))
+    return gameplay, hard
 
 
 def _nearest_free(pt, tile_set, used):
@@ -625,10 +860,48 @@ def write_features(name, out=None):
 # Deform demo terrain (deterministic, no rng)
 # ---------------------------------------------------------------------------
 
+# Per-terrain CLEAN interior tile views (corpus-derived: the views real maps use on
+# tiles whose 4 neighbours are the same terrain). Synthetic views 0-7 land on
+# transition/border frames for most terrains, which renders as an "off"/patchy
+# ground — restricting to these keeps generated terrain reading as flat ground.
+CLEAN_VIEWS = {
+    0: [21, 22, 23, 24, 25, 26, 27, 28, 29],   # dirt
+    1: [0, 1, 2, 3, 4, 5, 6, 7],               # sand
+    2: [49, 50, 51, 52, 53, 54, 55, 56],       # grass
+    3: [49, 50, 51, 52, 53, 54, 55, 56],       # snow
+    4: [49, 50, 51, 52, 53, 54, 55, 56],       # swamp
+    5: [49, 50, 51, 52, 53, 54, 55, 56],       # rough
+    6: [49, 50, 51, 52, 53, 54, 55, 56],       # subterr
+    7: [49, 50, 51, 52, 53, 54, 55, 56],       # lava
+    8: [21, 22, 23, 24, 25, 26, 27, 28, 29],   # water
+    9: [0, 1, 2, 3, 4, 5, 6, 7],               # rock
+}
+
+
 def _cell(t, x=0, y=0):
-    # vary the terrain view-frame per tile (deterministic) so painted ground isn't
-    # a single repeated tile; low range keeps to clean center variants.
-    return {"t": t, "view": (x * 7 + y * 13) % 8, "rt": 0, "rd": 0, "ot": 0, "od": 0, "m": 0}
+    # vary the terrain view-frame per tile (deterministic) across the CLEAN center
+    # variants for this terrain, so painted ground reads as flat ground (not a
+    # repeated tile, and not transition/border frames).
+    vs = CLEAN_VIEWS.get(t, [49, 50, 51, 52, 53, 54, 55, 56])
+    return {"t": t, "view": vs[(x * 7 + y * 13) % len(vs)],
+            "rt": 0, "rd": 0, "ot": 0, "od": 0, "m": 0}
+
+
+_MARKOV_MODEL = {}
+
+
+def markov_terrain_level(W, H, seed):
+    """A fresh surface-terrain grid sampled from the corpus Markov chain (raster
+    sample + isotropic Gibbs smoothing for coherent patches). Cells carry view
+    variety so they render. The learned model is cached per process."""
+    import markov_terrain as MT
+    if "m" not in _MARKOV_MODEL:
+        _MARKOV_MODEL["m"] = (MT.learn(0), MT.learn4(0))
+    M, M4 = _MARKOV_MODEL["m"]
+    rnd = random.Random(seed)
+    g = MT.generate(M, W, H, rnd)
+    MT.gibbs(g, M4, M["marg"], rnd, sweeps=6)
+    return [[_cell(g[y][x], x, y) for x in range(W)] for y in range(H)]
 
 
 def deform_terrain_level(src_terr, zone, W, H, fx=1.3, fy=1.3):
@@ -890,43 +1163,94 @@ def cmd_reconstruct(args):
     prof = zone_features(z, anchor_objs, canon[zid])  # canon only defined for anchor tiles
     prof["label"] = label_zone(zones[zid], anchor_objs, W, H)
 
-    def build(tgt_zone, tgt_canon):
-        if args.mode == "transform":
-            return transform_zone(zones[zid], objs, tgt_zone, level=0, seed=args.seed)
-        return reconstruct_zone(tgt_zone, tgt_canon, prof, seed=args.seed, level=0)
+    src_decor = [o for o in objs if OR.purpose_of(o) == "DECORATION"]
+    DECO_MODELS = {"binned": deco_binned, "quilt": deco_quilt, "split": deco_split}
+    want = list(DECO_MODELS) if args.deco_model == "all" else [args.deco_model]
 
-    same, _ = build(zones[zid], canon[zid])
-    print(f"[mode={args.mode}] zone {zid} {prof['label']}: area={z['area']}, "
-          f"orig objs={len(objs)}, reconstructed={len(same)}")
+    def assemble(tgt_zone, tgt_canon, model):
+        """Gameplay (forward-mapped rigid, shared) + decoration via the chosen model."""
+        gameplay, hard = _stretch_gameplay(zones[zid], objs, tgt_zone, args.seed)
+        decor = DECO_MODELS[model](src_decor, canon[zid], zones[zid]["tiles_set"],
+                                   tgt_zone, tgt_canon, hard, args.seed)
+        return gameplay + decor
+
+    panels = [{"objs": objs, "tiles": zones[zid]["tiles_set"], "terr": lvl,
+               "W": W, "H": H, "title": f"ORIGINAL z{zid} {prof['label']}"}]
+
     if args.mode == "transform":
+        # Pure stretch: the SAME objects on a larger grid (positions scale, no fill).
+        same, _ = transform_zone(zones[zid], objs, zones[zid], level=0, seed=args.seed)
         ok, m, t, r = _exact_check(objs, same)
-        print(f"  same-shape exact? {'YES' if ok else 'NO'}  ({m}/{t} match, recon={r})")
-    _recon_report(objs, same, "same-shape")
+        print(f"[transform] zone {zid} {prof['label']}: area={z['area']}, orig={len(objs)}, "
+              f"same-shape exact? {'YES' if ok else 'NO'} ({m}/{t} match)")
+        _recon_report(objs, same, "same-shape")
+        panels.append({"objs": same, "tiles": zones[zid]["tiles_set"], "terr": lvl,
+                       "W": W, "H": H, "title": "same-shape (exact)"})
+        if args.deform:
+            grid = deform_terrain_level(lvl, zones[zid], W, H, args.fx, args.fy)
+            zr, _lr, cr = _segment_level(grid)
+            tz = max(zr, key=lambda k: zr[k]["area"])
+            dobjs, drep = transform_zone(zones[zid], objs, zr[tz], level=0, seed=args.seed)
+            if not drep.get("ok", True):
+                print(f"stretch REJECTED ({zr[tz]['area']}t): {drep['reason']} — panel skipped")
+            else:
+                print(f"stretched onto {zr[tz]['area']}t (was {z['area']}) -> {len(dobjs)} objs")
+                panels.append({"objs": dobjs, "tiles": zr[tz]["tiles_set"], "terr": grid,
+                               "W": W, "H": H, "title": f"STRETCH transform {zr[tz]['area']}t"})
+    else:
+        # features: compare decoration-fill models (generative, variable count).
+        same = assemble(zones[zid], canon[zid], want[0])
+        print(f"[features] zone {zid} {prof['label']}: area={z['area']}, orig={len(objs)}, "
+              f"same-shape({want[0]})={len(same)}")
+        _recon_report(objs, same, f"same-shape ({want[0]})")
+        panels.append({"objs": same, "tiles": zones[zid]["tiles_set"], "terr": lvl,
+                       "W": W, "H": H, "title": f"same-shape {want[0]}"})
+        if args.deform:
+            grid = deform_terrain_level(lvl, zones[zid], W, H, args.fx, args.fy)
+            zr, _lr, cr = _segment_level(grid)
+            tz = max(zr, key=lambda k: zr[k]["area"])
+            tgt_zone, tgt_canon = zr[tz], cr[tz]
+            src_decor_n = len(src_decor)
+            for mk in want:
+                full = assemble(tgt_zone, tgt_canon, mk)
+                c = collections.Counter(o["_purpose"] for o in full)
+                ndec = c.get("DECORATION", 0)
+                ratio = ndec / src_decor_n if src_decor_n else 0.0
+                gp = ", ".join(f"{p}={c[p]}" for p in sorted(c, key=_prio)
+                               if p != "DECORATION")
+                print(f"  [{mk:<7}] {tgt_zone['area']}t (was {z['area']}) -> {len(full)} objs, "
+                      f"DECORATION {src_decor_n}->{ndec} (x{ratio:.2f})  {gp}")
+                panels.append({"objs": full, "tiles": tgt_zone["tiles_set"], "terr": grid,
+                               "W": W, "H": H, "title": f"STRETCH {mk} {tgt_zone['area']}t"})
+        if args.markov:
+            # Target = the largest same-terrain zone of a FRESH Markov-generated
+            # terrain (a real-looking new shape, not a stretch of the source).
+            MW = args.markov_size
+            terr = markov_terrain_level(MW, MW, args.markov_seed)
+            mz, _ml, mc = _segment_level(terr)
+            tt = zones[zid]["terrain_type"]
+            cands = [k for k, zz in mz.items() if zz["terrain_type"] == tt]
+            if not cands:
+                print(f"markov: no {TNAME.get(tt, tt)} zone at seed {args.markov_seed} "
+                      f"(try another --markov-seed)")
+            else:
+                tz = max(cands, key=lambda k: mz[k]["area"])
+                tgt_zone, tgt_canon = mz[tz], mc[tz]
+                print(f"markov {TNAME.get(tt, tt)} target: zone {tz}, "
+                      f"area={tgt_zone['area']} (source {z['area']}t)")
+                for mk in want:
+                    full = assemble(tgt_zone, tgt_canon, mk)
+                    c = collections.Counter(o["_purpose"] for o in full)
+                    gp = ", ".join(f"{p}={c[p]}" for p in sorted(c, key=_prio)
+                                   if p != "DECORATION")
+                    print(f"  [{mk:<7}] markov {tgt_zone['area']}t -> {len(full)} objs, "
+                          f"DECORATION={c.get('DECORATION', 0)}  {gp}")
+                    panels.append({"objs": full, "tiles": tgt_zone["tiles_set"], "terr": terr,
+                                   "W": MW, "H": MW,
+                                   "title": f"MARKOV {mk} {tgt_zone['area']}t"})
 
-    panels = [
-        {"objs": objs, "tiles": zones[zid]["tiles_set"], "terr": lvl,
-         "W": W, "H": H, "title": f"ORIGINAL z{zid} {prof['label']}"},
-        {"objs": same, "tiles": zones[zid]["tiles_set"], "terr": lvl,
-         "W": W, "H": H, "title": "same-shape (exact)"},
-    ]
-    if args.deform:
-        # STRETCH = same objects on a LARGER tile grid (positions scale, sprites don't).
-        grid = deform_terrain_level(lvl, zones[zid], W, H, args.fx, args.fy)
-        zr, _lr, cr = _segment_level(grid)
-        tz = max(zr, key=lambda k: zr[k]["area"])
-        dobjs, drep = build(zr[tz], cr[tz])
-        if not drep.get("ok", True):
-            print(f"stretch REJECTED ({zr[tz]['area']}-tile grid): {drep['reason']} "
-                  f"— not VCMI-traversable, panel skipped")
-        else:
-            c = collections.Counter(o["_purpose"] for o in dobjs)
-            print(f"stretched onto a {zr[tz]['area']}-tile grid (was {z['area']}) -> "
-                  f"{len(dobjs)} objects, traversable")
-            print("  counts: " + ", ".join(f"{p}={c[p]}" for p in sorted(c, key=_prio)))
-            panels.append({"objs": dobjs, "tiles": zr[tz]["tiles_set"], "terr": grid,
-                           "W": W, "H": H, "title": f"STRETCHED grid {zr[tz]['area']}t"})
-
-    out = os.path.join(ROOT, "out", "render", f"{slug(name)}_z{zid}_stretch.png")
+    suffix = "_markov" if args.markov and not args.deform else "_stretch"
+    out = os.path.join(ROOT, "out", "render", f"{slug(name)}_z{zid}{suffix}.png")
     render_zone_compare(panels, out)
     print(f"\ncompare -> {out}")
 
@@ -1051,6 +1375,17 @@ def main():
     pc.add_argument("--deform", action="store_true", help="add a STRETCHED (larger-grid) panel")
     pc.add_argument("--fx", type=float, default=1.4, help="grid x stretch factor")
     pc.add_argument("--fy", type=float, default=1.4, help="grid y stretch factor")
+    pc.add_argument("--deco-model", choices=["binned", "quilt", "split", "all"],
+                    default="all", dest="deco_model",
+                    help="decoration fill model(s) for --mode features (default all = "
+                         "render binned|quilt|split side by side)")
+    pc.add_argument("--markov", action="store_true",
+                    help="add a panel placing the model onto a FRESH Markov-generated "
+                         "same-terrain patch (a new real-looking shape, not a stretch)")
+    pc.add_argument("--markov-size", type=int, default=72, dest="markov_size",
+                    help="W=H of the generated Markov terrain (default 72)")
+    pc.add_argument("--markov-seed", type=int, default=7, dest="markov_seed",
+                    help="seed for the Markov terrain generation (default 7)")
     pc.set_defaults(func=cmd_reconstruct)
 
     pr = sub.add_parser("rebuild", help="rebuild objects onto target terrain")
