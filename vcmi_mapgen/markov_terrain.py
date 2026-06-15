@@ -7,7 +7,7 @@ coastlines, how terrains border each other) instead of arbitrary noise blobs.
 
 import json, glob, random, collections, sys, os
 
-sys.path.insert(0, "src")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import render
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

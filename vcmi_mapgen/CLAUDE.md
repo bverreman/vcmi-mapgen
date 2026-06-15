@@ -1,12 +1,3 @@
----
-name: vcmi-mapgen-maps
-description: "VCMI maps domain — h3m/vmap formats, object identifiers, faithful JSON, terrain segmentation, the zone template + bit-exact identity guarantee, the stretch semantics, and editor-quality sprite rendering. Load when changing vcmi_mapgen/ code."
-metadata:
-  generated_by: farrier
-  source: library/skills/vcmi-mapgen/maps/SKILL.md
-  do_not_edit: "edit the source in the central prompt library and re-run `make agent-install` to regenerate"
----
-
 # VCMI maps — domain & the zone engine
 
 ## Formats & identifiers

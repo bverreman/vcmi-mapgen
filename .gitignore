@@ -5,8 +5,7 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .ruff_cache/
-
-.agents/runs
+.venv
 
 /.agents/*
 !/.agents/agents.mk

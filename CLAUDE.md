@@ -1,45 +1,69 @@
 # VCMI map-generator — repository root
 
-Goal: a generator whose probability distribution **contains** the 159 hand-made
-HoMM3 maps — judged by objective metrics, not by eye. Architecture is form-first:
-a dependency tree (gating skeleton) → 2D embedding (zones/barriers/chokepoints) →
-realization (terrain, then objects placed by a learned **adjacency graph**) → an
-editor-valid `.vmap`. Load `vcmi-mapgen-maps` for the domain details.
+A shape-driven **zone-rebuilding engine** for VCMI / Heroes 3 maps, plus a learned
+terrain generator. Given a real map it segments same-terrain zones, records each zone's
+object pattern in a shape-relative frame, then *replays* it onto a target shape:
+
+- **Same shape ⇒ bit-exact reproduction** (integer-only replay; verified 2027/2027
+  objects on *All for One*).
+- **Larger shape ⇒ the same objects at the same relative placement on a larger tile
+  grid** — VCMI objects are fixed-size tile objects, so the *grid/positions* scale, the
+  sprites do NOT. No illegal overlaps, gameplay stays reachable. (Image-warp/pixel
+  scaling was tried and rejected — it violates the fixed-size constraint.)
+
+Load `vcmi-mapgen-maps` for the domain details (formats, segmentation, rendering).
 
 ## Tooling — this is a `uv` Python project
 
-- Run **everything** through uv: `uv run python src/<script>.py [...]`.
-  Dependencies are in `pyproject.toml` (only Pillow; everything else is stdlib).
-  Never `pip install`; never assume a system interpreter — `uv run` resolves the
-  env. No network at runtime.
-- Determinism: generation is seeded (`realize(seed=...)`); the benchmark fixes
-  seeds so numbers reproduce. Don't introduce `random`/time without a seed.
+- Run **everything** through uv as a module: `uv run python -m vcmi_mapgen.<module> [...]`.
+  Dependencies (`pyproject.toml`): Pillow + numpy; everything else is stdlib. Never
+  `pip install`; never assume a system interpreter — `uv run` resolves the env.
+- Determinism: replay is integer-only; the terrain generator is seeded. Don't introduce
+  `random`/time without a seed.
 
 ## Where things are
 
-- Generator: `src/deps_gen.py` (tree) → `src/deps_embed.py` (2D) →
-  `src/deps_realize.py` (**the main file**: terrain, water, mountain barriers, and
-  adjacency-graph object placement) → `src/faithful.py` (writer).
-- Learned data (built from the corpus, do not delete): `out/deps.json`,
-  `out/objlib.json`, `out/factors.json`, `out/spatial_prior.json`,
-  `out/adjacency.json`.
-- Corpus of real maps: `~/.var/app/eu.vcmi.VCMI/data/vcmi/Maps/**/*.h3m`.
+- **`vcmi_mapgen/`** — the package (run modules with `python -m vcmi_mapgen.<name>`):
+  - `zone_engine.py` — the CLI (`extract` / `inspect` / `features` / `reconstruct` /
+    `rebuild` / `run`).
+  - `terrain_segment.py` — same-terrain flood-fill segmentation + interior-depth features.
+  - `obj_resolve.py`, `ontology.py` — faithful-map loader, object identity, purpose.
+  - `faithful.py`, `vmapwrite.py`, `traverse.py` — faithful map dict → editor `.vmap`.
+  - `render_editor.py` — editor-quality 32px H3 sprite rendering (decodes DEF fmt 0/1/2/3);
+    `render.py` — schematic PNGs.
+  - `markov_terrain.py` — the terrain generator (Markov chain learned from the corpus).
+  - `h3m.py`, `vcmi_ids.py`, `h3m2vmap.py`, `extract_faithful.py` — `.h3m` → faithful pipeline.
+  - `test_render_editor.py` — rendering-engine reliability tests.
+- **`maps/`** — the `.h3m` corpus (159 maps), the source data.
+- **`maps_json/`** — faithful JSON per map (the engine's input; regenerable from `maps/`).
+- **`data/`** — corpus-derived priors (`objlib.json`).
+- **`out/`** — transient outputs (templates, features, renders); **gitignored**.
+- **`vcmi-h3m-format-reference/`** — verbatim VCMI C++ sources documenting the `.h3m` format
+  (see `docs/vcmi-h3m-format-reference.md`).
 
-## How to measure (the fitness function)
+## How to run
 
-- Benchmark (3 control-relative scores): `uv run python src/benchmark.py --maps 12 --seeds 10`
-  → writes `out/benchmark.json`. This is what the research gates check.
-- Single fit to a target map: `uv run python src/deps_fit.py "<Map Name>.h3m"`.
-- Editor load-test: `src/gate.py` `load_test()` (headless VCMI editor; needs
-  `xvfb` + `flatpak`; ~95s). `loaded:True, fatal:False` = valid.
+```bash
+uv run python -m vcmi_mapgen.zone_engine run "All for One"      # full foundation pipeline
+uv run python -m vcmi_mapgen.zone_engine rebuild "All for One" --identity --verify
+uv run python -m vcmi_mapgen.zone_engine reconstruct "All for One" --zone 7 --deform
+uv run python -m vcmi_mapgen.markov_terrain                     # learned terrain generator
+uv run python -m vcmi_mapgen.extract_faithful                  # regenerate maps_json/ from maps/
+uv run pytest                                                  # rendering-engine reliability tests
+```
+
+Editor-quality rendering reads the H3 sprite LOD files from a local VCMI install
+(`~/.var/app/eu.vcmi.VCMI/data/vcmi/Data`); the rendering tests skip when those are absent.
 
 ## Rules
 
-- Generated maps live in `out/`. Do **NOT** copy them into the VCMI `Maps/` folder
-  except the single temp file the load-test uses.
-- Claims are **control-relative**: the generator must beat the shuffled control —
-  improving in absolute terms is not enough (see `research/README.md`).
-- Commit only work that passes its gate; keep diffs small and seeds fixed.
+- The **same-shape identity guarantee is bit-exact** — `rebuild --identity --verify` must
+  print `IDENTITY OK` and never re-roll object identity (no `pick_variant`), so relational
+  portals/quest links survive.
+- Generated artifacts live in `out/` (gitignored). Do **NOT** copy them into the VCMI
+  `Maps/` folder.
+- Treat `CLAUDE.md` and `.claude/` as generated adapter outputs — edit the canonical skill
+  sources and re-run `make agent-install`, never hand-edit them.
 
 ---
 

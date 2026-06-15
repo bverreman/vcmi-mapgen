@@ -1,5 +1,5 @@
-# Agent toolkit config — installs repo-specific skills (uv + VCMI maps domain) and
-# the local-worker `research` workflow that runs the gate-loop benchmark program.
+# Agent toolkit config — installs repo-specific skills (uv + VCMI maps domain) for
+# the zone-rebuilding engine + learned terrain generator.
 repo:
   name: vcmi-mapgen
 agents:
@@ -13,7 +13,7 @@ localInstructions:
       - cli-writer # always-loaded repo-root CLAUDE.md (uv + pipeline)
     paths: ["."]
     includeReadme: none
-  - skill: vcmi-mapgen-maps # loaded when working under src/ (formats, metrics, graph)
-    paths: ["src"]
+  - skill: vcmi-mapgen-maps # loaded when working under vcmi_mapgen/ (formats, engine, rendering)
+    paths: ["vcmi_mapgen"]
 workflow:
   branch: main

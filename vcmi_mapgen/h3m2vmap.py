@@ -5,10 +5,10 @@ opened in the editor and confirmed faithful, then trusted as the reference.
 
 import json, glob, os, sys, re, collections
 
-sys.path.insert(0, "src")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import h3m, vcmi_ids, vmapwrite
 
-ROOT = "/mnt/data/workspace/vcmi-mapgen"
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 TCODE = {
     0: "dt",
