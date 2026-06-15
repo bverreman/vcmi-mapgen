@@ -124,7 +124,14 @@ def _segment_level(lvl):
 
 
 def _bucket_objects(objects, level, zone_label, zones, W, H):
-    """Split this level's objects into per-zone buckets + a barrier bucket."""
+    """Split this level's objects into per-zone buckets + a barrier bucket.
+
+    An object whose ANCHOR sits in a zone belongs to that zone (unchanged). An object
+    anchored OFF every zone (on water/rock) but whose FOOTPRINT overlaps a zone — e.g.
+    a rim mountain anchored on the surrounding rock — is a boundary object that belongs
+    to the zone it touches most (deterministic, smallest-zone-id tie-break), so the
+    patch keeps its full rim. Each object still lands in exactly one bucket, so the
+    bit-exact identity rebuild is preserved (same object, same absolute position)."""
     zone_objs = {zid: [] for zid in zones}
     barrier = []
     for o in objects:
@@ -134,6 +141,15 @@ def _bucket_objects(objects, level, zone_label, zones, W, H):
         z = zone_label[y][x] if (0 <= x < W and 0 <= y < H) else -1
         if z >= 0 and z in zones:
             zone_objs[z].append(o)
+            continue
+        cover = collections.Counter()
+        for tx, ty, _blk in OR.mask_cells(o["mask"], x, y):
+            if 0 <= tx < W and 0 <= ty < H:
+                zz = zone_label[ty][tx]
+                if zz >= 0 and zz in zones:
+                    cover[zz] += 1
+        if cover:
+            zone_objs[max(sorted(cover), key=lambda zid: cover[zid])].append(o)
         else:
             barrier.append(o)
     return zone_objs, barrier
@@ -152,9 +168,19 @@ def extract_template(name: str) -> dict:
             z = zones[zid]
             bbox, mask_rel = zone_bbox_mask(z["tiles"])
             minx, miny = bbox[0], bbox[1]
+            cz = canon[zid]
             objl = []
             for o in zone_objs[zid]:
-                cd, cs = canon[zid][(o["x"], o["y"])]
+                if (o["x"], o["y"]) in cz:
+                    cd, cs = cz[(o["x"], o["y"])]
+                else:                       # boundary object anchored off-zone: use the
+                    ft = [(tx, ty) for tx, ty, _b in OR.mask_cells(o["mask"], o["x"], o["y"])
+                          if (tx, ty) in cz]   # footprint tile nearest the anchor
+                    if ft:
+                        bx, by = min(ft, key=lambda t: (t[0] - o["x"]) ** 2 + (t[1] - o["y"]) ** 2)
+                        cd, cs = cz[(bx, by)]
+                    else:
+                        cd, cs = 0.0, 0.0
                 objl.append({
                     "purpose": OR.purpose_of(o),
                     "identity": OR.exact_identity(o),
@@ -195,6 +221,166 @@ def write_template(name: str, out: str | None = None):
     os.makedirs(os.path.dirname(out), exist_ok=True)
     json.dump(t, open(out, "w"))
     return out, t
+
+
+# ---------------------------------------------------------------------------
+# Patch library:  every same-terrain land zone as its own browsable file
+# ---------------------------------------------------------------------------
+
+PATCH_FIELDS = ["terrain", "map", "zone_id", "level", "label", "area",
+                "n_objects", "n_decor", "shape_hash", "path"]
+
+
+def _touch_index(zones, W, H):
+    """tile (x,y) -> {zone ids whose tiles or 4-neighbourhood cover it}. A footprint
+    tile hitting this index means the object overlaps or borders that zone."""
+    idx = collections.defaultdict(set)
+    for zid, z in zones.items():
+        for (x, y) in z["tiles"]:
+            idx[(x, y)].add(zid)
+            for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                nx, ny = x + dx, y + dy
+                if 0 <= nx < W and 0 <= ny < H:
+                    idx[(nx, ny)].add(zid)
+    return idx
+
+
+def _zone_canon(o, cz, tiles):
+    """(depth,sweep) for an object relative to a zone: its anchor's canon if the anchor
+    is in the zone, else the canon of the nearest footprint tile in the zone, else the
+    canon of the nearest zone tile (adjacency-only boundary object)."""
+    key = (o["x"], o["y"])
+    if key in cz:
+        return cz[key]
+    ft = [(tx, ty) for tx, ty, _b in OR.mask_cells(o["mask"], o["x"], o["y"]) if (tx, ty) in cz]
+    pool = ft if ft else list(tiles)
+    bx, by = min(pool, key=lambda t: (t[0] - o["x"]) ** 2 + (t[1] - o["y"]) ** 2)
+    return cz[(bx, by)]
+
+
+def extract_patches(name: str) -> dict:
+    """Per-zone SELF-CONTAINED patches for the library: every object whose footprint
+    OVERLAPS or BORDERS a zone is part of that zone's patch — so rim mountains, edge
+    mines and boundary decoration that are *anchored in a neighbouring zone* are kept.
+    Objects are therefore SHARED across adjacent patches by design. This is distinct
+    from extract_template's identity buckets, which keep each object exactly once for
+    the bit-exact rebuild. Zone shape metadata + labels match extract_template."""
+    fm = OR.load_faithful(name)
+    W, H = fm["width"], fm["height"]
+    levels_out = []
+    for L, lvl in enumerate(fm["terrain"]):
+        zones, zone_label, canon = _segment_level(lvl)
+        anchor_objs, _ = _bucket_objects(fm["objects"], L, zone_label, zones, W, H)
+        idx = _touch_index(zones, W, H)
+        touch = collections.defaultdict(list)
+        for o in fm["objects"]:
+            if o.get("l", 0) != L:
+                continue
+            hit = set()
+            for tx, ty, _b in OR.mask_cells(o["mask"], o["x"], o["y"]):
+                if (tx, ty) in idx:
+                    hit |= idx[(tx, ty)]
+            for zid in hit:
+                touch[zid].append(o)
+
+        zones_out = []
+        for zid in sorted(zones):
+            z = zones[zid]
+            bbox, mask_rel = zone_bbox_mask(z["tiles"])
+            minx, miny = bbox[0], bbox[1]
+            cz = canon[zid]
+            objl = []
+            for o in touch[zid]:
+                cd, cs = _zone_canon(o, cz, z["tiles"])
+                objl.append({
+                    "purpose": OR.purpose_of(o),
+                    "identity": OR.exact_identity(o),
+                    "anchor_off": [o["x"] - minx, o["y"] - miny],
+                    "canon": [round(cd, 6), round(cs, 6)],
+                })
+            objl.sort(key=lambda e: (e["anchor_off"][1], e["anchor_off"][0],
+                                     e["identity"]["type"], e["identity"]["subtype"]))
+            mask_rel_l = [[dx, dy] for (dx, dy) in mask_rel]
+            zones_out.append({
+                "zone_id": zid,
+                "terrain_type": z["terrain_type"],
+                "area": z["area"],
+                "bbox": list(bbox),
+                "centroid": [round(z["centroid"][0], 3), round(z["centroid"][1], 3)],
+                "label": label_zone(z, anchor_objs[zid], W, H),
+                "shape_hash": hashlib.sha1(repr(mask_rel_l).encode()).hexdigest()[:12],
+                "mask_rel": mask_rel_l,
+                "objects": objl,
+            })
+        levels_out.append({"level": L, "zones": zones_out})
+    return {"name": fm["name"], "width": W, "height": H, "levels": levels_out}
+
+
+def write_patches(names, out_dir: str | None = None):
+    """One self-contained JSON per land zone, grouped by map; collect manifest rows.
+
+    Uses extract_patches: each patch keeps every object overlapping OR bordering its
+    zone (full rims), shared across adjacent patches. Each patch carries a provenance
+    header so it traces back to its source map; per-tile canon is omitted because it is
+    derivable from mask_rel. Returns (rows, paths).
+    """
+    out_dir = out_dir or os.path.join(ROOT, "out", "patches")
+    rows, paths = [], []
+    for name in names:
+        t = extract_patches(name)
+        mslug = slug(name)
+        map_dir = os.path.join(out_dir, mslug)
+        os.makedirs(map_dir, exist_ok=True)
+        for lvl_entry in t["levels"]:
+            L = lvl_entry["level"]
+            for z in lvl_entry["zones"]:
+                patch = {
+                    "source_map": t["name"],
+                    "source_slug": mslug,
+                    "level": L,
+                    "zone_id": z["zone_id"],
+                    "terrain_type": z["terrain_type"],
+                    "terrain_name": TNAME.get(z["terrain_type"], str(z["terrain_type"])),
+                    "area": z["area"],
+                    "bbox": z["bbox"],
+                    "centroid": z["centroid"],
+                    "label": z["label"],
+                    "shape_hash": z["shape_hash"],
+                    "mask_rel": z["mask_rel"],
+                    "objects": z["objects"],
+                }
+                fname = f"z{z['zone_id']}_L{L}__{slug(z['label'])}.json"
+                fpath = os.path.join(map_dir, fname)
+                json.dump(patch, open(fpath, "w"))
+                paths.append(fpath)
+                n_decor = sum(1 for o in z["objects"] if o["purpose"] == "DECORATION")
+                rows.append({
+                    "terrain": patch["terrain_name"],
+                    "map": t["name"],
+                    "zone_id": z["zone_id"],
+                    "level": L,
+                    "label": z["label"],
+                    "area": z["area"],
+                    "n_objects": len(z["objects"]),
+                    "n_decor": n_decor,
+                    "shape_hash": z["shape_hash"],
+                    "path": os.path.relpath(fpath, out_dir),
+                })
+    return rows, paths
+
+
+def write_manifest(rows, out_dir: str | None = None):
+    """index.csv sorted by (terrain, map, level, zone_id) so terrains group together."""
+    import csv
+    out_dir = out_dir or os.path.join(ROOT, "out", "patches")
+    os.makedirs(out_dir, exist_ok=True)
+    path = os.path.join(out_dir, "index.csv")
+    ordered = sorted(rows, key=lambda r: (r["terrain"], r["map"], r["level"], r["zone_id"]))
+    with open(path, "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=PATCH_FIELDS)
+        w.writeheader()
+        w.writerows(ordered)
+    return path
 
 
 # ---------------------------------------------------------------------------
@@ -887,6 +1073,73 @@ def _cell(t, x=0, y=0):
             "rt": 0, "rd": 0, "ot": 0, "od": 0, "m": 0}
 
 
+# --- corpus-learned terrain auto-tiler ------------------------------------------
+# Real H3 terrain meets water and other terrains via transition VIEWS (+ the `m`
+# mirror flag), not a flat clean frame. We learn, per (centre terrain, its 8 neighbour
+# terrains), the (view, m) pairs real maps use, then replay them — reproducing shores,
+# beaches and land-land blends exactly as the editor draws them. Back-off: exact 8-sig
+# -> 4-sig (N,W,E,S) -> flat clean view.
+_TILER = {}
+
+_N8 = [(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)]
+
+
+def _neigh8(grid, x, y, W, H, t):
+    return tuple(grid[y + dy][x + dx] if 0 <= x + dx < W and 0 <= y + dy < H else t
+                 for dx, dy in _N8)
+
+
+def _learn_terrain_tiler():
+    """(exact, four, clean) view/m tables learned from every corpus terrain tile."""
+    if "v" in _TILER:
+        return _TILER["v"]
+    import glob
+    exact = collections.defaultdict(collections.Counter)   # (t, sig8)        -> (view,m)
+    four = collections.defaultdict(collections.Counter)    # (t, N,W,E,S)     -> (view,m)
+    clean = collections.defaultdict(collections.Counter)   # t (all-same nbrs)-> (view,m)
+    for f in glob.glob(os.path.join(ROOT, "maps_json", "*.json")):
+        m = json.load(open(f))
+        for g in m["terrain"]:
+            H = len(g)
+            W = len(g[0])
+            T = [[c["t"] for c in row] for row in g]
+            for y in range(H):
+                for x in range(W):
+                    c = g[y][x]
+                    t = c["t"]
+                    vm = (c["view"], c["m"])
+                    sig = _neigh8(T, x, y, W, H, t)
+                    exact[(t, sig)][vm] += 1
+                    four[(t, (sig[1], sig[3], sig[4], sig[6]))][vm] += 1
+                    if all(v == t for v in sig):
+                        clean[t][vm] += 1
+    _TILER["v"] = (exact, four, clean)
+    return _TILER["v"]
+
+
+def _tile_cell(t, sig, x, y, tiler):
+    exact, four, clean = tiler
+    if all(v == t for v in sig):                     # interior: vary for texture
+        cc = clean.get(t)
+        if cc:
+            opts = [vm for vm, _ in cc.most_common(8)]
+            view, mm = opts[(x * 7 + y * 13) % len(opts)]
+            return {"t": t, "view": view, "rt": 0, "rd": 0, "ot": 0, "od": 0, "m": mm}
+        return _cell(t, x, y)
+    hit = exact.get((t, sig)) or four.get((t, (sig[1], sig[3], sig[4], sig[6])))
+    if not hit:                                      # unseen border config: flat fallback
+        return _cell(t, x, y)
+    view, mm = hit.most_common(1)[0][0]              # the H3-correct transition frame
+    return {"t": t, "view": view, "rt": 0, "rd": 0, "ot": 0, "od": 0, "m": mm}
+
+
+def tile_terrain(id_grid, W, H):
+    """Terrain-id grid -> faithful cell grid with corpus-correct transition views."""
+    tiler = _learn_terrain_tiler()
+    return [[_tile_cell(id_grid[y][x], _neigh8(id_grid, x, y, W, H, id_grid[y][x]), x, y, tiler)
+             for x in range(W)] for y in range(H)]
+
+
 _MARKOV_MODEL = {}
 
 
@@ -933,6 +1186,948 @@ def deform_terrain_level(src_terr, zone, W, H, fx=1.3, fy=1.3):
             grid[Y][X] = {"t": t, "view": sc.get("view", 0), "rt": sc.get("rt", 0),
                           "rd": sc.get("rd", 0), "ot": 0, "od": 0, "m": sc.get("m", 0)}
     return grid
+
+
+# ---------------------------------------------------------------------------
+# Full-map generation:  Markov terrain  +  patches drawn from the library
+#
+# Lay a fresh Markov-sampled terrain, segment it into same-terrain zones, and fill
+# each zone from the patch pool: pick a same-terrain patch of similar size, stretch
+# its gameplay onto the zone (rigid forward-map) and fill decoration via a model
+# (quilt by default). Deterministic for a given seed.
+# ---------------------------------------------------------------------------
+
+DECO_MODELS = {"binned": deco_binned, "quilt": deco_quilt, "split": deco_split}
+
+
+def load_patch_pool(out_dir: str | None = None):
+    """terrain_name -> [(area, abspath)] read from the library's index.csv."""
+    import csv
+    out_dir = out_dir or os.path.join(ROOT, "out", "patches")
+    idx = os.path.join(out_dir, "index.csv")
+    if not os.path.exists(idx):
+        sys.exit(f"no patch library at {idx} — run `patches` first")
+    pool = collections.defaultdict(list)
+    with open(idx, newline="") as f:
+        for r in csv.DictReader(f):
+            pool[r["terrain"]].append((int(r["area"]), os.path.join(out_dir, r["path"])))
+    return pool
+
+
+def pick_patch(pool, terrain_type, area, rng, k=8):
+    """A library patch of this terrain whose size is closest to `area` (random among
+    the k closest, for variety). None if the terrain has no patches."""
+    cands = pool.get(TNAME.get(terrain_type, ""))
+    if not cands:
+        return None
+    near = sorted(cands, key=lambda ap: abs(ap[0] - area))[:k]
+    return rng.choice(near)[1]
+
+
+def _patch_source(patch):
+    """Reconstruct a usable SOURCE frame from a stored patch: a (src_zone, src_canon,
+    live objects) triple in the patch's own bbox-relative coordinates. The mini-grid
+    re-segmentation reproduces the exact (depth,sweep) frame the patch was recorded in
+    (depth is shape-only), so objects' footprints land on the right tiles."""
+    mask_rel = [(int(dx), int(dy)) for dx, dy in patch["mask_rel"]]
+    w = max(dx for dx, _ in mask_rel) + 1
+    h = max(dy for _, dy in mask_rel) + 1
+    tt = patch["terrain_type"]
+    grid = [[_cell(TS.ROCK, x, y) for x in range(w)] for y in range(h)]
+    for (dx, dy) in mask_rel:
+        grid[dy][dx] = _cell(tt, dx, dy)
+    zr, _zl, zc = _segment_level(grid)
+    cands = [k for k, z in zr.items() if z["terrain_type"] == tt]
+    if not cands:                       # degenerate 1-2 tile shape: synthesize directly
+        ts = set(mask_rel)
+        cx = sum(x for x, _ in mask_rel) / len(mask_rel)
+        cy = sum(y for _, y in mask_rel) / len(mask_rel)
+        src_zone = {"tiles": list(mask_rel), "tiles_set": ts, "terrain_type": tt,
+                    "area": len(mask_rel), "centroid": (cx, cy)}
+        src_canon = {t: (0.5, 0.5) for t in mask_rel}
+    else:
+        zid = max(cands, key=lambda k: zr[k]["area"])
+        src_zone, src_canon = zr[zid], zc[zid]
+    objs = [{**o["identity"], "x": o["anchor_off"][0], "y": o["anchor_off"][1],
+             "_purpose": o["purpose"], "purpose": o["purpose"]}
+            for o in patch["objects"]]
+    return src_zone, src_canon, objs
+
+
+def _place_patch(src_zone, src_canon, src_objs, tgt_zone, tgt_canon, model, seed,
+                 level, global_hard):
+    """Stretch one patch onto a target zone: gameplay forward-mapped rigid (avoiding
+    already-placed gameplay across the whole map), decoration filled by `model`. The
+    patch objects carry flat identities, so this does not call the ontology. Updates
+    global_hard in place with this zone's gameplay footprints. Returns placed objects."""
+    rng = random.Random(seed)
+    tgt_set = tgt_zone["tiles_set"]
+    (sx0, sy0, sx1, sy1), _ = zone_bbox_mask(src_zone["tiles"])
+    (tx0, ty0, tx1, ty1), _ = zone_bbox_mask(tgt_zone["tiles"])
+    sw, sh = max(sx1 - sx0, 1), max(sy1 - sy0, 1)
+    tw, th = max(tx1 - tx0, 1), max(ty1 - ty0, 1)
+
+    def fwd(x, y):
+        return (tx0 + round((x - sx0) / sw * tw), ty0 + round((y - sy0) / sh * th))
+
+    gp = [o for o in src_objs if o["_purpose"] != "DECORATION"]
+    decor = [o for o in src_objs if o["_purpose"] == "DECORATION"]
+
+    placed, used, zone_hard = [], set(), set()
+    for o in sorted(gp, key=lambda o: (o["y"], o["x"])):
+        ident = {k: o[k] for k in ("type", "subtype", "animation", "mask")}
+        tx, ty = fwd(o["x"], o["y"])
+
+        def blocks(x, y):
+            return [(cx, cy) for cx, cy, blk in OR.mask_cells(ident["mask"], x, y) if blk]
+
+        if ((tx, ty) not in tgt_set or (tx, ty) in used
+                or any(c in global_hard for c in blocks(tx, ty))):
+            tx, ty = _nearest_free((tx, ty), tgt_set, used)
+            if any(c in global_hard for c in blocks(tx, ty)):
+                continue                # cannot place without burying another sprite
+        used.add((tx, ty))
+        placed.append({**ident, "x": tx, "y": ty, "l": level, "_purpose": o["_purpose"]})
+        for cx, cy in blocks(tx, ty):
+            if (cx, cy) in tgt_set:
+                zone_hard.add((cx, cy))
+
+    hard = zone_hard | global_hard
+    placed += DECO_MODELS[model](decor, src_canon, src_zone["tiles_set"],
+                                 tgt_zone, tgt_canon, hard, seed, level)
+    global_hard |= zone_hard
+    return placed
+
+
+# ---------------------------------------------------------------------------
+# Terrain LAYOUT generators (the macro structure). Markov is a texture model with
+# no zone structure (speckle); these give a few large, coherent regions. Each
+# returns (terrain_grid, W, H, info) and feeds the SAME patch-fill below.
+# ---------------------------------------------------------------------------
+
+def _markov_marg():
+    """Corpus surface terrain marginal (terrain_id -> count), incl. water/rock."""
+    import markov_terrain as MT
+    if "m" not in _MARKOV_MODEL:
+        _MARKOV_MODEL["m"] = (MT.learn(0), MT.learn4(0))
+    return _MARKOV_MODEL["m"][0]["marg"]
+
+
+def _sample_terrain(marg, rng):
+    items = sorted(marg.items())
+    tot = sum(w for _, w in items)
+    r = rng.random() * tot
+    acc = 0
+    for t, w in items:
+        acc += w
+        if r <= acc:
+            return t
+    return items[-1][0]
+
+
+def _poisson_seeds(W, H, n, rng):
+    """n well-spread seed points (best-effort min separation, padded if needed)."""
+    seeds = []
+    mind = 0.7 * min(W, H) / max(n ** 0.5, 1)
+    for _ in range(n * 60):
+        if len(seeds) >= n:
+            break
+        p = (rng.randint(0, W - 1), rng.randint(0, H - 1))
+        if all((p[0] - q[0]) ** 2 + (p[1] - q[1]) ** 2 >= mind * mind for q in seeds):
+            seeds.append(p)
+    while len(seeds) < n:
+        seeds.append((rng.randint(0, W - 1), rng.randint(0, H - 1)))
+    return seeds
+
+
+def _value_noise(W, H, cell, rng):
+    """Smooth value-noise field in [-1,1] (coarse random grid, bilinear upsample).
+    Smooth (not white) noise is what makes warped borders wavy instead of fuzzy."""
+    gw, gh = W // cell + 2, H // cell + 2
+    g = [[rng.uniform(-1, 1) for _ in range(gw)] for _ in range(gh)]
+    out = [[0.0] * W for _ in range(H)]
+    for y in range(H):
+        gy = y / cell; iy = int(gy); fy = gy - iy
+        for x in range(W):
+            gx = x / cell; ix = int(gx); fx = gx - ix
+            a = g[iy][ix] * (1 - fx) + g[iy][ix + 1] * fx
+            b = g[iy + 1][ix] * (1 - fx) + g[iy + 1][ix + 1] * fx
+            out[y][x] = a * (1 - fy) + b * fy
+    return out
+
+
+def _carve_river(terr, W, H, rng):
+    """A meandering 2-wide water river from one edge across the map (random walk with
+    perpendicular drift)."""
+    horiz = rng.random() < 0.5
+    if horiz:
+        fx, fy, dx, dy, steps = 0.0, float(rng.randint(0, H - 1)), 1, 0, W
+    else:
+        fx, fy, dx, dy, steps = float(rng.randint(0, W - 1)), 0.0, 0, 1, H
+    for _ in range(steps * 2):
+        ix, iy = int(round(fx)), int(round(fy))
+        if not (0 <= ix < W and 0 <= iy < H):
+            break
+        for ox, oy in ((0, 0), (1, 0), (0, 1)):
+            X, Y = ix + ox, iy + oy
+            if 0 <= X < W and 0 <= Y < H:
+                terr[Y][X] = TS.WATER
+        fx += dx + dy * rng.uniform(-0.85, 0.85)
+        fy += dy + dx * rng.uniform(-0.85, 0.85)
+
+
+def layout_region(seed, size, rivers=2):
+    """RMG-style synthetic layout: spread N seeds, grow nearest-seed regions whose
+    borders are warped by smooth noise (organic, not polygonal), give each a
+    corpus-sampled terrain, lay ROCK mountain-range seams between adjacent land zones
+    (with periodic gaps = chokepoint passages), and carve a couple of rivers."""
+    rng = random.Random(seed)
+    W = H = size
+    n = max(6, round(W * H / 380))
+    seeds = _poisson_seeds(W, H, n, rng)
+    marg = _markov_marg()
+
+    def land_or_water():            # surface rock renders as black void; never seed it
+        t = _sample_terrain(marg, rng)
+        while t == TS.ROCK:
+            t = _sample_terrain(marg, rng)
+        return t
+
+    terrs = [land_or_water() for _ in seeds]
+    nx, ny = _value_noise(W, H, 9, rng), _value_noise(W, H, 9, rng)
+    amp = size / 7.0
+    label = [[0] * W for _ in range(H)]
+    for y in range(H):
+        for x in range(W):
+            wx, wy = x + amp * nx[y][x], y + amp * ny[y][x]
+            label[y][x] = min(range(n), key=lambda k:
+                              (wx - seeds[k][0]) ** 2 + (wy - seeds[k][1]) ** 2)
+    terr_id = [[terrs[label[y][x]] for x in range(W)] for y in range(H)]
+    for _ in range(rivers):
+        _carve_river(terr_id, W, H, rng)
+
+    grid = tile_terrain(terr_id, W, H)   # corpus-correct shore/transition views
+    return grid, W, H, f"region(n={n})"
+
+
+def layout_skeleton(seed, size, max_w=110):
+    """Borrow a real corpus map's surface terrain as the canvas (coherent, organic),
+    then refill its zones from the patch pool. Picks a not-too-large map."""
+    rng = random.Random(seed)
+    names = OR.all_map_names()
+    name = rng.choice(names)
+    for _ in range(8):
+        fm = OR.load_faithful(name)
+        if fm["width"] <= max_w:
+            break
+        name = rng.choice(names)
+    fm = OR.load_faithful(name)
+    return fm["terrain"][0], fm["width"], fm["height"], f"skeleton({name})"
+
+
+def layout_jigsaw(seed, size, out_dir=None):
+    """Pack real patch shapes (mask_rel) onto a water canvas like puzzle pieces, each
+    keeping a 1-tile gap so segmentation keeps them as separate zones; paint each
+    piece's terrain. Leftover stays water."""
+    rng = random.Random(seed)
+    W = H = size
+    pool = load_patch_pool(out_dir)
+    paths = [p for lst in pool.values() for (a, p) in lst if 30 <= a <= 500]
+    rng.shuffle(paths)
+    grid = [[_cell(TS.WATER, x, y) for x in range(W)] for y in range(H)]
+    occ = [[False] * W for _ in range(H)]
+
+    def free(ox, oy, mask, w, h):
+        if ox < 1 or oy < 1 or ox + w > W - 1 or oy + h > H - 1:
+            return False
+        for dx, dy in mask:
+            x, y = ox + dx, oy + dy
+            for ny in range(y - 1, y + 2):      # require a 1-tile empty ring
+                for nx in range(x - 1, x + 2):
+                    if occ[ny][nx]:
+                        return False
+        return True
+
+    filled = 0
+    for path in paths:
+        if filled > W * H * 0.55:
+            break
+        patch = json.load(open(path))
+        mask = [(int(dx), int(dy)) for dx, dy in patch["mask_rel"]]
+        w = max(dx for dx, _ in mask) + 1
+        h = max(dy for _, dy in mask) + 1
+        if w > W - 2 or h > H - 2:
+            continue
+        tt = patch["terrain_type"]
+        for _ in range(60):
+            ox, oy = rng.randint(1, W - w - 1), rng.randint(1, H - h - 1)
+            if free(ox, oy, mask, w, h):
+                for dx, dy in mask:
+                    occ[oy + dy][ox + dx] = True
+                    grid[oy + dy][ox + dx] = _cell(tt, ox + dx, oy + dy)
+                filled += len(mask)
+                break
+    return grid, W, H, "jigsaw"
+
+
+LAYOUTS = {"markov": lambda s, z, od: (markov_terrain_level(z, z, s), z, z, "markov"),
+           "region": lambda s, z, od: layout_region(s, z),
+           "skeleton": lambda s, z, od: layout_skeleton(s, z),
+           "jigsaw": lambda s, z, od: layout_jigsaw(s, z, od)}
+
+
+# ---------------------------------------------------------------------------
+# FEATURE-GRAMMAR ENGINE (replaces patch-copy fill).
+#
+# Instead of copying one library patch and stretching it, we LEARN, per
+# (terrain, role/archetype), a RELATIONAL SETPIECE (an anchor + satellites in
+# relative arrangement: guard-on-the-loot's-approach, dwellings-fanned-around-
+# the-town) plus an OPENNESS field (how empty real zones keep each part of their
+# shape), then CONSTRUCT a fresh zone: place the setpiece by its relations, carve
+# and reserve the open lanes + aprons, wall the rim with mountains/trees leaving
+# a few border gaps, and fill the remainder with vegetation only up to the learned
+# openness budget. This captures the MEANING (relations) and the DESIGNED EMPTY
+# SPACE that marginal densities throw away.
+# ---------------------------------------------------------------------------
+
+GRAMMAR_PATH = os.path.join(ROOT, "out", "grammar.json")
+LOOT_PURPOSES = ("BANK", "REWARD_PICKUP", "RESOURCE_PILE")
+GUARDABLE = {"BANK", "REWARD_PICKUP", "RESOURCE_PILE", "MINE", "DWELLING"}
+ROLE_ANCHOR = {"town": "TOWN", "mine": "MINE", "treasure": "BANK", "dwelling": "DWELLING"}
+NON_GAMEPLAY = ("DECORATION", "TERRAIN_MODIFIER")
+# Purposes NEVER scattered independently: TOWN defines a town zone (anchor only); HERO is
+# map-relational; TRANSPORT/QUEST_GATE/WATER_TRANSPORT objects are only meaningful in matched
+# SETS (portal entrance+exit, gate+key) or with context (boats need water) — placed by
+# _place_relational at the map level, or dropped, so we never emit a lone half of a pair.
+SATELLITE_SKIP = {"TOWN", "HERO", "TRANSPORT", "QUEST_GATE", "WATER_TRANSPORT"}
+# Relational families captured into the grammar catalog, paired by subtype (= color/portal id).
+RELATIONAL_TYPES = {"monolithOneWayEntrance", "monolithOneWayExit", "monolithTwoWay",
+                    "borderGate", "borderGuard", "keymasterTent", "seerHut",
+                    "subterraneanGate", "whirlpool"}
+VEG_SCALE = 0.7  # fraction of the corpus decoration budget to lay (rest stays clearing)
+
+
+_GUARDABLE_PRIO = {"BANK": 4, "MINE": 3, "REWARD_PICKUP": 2, "RESOURCE_PILE": 1, "DWELLING": 0}
+
+
+def _role_of(purposes):
+    """Archetype by PRIORITY-of-presence (a town zone is one with a town, regardless of
+    how many resources it also has). Caller passes only ANCHORED-in-zone purposes, so
+    boundary objects shared with neighbours don't mislabel the zone."""
+    if "TOWN" in purposes:
+        return "town"
+    if "MINE" in purposes:
+        return "mine"
+    if any(p in purposes for p in LOOT_PURPOSES):
+        return "treasure"
+    if "DWELLING" in purposes:
+        return "dwelling"
+    return "passage"
+
+
+def _ik(o):
+    return (o["type"], o["subtype"], o["animation"], tuple(tuple(r) for r in o["mask"]))
+
+
+def _euclid(a, b):
+    return math.hypot(a["x"] - b["x"], a["y"] - b["y"])
+
+
+def _manh(a, b):
+    return abs(a["x"] - b["x"]) + abs(a["y"] - b["y"])
+
+
+def _sweep_bin(s, S=SWEEP_BINS):
+    return min(int(s * S), S - 1)
+
+
+def _pick_anchor(gp, role):
+    """The role's primary object (the biggest footprint of the anchor purpose)."""
+    want = ROLE_ANCHOR.get(role)
+    cands = [o for o in gp if o["_purpose"] == want] if want else []
+    if not cands and role == "treasure":
+        cands = [o for o in gp if o["_purpose"] in LOOT_PURPOSES]
+    if not cands:
+        return None
+    return max(cands, key=lambda o: len(o["mask"]) * (len(o["mask"][0]) if o["mask"] else 0))
+
+
+def _wall_thickness(decor, canon_zone, tiles_set):
+    """How many depth bins from the rim are packed enough (dens>=0.4) to read as a wall."""
+    prof = decor_bins(decor, canon_zone, tiles_set)
+    t = 0
+    for k in range(prof["K"]):
+        if prof["dens"][k] >= 0.4:
+            t = k + 1
+        else:
+            break
+    return t or 1
+
+
+def learn_grammar(lib_dir=None):
+    """Per (terrain, role): relational setpiece + openness field, averaged over the
+    corpus patch library. Empirical (means over real zones), deterministic, inspectable."""
+    pool = load_patch_pool(lib_dir)
+    paths = sorted(p for lst in pool.values() for (_a, p) in lst)
+    K, Sx = DEPTH_BINS, SWEEP_BINS
+    samples = collections.defaultdict(list)
+    idc = collections.defaultdict(lambda: collections.defaultdict(collections.Counter))
+    ids = {}
+    opens = collections.defaultdict(
+        lambda: [[[0.0, 0] for _ in range(Sx)] for _ in range(K)])
+    rel_catalog = collections.defaultdict(dict)  # type -> subtype -> identity
+
+    for path in paths:
+        patch = json.load(open(path))
+        terr = patch.get("terrain_name") or TNAME.get(patch["terrain_type"])
+        z, canon, objs = _patch_source(patch)
+        ts = z["tiles_set"]
+        for o in objs:                           # remember every relational id by subtype
+            if o["type"] in RELATIONAL_TYPES:
+                rel_catalog[o["type"]].setdefault(o["subtype"], {
+                    "type": o["type"], "subtype": o["subtype"],
+                    "animation": o["animation"], "mask": o["mask"]})
+        gp = [o for o in objs if o["_purpose"] not in NON_GAMEPLAY]
+        anchored = {o["_purpose"] for o in gp if (o["x"], o["y"]) in ts}
+        role = _role_of(anchored)
+        key = (terr, role)
+        anchor = _pick_anchor(gp, role)
+        guardables = [o for o in gp if o["_purpose"] in GUARDABLE]
+
+        def addid(cat, o):
+            k = _ik(o)
+            idc[key][cat][k] += 1
+            ids[k] = {"type": o["type"], "subtype": o["subtype"],
+                      "animation": o["animation"], "mask": o["mask"]}
+
+        sat = collections.defaultdict(lambda: {"count": 0, "depths": []})
+        guard_d, plug, outw, gdepth = [], [], [], []
+        for o in gp:
+            p = o["_purpose"]
+            if o is anchor:
+                addid("anchor", o)
+                continue
+            if p == "GUARD":
+                tg = guardables or ([anchor] if anchor else [])
+                if tg:
+                    nt = min(tg, key=lambda t: _manh(o, t))
+                    d = _manh(o, nt)
+                    guard_d.append(d)
+                    plug.append(1.0 if d <= 2 else 0.0)
+                    outw.append(1.0 if _obj_canon(o, canon, ts)[0]
+                                < _obj_canon(nt, canon, ts)[0] else 0.0)
+                gdepth.append(_obj_canon(o, canon, ts)[0])
+                addid("guard", o)
+                continue
+            sat[p]["count"] += 1
+            sat[p]["depths"].append(_obj_canon(o, canon, ts)[0])
+            addid(p, o)
+
+        for o in objs:
+            if o["_purpose"] == "DECORATION":
+                d = _obj_canon(o, canon, ts)[0]
+                addid("wall" if _depth_bin(d) <= 1 else "veg", o)
+        thick = _wall_thickness([o for o in objs if o["_purpose"] == "DECORATION"], canon, ts)
+
+        occ = set()
+        for o in objs:
+            for tx, ty, _b in OR.mask_cells(o["mask"], o["x"], o["y"]):
+                occ.add((tx, ty))
+        cellc = [[[0, 0] for _ in range(Sx)] for _ in range(K)]
+        for t in ts:
+            d, s = canon[t]
+            cellc[_depth_bin(d)][_sweep_bin(s)][int(t in occ)] += 1  # [empty, occ] by membership
+        for k in range(K):
+            for s2 in range(Sx):
+                emp, oc = cellc[k][s2]
+                tot = emp + oc
+                if tot:
+                    opens[key][k][s2][0] += emp / tot
+                    opens[key][k][s2][1] += 1
+
+        samples[key].append({
+            "area": z["area"],
+            "adepth": _obj_canon(anchor, canon, ts)[0] if anchor else None,
+            "apurpose": anchor["_purpose"] if anchor else None,
+            "sat": {p: {"count": v["count"], "depths": v["depths"]} for p, v in sat.items()},
+            "guard_count": sum(1 for o in gp if o["_purpose"] == "GUARD"),
+            "gdepth": gdepth,
+            "guard_d": guard_d, "plug": plug, "outw": outw, "thick": thick})
+
+    def idlist(key, cat):
+        return [{"identity": ids[k], "weight": w} for k, w in idc[key][cat].most_common()]
+
+    grammar = collections.defaultdict(dict)
+    for key, S in samples.items():
+        terr, role = key
+        w = len(S)
+        adepths = [s["adepth"] for s in S if s["adepth"] is not None]
+        apur = collections.Counter(s["apurpose"] for s in S if s["apurpose"]).most_common(1)
+        anchor = None
+        if adepths and idc[key]["anchor"]:
+            anchor = {"purpose": apur[0][0] if apur else None,
+                      "depth_mu": round(statistics.fmean(adepths), 4),
+                      "depth_sd": round(statistics.pstdev(adepths) if len(adepths) > 1 else 0.12, 4),
+                      "idents": idlist(key, "anchor")}
+        satp = collections.defaultdict(lambda: {"dens": [], "depths": []})
+        for s in S:
+            a = max(1, s["area"])
+            for p, v in s["sat"].items():
+                satp[p]["dens"].append(v["count"] / a)
+                satp[p]["depths"] += v["depths"]
+        satellites = {}
+        for p, v in satp.items():
+            if not idc[key][p]:
+                continue
+            dd = v["depths"]
+            satellites[p] = {
+                "density": round(sum(v["dens"]) / w, 6),         # size-independent; 0 where absent
+                "depth_mu": round(statistics.fmean(dd), 4) if dd else 0.5,
+                "depth_sd": round(statistics.pstdev(dd) if len(dd) > 1 else 0.2, 4),
+                "idents": idlist(key, p)}
+        gdens = [s["guard_count"] / max(1, s["area"]) for s in S]
+        gd = [d for s in S for d in s["guard_d"]]
+        pl = [d for s in S for d in s["plug"]]
+        ow = [d for s in S for d in s["outw"]]
+        gdp = [d for s in S for d in s["gdepth"]]
+        guard = None
+        if idc[key]["guard"]:
+            guard = {"density": round(sum(gdens) / w, 6),
+                     "depth_mu": round(statistics.fmean(gdp), 4) if gdp else 0.3,
+                     "depth_sd": round(statistics.pstdev(gdp) if len(gdp) > 1 else 0.2, 4),
+                     "dist_mu": round(statistics.fmean(gd), 2) if gd else 1.0,
+                     "plug_rate": round(statistics.fmean(pl), 3) if pl else 0.5,
+                     "outward_rate": round(statistics.fmean(ow), 3) if ow else 0.5,
+                     "idents": idlist(key, "guard")}
+        om = [[round(opens[key][k][s2][0] / opens[key][k][s2][1], 3)
+               if opens[key][k][s2][1] else 0.85 for s2 in range(Sx)] for k in range(K)]
+        thicks = [s["thick"] for s in S]
+        grammar[terr][role] = {
+            "weight": w, "entrances": 3, "anchor": anchor,
+            "satellites": satellites, "guard": guard, "openness": om,
+            "wall": {"idents": idlist(key, "wall"),
+                     "thickness": max(1, round(statistics.fmean(thicks)) if thicks else 1)},
+            "veg": {"idents": idlist(key, "veg")}}
+    out = {t: dict(r) for t, r in grammar.items()}
+    out["_relational"] = {t: dict(s) for t, s in rel_catalog.items()}
+    return out
+
+
+def _load_or_build_grammar(rebuild=False, lib_dir=None):
+    if not rebuild and os.path.exists(GRAMMAR_PATH):
+        return json.load(open(GRAMMAR_PATH))
+    g = learn_grammar(lib_dir)
+    os.makedirs(os.path.dirname(GRAMMAR_PATH), exist_ok=True)
+    json.dump(g, open(GRAMMAR_PATH, "w"))
+    return g
+
+
+# --- zone synthesis geometry helpers ---------------------------------------
+
+def _ring1(t):
+    x, y = t
+    return [(x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)]
+
+
+def _zone_boundary(ts):
+    return [t for t in ts if any(n not in ts for n in _ring1(t))]
+
+
+def _centroid_tile(tiles):
+    cx = sum(x for x, _ in tiles) / len(tiles)
+    cy = sum(y for _, y in tiles) / len(tiles)
+    return min(tiles, key=lambda t: (t[0] - cx) ** 2 + (t[1] - cy) ** 2)
+
+
+def _rim_band(ts, boundary, thick):
+    band, frontier = set(boundary), set(boundary)
+    for _ in range(max(0, thick - 1)):
+        nxt = {n for t in frontier for n in _ring1(t) if n in ts and n not in band}
+        band |= nxt
+        frontier = nxt
+    return band
+
+
+def _apron(o, ts, r):
+    out = []
+    for tx, ty, _b in OR.mask_cells(o["mask"], o["x"], o["y"]):
+        for dx in range(-r, r + 1):
+            for dy in range(-r, r + 1):
+                t = (tx + dx, ty + dy)
+                if t in ts:
+                    out.append(t)
+    return out
+
+
+def _add_hard(hard, o, ts):
+    for cx, cy, blk in OR.mask_cells(o["mask"], o["x"], o["y"]):
+        if blk and (cx, cy) in ts:
+            hard.add((cx, cy))
+
+
+def _fits(ident, x, y, ts, hard):
+    for cx, cy, blk in OR.mask_cells(ident["mask"], x, y):
+        if blk and ((cx, cy) not in ts or (cx, cy) in hard):
+            return False
+    return True
+
+
+def _dist(a, b):
+    return math.hypot(a[0] - b[0], a[1] - b[1])
+
+
+def _place_anchor(A, ts, canon, hard, rng, level):
+    tiles = list(ts)
+    mu, sd = A["depth_mu"], A["depth_sd"]
+    weights = [_gauss(canon[t][0], mu, sd) for t in tiles]
+    for t in _weighted_spaced(tiles, weights, min(16, len(tiles)), 1.0, rng):
+        ident = _pick_identity(A["idents"], rng)
+        if _fits(ident, t[0], t[1], ts, hard):
+            o = {**ident, "x": t[0], "y": t[1], "l": level,
+                 "_purpose": A.get("purpose") or "TOWN"}
+            _add_hard(hard, o, ts)
+            return o, t
+    return None, None
+
+
+def _place_by_depth(p, pool, n, ts, canon, hard, rng, level, mu, sd):
+    """Place n objects of purpose p where this purpose sits in the shape (depth
+    signature), spread with a min separation that lets n fit the area (the corpus
+    spread, not a tight anchor radius — that isn't what the data shows)."""
+    tiles = list(ts)
+    weights = [_gauss(canon[t][0], mu, sd) for t in tiles]
+    min_sep = max(1.5, 0.6 * math.sqrt(len(ts) / max(n, 1)))
+    out = []
+    for t in _weighted_spaced(tiles, weights, n * 2, min_sep, rng):
+        if len(out) >= n:
+            break
+        ident = _pick_identity(pool, rng)
+        if _fits(ident, t[0], t[1], ts, hard):
+            o = {**ident, "x": t[0], "y": t[1], "l": level, "_purpose": p}
+            _add_hard(hard, o, ts)
+            out.append(o)
+    return out
+
+
+def _approach_toward(o, mouths, ts, blocked, base):
+    """The walkable tile adjacent to o that is closest to an entrance mouth — i.e. the
+    guard stands between the loot and the way in (guard-protects-loot by construction)."""
+    appr = set()
+    for tx, ty, _b in OR.mask_cells(o["mask"], o["x"], o["y"]):
+        for n in _ring1((tx, ty)):
+            if n in ts and n not in blocked:
+                appr.add(n)
+    appr.discard((o["x"], o["y"]))
+    if not appr:
+        return None
+    tgt = min(mouths, key=lambda m: _dist((o["x"], o["y"]), m)) if mouths else base
+    return min(appr, key=lambda t: _dist(t, tgt))
+
+
+def synthesize_zone(z, canon, rg, border_tiles, seed, level, global_hard):
+    """Construct one zone from a (terrain,role) grammar: relational setpiece + carved
+    empty skeleton + rim wall with a few gaps + openness-budgeted vegetation."""
+    rng = random.Random(seed)
+    ts = z["tiles_set"]
+    placed, gameplay_hard, reserved, wall = [], set(), set(), set()
+    boundary = set(z.get("boundary_tiles") or _zone_boundary(ts))
+
+    # 1. entrances: the map-level shared passages (already few, and aligned with the
+    # neighbour zone's gaps). Water-locked zones fall back to a couple of widest gaps.
+    bt = [t for t in border_tiles if t in ts]
+    if bt:
+        runs = _components(set(bt))
+        entrance_tiles = set(bt)
+    else:
+        runs = sorted(_components(set(boundary)), key=len, reverse=True)[:2]
+        entrance_tiles = {t for r in runs for t in r}
+    mouths = [_centroid_tile(r) for r in runs] or [_centroid_tile(list(ts))]
+
+    # 2. anchor (deep, open, central)
+    anchor_obj = anchor_tile = None
+    A = rg.get("anchor")
+    if A and A.get("idents"):
+        anchor_obj, anchor_tile = _place_anchor(A, ts, canon, gameplay_hard, rng, level)
+        if anchor_obj:
+            placed.append(anchor_obj)
+    base = anchor_tile or _centroid_tile(list(ts))
+
+    # 3. satellites: a per-zone gameplay BUDGET (keeps zones breathing regardless of
+    # corpus outliers) split across purposes by their learned density; each purpose is
+    # positioned by its own depth signature (where it sits in the shape).
+    area = z["area"]
+    sats = rg.get("satellites", {})
+    gp_budget = max(3, area // 12)
+    tot_d = sum(sp.get("density", 0.0) for sp in sats.values()) or 1.0
+    guardables = []
+    if anchor_obj and (A.get("purpose") in GUARDABLE):
+        guardables.append(anchor_obj)
+    for p, sp in sorted(sats.items(), key=lambda kv: _prio(kv[0])):
+        if p in SATELLITE_SKIP:
+            continue
+        pool = sp.get("idents")
+        n = _stochastic_round(gp_budget * sp.get("density", 0.0) / tot_d, rng)
+        if not pool or n <= 0:
+            continue
+        objs = _place_by_depth(p, pool, n, ts, canon, gameplay_hard, rng, level,
+                               sp.get("depth_mu", 0.5), sp.get("depth_sd", 0.2))
+        placed += objs
+        if p in GUARDABLE:
+            guardables += objs
+
+    # 4. carve the open SKELETON (designed empty space): entrance->base lanes + aprons
+    for m in mouths:
+        for t in _line_tiles(m, base):
+            if t in ts:
+                reserved.add(t)
+                reserved.update(n for n in _ring1(t) if n in ts)
+    for o in placed:
+        reserved.update(_apron(o, ts, 1))
+    reserved -= gameplay_hard
+
+    # 5. guards: protect guardables (the MEANING) — a guard on each one's approach toward
+    # the nearest entrance, most-valuable first; leftovers plug the entrance mouths.
+    G = rg.get("guard")
+    if G and G.get("idents"):
+        n_g = _stochastic_round(G.get("density", 0.0) * area, rng)
+        n_g = min(n_g, len(guardables) + len(mouths)) if (guardables or mouths) else 0
+
+        def _put_guard(tile):
+            gid = _pick_identity(G["idents"], rng)
+            placed.append({**gid, "x": tile[0], "y": tile[1], "l": level, "_purpose": "GUARD"})
+            gameplay_hard.add(tile)
+
+        for obj in sorted(guardables, key=lambda o: -_GUARDABLE_PRIO.get(o["_purpose"], 0)):
+            if n_g <= 0:
+                break
+            gtile = _approach_toward(obj, mouths, ts, gameplay_hard, base)
+            if gtile and gtile not in gameplay_hard:
+                _put_guard(gtile)
+                n_g -= 1
+        for m in mouths:                       # chokepoint guards at the gaps
+            if n_g <= 0:
+                break
+            if m in ts and m not in gameplay_hard:
+                _put_guard(m)
+                n_g -= 1
+
+    # 6. wall: rim band of mountains/trees, minus entrance gaps and reserved lanes
+    wall_pool = (rg.get("wall") or {}).get("idents")
+    thick = int((rg.get("wall") or {}).get("thickness", 1))
+    ring = _rim_band(ts, boundary, thick)
+    wall_tiles = sorted(t for t in ring
+                        if t not in entrance_tiles and t not in reserved
+                        and t not in gameplay_hard)
+    if wall_pool and wall_tiles:
+        wobjs = _place_decor_cells({0: wall_tiles}, {0: 0.9}, {0: 1.0},
+                                   lambda k: wall_pool, ts, gameplay_hard | reserved,
+                                   set(gameplay_hard) | reserved | entrance_tiles, rng, level)
+        placed += wobjs
+        wall = {(o["x"], o["y"]) for o in wobjs}
+
+    # 7. vegetation: CLUMPED with clearings (overlapping clumps where a smooth noise
+    # field is high, open ground where it is low) so interiors breathe; the per-cell
+    # count is the learned openness budget, concentrated into the clumps not spread flat.
+    veg_pool = (rg.get("veg") or {}).get("idents")
+    openness = rg.get("openness")
+    if veg_pool and openness:
+        (minx, miny, maxx, maxy), _ = zone_bbox_mask(z["tiles"])
+        NW, NH = maxx - minx + 1, maxy - miny + 1
+        noise = _value_noise(NW, NH, max(2, min(NW, NH) // 5), rng)
+
+        def clump(t):
+            return noise[t[1] - miny][t[0] - minx]
+        cells = collections.defaultdict(list)
+        for t in sorted(ts):
+            d, s = canon[t]
+            cells[(_depth_bin(d), _sweep_bin(s))].append(t)
+        blockset = gameplay_hard | reserved
+        used = set(gameplay_hard) | reserved | wall | entrance_tiles
+        for (k, s2), tl in cells.items():
+            op = openness[k][s2] if k < len(openness) and s2 < len(openness[k]) else 0.85
+            n = _stochastic_round(VEG_SCALE * max(0.0, 1.0 - op) * len(tl), rng)
+            if n <= 0:
+                continue
+            free = sorted((t for t in tl if t not in used), key=clump, reverse=True)
+            for t in free[:n]:                 # fill the clump cores first (overlapping)
+                ident = _pick_identity(veg_pool, rng)
+                if any((cx, cy) in blockset for cx, cy, blk in
+                       OR.mask_cells(ident["mask"], t[0], t[1]) if blk):
+                    continue                   # never bury gameplay or fill a reserved lane
+                placed.append({**ident, "x": t[0], "y": t[1], "l": level,
+                               "_purpose": "DECORATION"})
+                used.add(t)
+
+    # 8. reachability safety: open space must reach gameplay; carve the wall if not.
+    blocked = set(gameplay_hard) | wall
+    for o in placed:
+        if o["_purpose"] == "DECORATION":
+            for cx, cy, blk in OR.mask_cells(o["mask"], o["x"], o["y"]):
+                if blk and (cx, cy) in ts:
+                    blocked.add((cx, cy))
+    hard_objs = [o for o in placed if o["_purpose"] not in ("DECORATION", "GUARD")]
+    ok, _ = _stretch_traversable(ts, blocked, hard_objs)
+    if not ok and wall:
+        kept = set(wall)
+        _carve_connect(set(ts), kept, gameplay_hard | reserved)
+        carved = wall - kept
+        if carved:
+            placed = [o for o in placed
+                      if not (o["_purpose"] == "DECORATION" and (o["x"], o["y"]) in carved)]
+
+    global_hard |= gameplay_hard
+    return placed
+
+
+def _zone_passages(zones, zone_label, W, H):
+    """For each adjacent land-zone PAIR, choose ONE shared passage and mark the open
+    tiles on BOTH sides (a 3-tile window around the interface midpoint). Computing the
+    gap at the map level — not per zone — guarantees the two zones' wall gaps ALIGN, so
+    regions actually interconnect (decision: entrances at real zone borders)."""
+    iface = collections.defaultdict(list)
+    for zid, z in zones.items():
+        for (x, y) in (z.get("boundary_tiles") or []):
+            for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                nx, ny = x + dx, y + dy
+                if 0 <= nx < W and 0 <= ny < H and zone_label[ny][nx] >= 0 \
+                        and zone_label[ny][nx] != zid:
+                    iface[(zid, zone_label[ny][nx])].append((x, y))
+                    break
+    open_tiles = collections.defaultdict(set)
+    seen = set()
+    for (a, b), atiles in iface.items():
+        if (a, b) in seen:
+            continue
+        seen.add((a, b))
+        seen.add((b, a))
+        btiles = iface.get((b, a))
+        if not atiles or not btiles:
+            continue
+        ax = sum(x for x, _ in atiles) / len(atiles)
+        ay = sum(y for _, y in atiles) / len(atiles)
+        amid = min(atiles, key=lambda t: (t[0] - ax) ** 2 + (t[1] - ay) ** 2)
+        bmid = min(btiles, key=lambda t: (t[0] - amid[0]) ** 2 + (t[1] - amid[1]) ** 2)
+        open_tiles[a] |= {t for t in atiles if abs(t[0] - amid[0]) + abs(t[1] - amid[1]) <= 1}
+        open_tiles[b] |= {t for t in btiles if abs(t[0] - bmid[0]) + abs(t[1] - bmid[1]) <= 1}
+    return open_tiles
+
+
+def _assign_roles(zones, grammar, min_area, rng):
+    """One coherent role per land zone, sampled from the terrain's corpus role mix;
+    guarantee at least one town zone (drives player count)."""
+    roles = {}
+    for zid in sorted(zones):
+        z = zones[zid]
+        if z["area"] < min_area:
+            continue
+        g = grammar.get(TNAME.get(z["terrain_type"]))
+        if not g:
+            roles[zid] = "passage"
+            continue
+        items = [(r, g[r]["weight"]) for r in sorted(g)]
+        tot = sum(w for _, w in items)
+        x = rng.random() * tot
+        acc, chosen = 0, items[-1][0]
+        for r, w in items:
+            acc += w
+            if x <= acc:
+                chosen = r
+                break
+        roles[zid] = chosen
+    if "town" not in roles.values():
+        cand = [zid for zid in roles
+                if (grammar.get(TNAME.get(zones[zid]["terrain_type"])) or {}).get("town")]
+        if cand:
+            roles[max(cand, key=lambda z: zones[z]["area"])] = "town"
+    return roles
+
+
+def _place_relational(zones, regions, objects, grammar, rng, level, two_level):
+    """Place relational objects only as COMPLETE matched sets, keyed by subtype (color /
+    portal id): one-way portal entrance+exit and two-way portal pairs in DIFFERENT regions;
+    a border gate/guard with its same-colour keymaster tent (the key in another region, so
+    it must be found first); a few standalone seer huts. NEVER a lone half of a pair.
+    Subterranean gates are skipped unless the map has an underground (they need a partner on
+    the other level); whirlpools need paired open water and are deferred."""
+    cat = grammar.get("_relational") or {}
+    rids = list(regions)
+    if len(cat) == 0 or len(rids) < 2:
+        return []
+    occupied = set()
+    for o in objects:
+        for cx, cy, _b in OR.mask_cells(o["mask"], o["x"], o["y"]):
+            occupied.add((cx, cy))
+    free = {zid: [t for t in zones[zid]["tiles"] if t not in occupied] for zid in rids}
+    for zid in rids:
+        rng.shuffle(free[zid])
+    out = []
+
+    def put(zid, ident, purpose):
+        if not free.get(zid):
+            return False
+        t = free[zid].pop()
+        out.append({**ident, "x": t[0], "y": t[1], "l": level, "_purpose": purpose})
+        for cx, cy, _b in OR.mask_cells(ident["mask"], t[0], t[1]):
+            occupied.add((cx, cy))
+        return True
+
+    def colors(a, b=None):
+        ca = set(cat.get(a, {}))
+        return sorted(ca & set(cat.get(b, {}))) if b else sorted(ca)
+
+    ow = colors("monolithOneWayEntrance", "monolithOneWayExit")
+    for c in ow[:max(0, len(rids) // 3)]:                  # entrance here, exit elsewhere
+        a, b = rng.sample(rids, 2)
+        put(a, cat["monolithOneWayEntrance"][c], "TRANSPORT")
+        put(b, cat["monolithOneWayExit"][c], "TRANSPORT")
+    for c in colors("monolithTwoWay")[:max(0, len(rids) // 3)]:   # two ends, same id
+        a, b = rng.sample(rids, 2)
+        put(a, cat["monolithTwoWay"][c], "TRANSPORT")
+        put(b, cat["monolithTwoWay"][c], "TRANSPORT")
+    for gatetype in ("borderGate", "borderGuard"):         # gate + same-colour key
+        cols = colors("keymasterTent", gatetype)
+        for c in cols[:max(0, len(rids) // 4)]:
+            a, b = rng.sample(rids, 2)
+            put(a, cat["keymasterTent"][c], "QUEST_GATE")   # the key (reachable first)
+            put(b, cat[gatetype][c], "QUEST_GATE")          # the gate it unlocks
+    sh = colors("seerHut")
+    for i in range(min(len(sh), max(1, len(rids) // 4))):  # standalone quest givers
+        put(rng.choice(rids), cat["seerHut"][sh[i]], "QUEST_GATE")
+    return out
+
+
+def generate_map(terrain, W, H, seed=0, min_area=12, name=None, grammar=None):
+    """Synthesize a full map: assign each land zone a role, then construct it from the
+    learned feature grammar. Zones smaller than min_area stay bare terrain."""
+    grammar = grammar or _load_or_build_grammar()
+    rng = random.Random(seed)
+    zones, zone_label, canon = _segment_level(terrain)
+    roles = _assign_roles(zones, grammar, min_area, rng)
+    passages = _zone_passages(zones, zone_label, W, H)
+    objects, report, global_hard = [], [], set()
+    for zid in sorted(zones):
+        z = zones[zid]
+        if z["area"] < min_area:
+            continue
+        terr = TNAME.get(z["terrain_type"])
+        role = roles.get(zid, "passage")
+        gt = grammar.get(terr) or {}
+        rg = gt.get(role) or gt.get("passage")
+        if not rg:
+            report.append((zid, terr, z["area"], role, 0))
+            continue
+        borders = sorted(passages.get(zid, set()))
+        placed = synthesize_zone(z, canon[zid], rg, borders,
+                                 seed ^ (zid * 2654435761 & 0xFFFFFFFF), 0, global_hard)
+        objects += placed
+        report.append((zid, terr, z["area"], role, len(placed)))
+    objects += _place_relational(zones, sorted(roles), objects, grammar, rng, 0, False)
+    import traverse as TR
+    n_towns = sum(1 for o in objects if TR.TYPE2PURPOSE.get(o.get("type")) == "TOWN")
+    fm = {"name": name or f"Generated-s{seed}", "width": W, "height": H,
+          "twoLevel": False, "players": max(1, n_towns), "terrain": [terrain],
+          "objects": objects}
+    return fm, report
 
 
 # ---------------------------------------------------------------------------
@@ -1012,6 +2207,40 @@ def editor_render(vmap_path: str, out_path: str, compare_vmap: str | None = None
     return out_path
 
 
+def render_fm(fm, out_path, title=""):
+    """Render a generated faithful map (whose objects still carry `_purpose`) directly,
+    using the same banded paint order as the patch panels so flat terrain overlays and
+    stacked objects don't hide gameplay. Surface level only. Avoids the vmap round-trip
+    (read_vmap drops purpose), so this is the correct render path for generated maps."""
+    import render_editor as RE
+    from PIL import Image, ImageDraw
+    T = RE.TILE
+    terr = fm["terrain"][0]
+    H, W = len(terr), len(terr[0])
+    canvas = Image.new("RGB", (W * T, H * T), (0, 0, 0))
+    for y in range(H):
+        for x in range(W):
+            canvas.paste(RE.terr_tile_img(FA.tile_string(terr[y][x])).convert("RGB"), (x * T, y * T))
+    objs = [o for o in fm["objects"] if o.get("l", 0) == 0]
+    miss = 0
+    for o in sorted(objs, key=lambda o: (_paint_layer(o), o["y"], o["x"])):
+        anim = o.get("animation", "")
+        groups = RE.get_def(anim) if anim else None
+        if not groups or not groups[0]:
+            miss += 1
+            continue
+        sp = groups[0][0]
+        canvas.paste(sp.convert("RGB"),
+                     ((o["x"] + 1) * T - sp.size[0], (o["y"] + 1) * T - sp.size[1]), sp.split()[3])
+    if miss:
+        print(f"  {miss} objects with missing sprites")
+    if title:
+        ImageDraw.Draw(canvas).text((4, 4), title, fill=(255, 255, 255))
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    canvas.save(out_path)
+    return out_path
+
+
 def _render_panel(pan, title=None):
     """Render ONE zone panel (cropped to the zone) with REAL H3 sprites at editor
     resolution (32px), only the zone's own tiles, transparent elsewhere. RGBA."""
@@ -1025,7 +2254,7 @@ def _render_panel(pan, title=None):
     # sprites (extend up & left) aren't clipped.
     draw = []
     max_sw = max_sh = T
-    for o in sorted(pan["objs"], key=lambda o: (o["y"], o["x"])):
+    for o in sorted(pan["objs"], key=lambda o: (_paint_layer(o), o["y"], o["x"])):
         anim = o.get("animation", "")
         groups = RE.get_def(anim) if anim else None
         if not groups or not groups[0]:
@@ -1076,6 +2305,132 @@ def render_zone_compare(panels, out_path):
 
 
 # ---------------------------------------------------------------------------
+# Patch inspection — render every stored patch in ISOLATION (its own shape +
+# objects, no placement/stretch) so the patch CONTENT can be eyeballed apart
+# from how generation lays it down. Mirrors the library tree for traceability.
+# ---------------------------------------------------------------------------
+
+PATCH_BG = (28, 28, 32)
+
+
+def _patch_panel(patch, pad=4):
+    """A _render_panel dict for a stored patch in its own bbox-relative frame:
+    terrain = the patch's terrain on its mask, objects at anchor_off. `pad` tiles of
+    empty margin so bottom-right-anchored sprites (extend up & left) aren't clipped.
+    Boundary objects anchored OFF the zone have anchor_off outside the mask bbox, so the
+    panel origin is shifted to cover both the mask tiles and every object anchor."""
+    mask_rel = [(int(dx), int(dy)) for dx, dy in patch["mask_rel"]]
+    tt = patch["terrain_type"]
+    axs = [o["anchor_off"][0] for o in patch["objects"]]
+    ays = [o["anchor_off"][1] for o in patch["objects"]]
+    minx = min([0] + axs) - pad
+    miny = min([0] + ays) - pad
+    w = max([dx for dx, _ in mask_rel] + axs) - minx + 1 + pad
+    h = max([dy for _, dy in mask_rel] + ays) - miny + 1 + pad
+    tiles = {(dx - minx, dy - miny) for dx, dy in mask_rel}
+    terr = [[_cell(tt, x, y) for x in range(w)] for y in range(h)]
+    objs = [{**o["identity"], "x": o["anchor_off"][0] - minx, "y": o["anchor_off"][1] - miny,
+             "_purpose": o["purpose"]} for o in patch["objects"]]
+    return {"terr": terr, "tiles": tiles, "objs": objs, "W": w, "H": h}
+
+
+def _paint_layer(o):
+    """Paint band so stacked objects (multiple per tile) don't hide each other: flat
+    terrain overlays (cursed ground / magic plains / rocklands, AVX*) at the bottom,
+    scenery decoration above, gameplay on top. Within a band, normal (y,x) back-to-front."""
+    p = o.get("_purpose")
+    if p == "TERRAIN_MODIFIER":
+        return 0
+    if p == "DECORATION":
+        return 1
+    return 2
+
+
+def render_patch_panel(patch, title=None):
+    """RGBA render of one patch in isolation (real H3 sprites, terrain only on-mask)."""
+    return _render_panel(_patch_panel(patch), title=title)
+
+
+def _flatten(img, bg=PATCH_BG):
+    from PIL import Image
+    out = Image.new("RGB", img.size, bg)
+    out.paste(img, (0, 0), img)
+    return out
+
+
+def _grid_montage(cells, out_path, cols=10, thumb=200, pad=6, caph=13, bg=PATCH_BG):
+    """Contact sheet: each cell = (RGBA panel, caption) downscaled into a thumb box."""
+    from PIL import Image, ImageDraw
+    cw, ch = thumb + pad * 2, thumb + caph + pad * 2
+    rows = max(1, -(-len(cells) // cols))
+    canvas = Image.new("RGB", (cols * cw, rows * ch), bg)
+    draw = ImageDraw.Draw(canvas)
+    for i, (img, cap) in enumerate(cells):
+        r, c = divmod(i, cols)
+        scale = min(thumb / max(img.width, 1), thumb / max(img.height, 1), 1.0)
+        nw, nh = max(1, int(img.width * scale)), max(1, int(img.height * scale))
+        im = img.resize((nw, nh), Image.NEAREST)
+        ox = c * cw + pad + (thumb - nw) // 2
+        oy = r * ch + pad + (thumb - nh) // 2
+        canvas.paste(im, (ox, oy), im)
+        draw.text((c * cw + pad, r * ch + pad + thumb + 1), cap[:36], fill=(205, 205, 210))
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    canvas.save(out_path)
+    return out_path
+
+
+def write_patch_renders(out_dir=None, lib_dir=None, names=None, terrains=None,
+                        individual=True, sheets=True, cols=10, thumb=200, per_page=120):
+    """Render every patch in the library to a PNG (mirrors the library tree) and/or
+    per-terrain contact sheets. Returns (n_rendered, sheet_paths)."""
+    import csv
+    lib_dir = lib_dir or os.path.join(ROOT, "out", "patches")
+    out_dir = out_dir or lib_dir          # renders live next to index.csv, no new folder
+    idx = os.path.join(lib_dir, "index.csv")
+    if not os.path.exists(idx):
+        sys.exit(f"no patch library at {idx} — run `patches` first")
+    name_set = set(names) if names else None
+    terr_set = set(terrains) if terrains else None
+    rows = []
+    with open(idx, newline="") as f:
+        for r in csv.DictReader(f):
+            if name_set and r["map"] not in name_set:
+                continue
+            if terr_set and r["terrain"] not in terr_set:
+                continue
+            rows.append(r)
+    rows.sort(key=lambda r: (r["terrain"], r["map"], int(r["level"]), int(r["zone_id"])))
+
+    by_terrain = collections.defaultdict(list)
+    n = 0
+    for r in rows:
+        patch = json.load(open(os.path.join(lib_dir, r["path"])))
+        cap = f"{r['map']} z{r['zone_id']}L{r['level']} ({r['n_objects']}o)"
+        img = render_patch_panel(patch, title=None)
+        if individual:
+            png = os.path.join(out_dir, os.path.splitext(r["path"])[0] + ".png")
+            os.makedirs(os.path.dirname(png), exist_ok=True)
+            _flatten(img).save(png)
+        if sheets:
+            by_terrain[r["terrain"]].append((img, cap))
+        n += 1
+        if n % 200 == 0:
+            print(f"  ...{n}/{len(rows)} patches rendered")
+
+    sheet_paths = []
+    if sheets:
+        for terr, cells in sorted(by_terrain.items()):
+            pages = -(-len(cells) // per_page)
+            for p in range(pages):
+                chunk = cells[p * per_page:(p + 1) * per_page]
+                sfx = f"_{p + 1:02d}" if pages > 1 else ""
+                sp = os.path.join(out_dir, f"_sheet_{terr}{sfx}.png")
+                _grid_montage(chunk, sp, cols=cols, thumb=thumb)
+                sheet_paths.append(sp)
+    return n, sheet_paths
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -1092,6 +2447,34 @@ def cmd_extract(args):
     nbar = sum(len(l["barrier_objects"]) for l in t["levels"])
     print(f"extracted {t['name']}: {len(t['levels'])} levels, {nz} zones, "
           f"{nbar} barrier objects -> {path}")
+
+
+def cmd_patches(args):
+    names = args.name if args.name else OR.all_map_names()
+    out_dir = args.out or os.path.join(ROOT, "out", "patches")
+    rows, paths = write_patches(names, out_dir)
+    idx = write_manifest(rows, out_dir)
+    terrains = sorted({r["terrain"] for r in rows})
+    print(f"wrote {len(paths)} patches from {len(names)} maps across "
+          f"{len(terrains)} terrains ({', '.join(terrains)}) -> {out_dir}/")
+    print(f"manifest -> {idx}")
+    print("(each patch keeps every object overlapping OR bordering its zone; "
+          "rim objects are shared across adjacent patches)")
+
+
+def cmd_render_patches(args):
+    n, sheets = write_patch_renders(
+        out_dir=args.out, lib_dir=args.patches, names=args.name or None,
+        terrains=args.terrain or None, individual=not args.no_individual,
+        sheets=not args.no_sheets, cols=args.cols, thumb=args.thumb,
+        per_page=args.per_page)
+    out_dir = args.out or args.patches or os.path.join(ROOT, "out", "patches")
+    print(f"rendered {n} patches -> {out_dir}/"
+          + ("" if args.no_individual else " (one PNG next to each patch JSON)"))
+    if sheets:
+        print(f"{len(sheets)} per-terrain contact sheet(s) -> {out_dir}/_sheet_<terrain>.png")
+        for sp in sheets:
+            print(f"  {os.path.relpath(sp, out_dir)}")
 
 
 def cmd_inspect(args):
@@ -1346,6 +2729,57 @@ def cmd_run(args):
     print("  next (after you confirm): rebuild --zone N --deform  (rough different-shape warp)")
 
 
+def _generate_one(kind, args, grammar):
+    terr, W, H, info = LAYOUTS[kind](args.seed, args.size, None)
+    name = f"Gen-{kind}-s{args.seed}"
+    fm, report = generate_map(terr, W, H, seed=args.seed, min_area=args.min_zone,
+                              name=name, grammar=grammar)
+    filled = [r for r in report if r[4]]
+    print(f"\n[{kind}] {info}  {W}x{H}: {len(report)} zones >= {args.min_zone}t, "
+          f"{len(filled)} filled, {len(fm['objects'])} objects")
+    for zid, terrn, area, role, n in report:
+        print(f"  zone {zid:>2}  {str(terrn):<8} area={area:<5} objs={n:<4} role={role}")
+    stem = os.path.join(ROOT, "out", slug(name))
+    FA.save(fm, stem + ".json")
+    FA.to_vmap(fm, stem + ".vmap", name=os.path.basename(stem))
+    out = os.path.join(ROOT, "out", "render", f"{slug(name)}.png")
+    render_fm(fm, out, title=f"{kind}: {info}")
+    print(f"  saved {stem}.vmap  +  render -> {out}")
+    return out
+
+
+def cmd_generate(args):
+    kinds = ["region", "skeleton", "jigsaw"] if args.layout == "all" else [args.layout]
+    print(f"=== generate: seed={args.seed} size={args.size} "
+          f"min-zone={args.min_zone} layouts={kinds} ===")
+    grammar = _load_or_build_grammar(rebuild=args.rebuild_grammar)
+    outs = [_generate_one(k, args, grammar) for k in kinds]
+    print("\nrenders to compare:")
+    for o in outs:
+        print(f"  {o}")
+
+
+def cmd_grammar(args):
+    g = learn_grammar(args.patches)
+    out = args.out or GRAMMAR_PATH
+    os.makedirs(os.path.dirname(out), exist_ok=True)
+    json.dump(g, open(out, "w"))
+    terrains = args.terrain or [t for t in sorted(g) if not t.startswith("_")]
+    print(f"=== learned feature grammar from the patch library -> {out} ===")
+    for terr in terrains:
+        roles = g.get(terr)
+        if not roles or terr.startswith("_"):
+            continue
+        tot = sum(r["weight"] for r in roles.values())
+        parts = "  ".join(f"{role}:{roles[role]['weight']}"
+                          for role in sorted(roles, key=lambda r: -roles[r]["weight"]))
+        print(f"  {terr:<8} ({tot:>4} zones)  {parts}")
+    rel = g.get("_relational", {})
+    if rel:
+        print("  relational sets available (type: #subtypes): "
+              + ", ".join(f"{t}:{len(s)}" for t, s in sorted(rel.items())))
+
+
 def main():
     ap = argparse.ArgumentParser(description="Shape-driven zone-rebuilding engine")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -1354,6 +2788,27 @@ def main():
     pe.add_argument("name")
     pe.add_argument("--out", default=None)
     pe.set_defaults(func=cmd_extract)
+
+    pp = sub.add_parser("patches", help="every land zone -> a browsable patch library + index.csv")
+    pp.add_argument("name", nargs="*", help="map name(s); omit for the whole corpus")
+    pp.add_argument("--out", default=None, help="output dir (default out/patches)")
+    pp.set_defaults(func=cmd_patches)
+
+    prp = sub.add_parser("render-patches",
+                         help="render every library patch in isolation (PNG per patch + "
+                              "per-terrain contact sheets) for eyeballing patch content")
+    prp.add_argument("name", nargs="*", help="map name(s) to limit to; omit for all")
+    prp.add_argument("--terrain", action="append", default=[],
+                     help="limit to terrain name(s); repeatable")
+    prp.add_argument("--patches", default=None, help="library dir (default out/patches)")
+    prp.add_argument("--out", default=None, help="render dir (default out/patches_render)")
+    prp.add_argument("--no-individual", action="store_true", help="skip per-patch PNGs")
+    prp.add_argument("--no-sheets", action="store_true", help="skip contact sheets")
+    prp.add_argument("--cols", type=int, default=10, help="contact-sheet columns")
+    prp.add_argument("--thumb", type=int, default=200, help="contact-sheet thumb px")
+    prp.add_argument("--per-page", type=int, default=120, dest="per_page",
+                     help="patches per contact-sheet page")
+    prp.set_defaults(func=cmd_render_patches)
 
     pi = sub.add_parser("inspect", help="segmentation + labels PNG")
     pi.add_argument("name")
@@ -1400,6 +2855,26 @@ def main():
     prun = sub.add_parser("run", help="foundation pipeline to the inspection checkpoint")
     prun.add_argument("name")
     prun.set_defaults(func=cmd_run)
+
+    pgr = sub.add_parser("grammar",
+                         help="learn the feature grammar (relational setpieces + openness "
+                              "fields) from the patch library -> out/grammar.json")
+    pgr.add_argument("--terrain", action="append", default=[],
+                     help="limit the printed summary to terrain name(s); repeatable")
+    pgr.add_argument("--patches", default=None, help="patch library dir (default out/patches)")
+    pgr.add_argument("--out", default=None, help="grammar JSON path (default out/grammar.json)")
+    pgr.set_defaults(func=cmd_grammar)
+
+    pg = sub.add_parser("generate", help="full map synthesized from the learned feature grammar")
+    pg.add_argument("--seed", type=int, default=0)
+    pg.add_argument("--size", type=int, default=72, help="W=H of the generated map")
+    pg.add_argument("--layout", choices=["region", "skeleton", "jigsaw", "markov", "all"],
+                    default="region", help="terrain layout generator; all = the 3 alternatives")
+    pg.add_argument("--min-zone", type=int, default=12, dest="min_zone",
+                    help="leave zones smaller than this as bare terrain (default 12)")
+    pg.add_argument("--rebuild-grammar", action="store_true", dest="rebuild_grammar",
+                    help="relearn out/grammar.json from the patch library before generating")
+    pg.set_defaults(func=cmd_generate)
 
     args = ap.parse_args()
     args.func(args)
