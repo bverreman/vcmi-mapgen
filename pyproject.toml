@@ -6,7 +6,23 @@ requires-python = ">=3.10"
 dependencies = [
     "pillow>=10",  # editor-quality H3 sprite rendering (vcmi_mapgen/render_editor.py)
     "numpy>=1.26",  # terrain segmentation + zone transform math
+    "torch>=2.2",  # learned vegetation GAN (vcmi_mapgen/veg_gan.py); CPU-only, see [tool.uv] below
 ]
+
+# Pin torch to the CPU wheel index — the default index resolves torch>=2.2 to a multi-GB
+# CUDA build (+ triton). The GAN is CPU-first; the CPU wheels are small and need no GPU.
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+# pytest in the PROJECT env so `uv run pytest` shares torch (the GAN tests need it);
+# uv installs the `dev` group by default for `uv run`/`uv sync`.
+[dependency-groups]
+dev = ["pytest>=8"]
 
 # Everything else is the Python standard library. Run via uv, e.g.:
 #   uv run python -m vcmi_mapgen.zone_engine run "All for One"

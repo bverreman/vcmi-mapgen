@@ -1,0 +1,78 @@
+"""Tests for the map-level quality yardstick (mapeval).
+
+Torch-free and fast: synthetic maps exercise determinism, the corpus-vs-empty ordering, the
+reachability term, relational-pair completeness, and feature-vector stability. Separate from the
+bit-exact identity / render tests (untouched).
+"""
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import obj_resolve as OR
+import mapeval as ME
+
+GRASS = 2
+
+
+def _grid(W, H, t=GRASS):
+    cell = {"t": t, "view": 0, "rt": 0, "rd": 0, "ot": 0, "od": 0, "m": 0}
+    return [[dict(cell) for _ in range(W)] for _ in range(H)]
+
+
+def _fm(objects=None, W=48, H=48):
+    return {"name": "synthetic", "width": W, "height": H, "twoLevel": False,
+            "players": 1, "terrain": [_grid(W, H)], "objects": objects or []}
+
+
+def _obj(typ, x, y, sub="object", mask=("A",), purpose=None):
+    o = {"type": typ, "subtype": sub, "animation": "X", "mask": list(mask), "x": x, "y": y, "l": 0}
+    if purpose:
+        o["_purpose"] = purpose
+    return o
+
+
+def test_score_deterministic():
+    fm = _fm([_obj("town", 10, 10, purpose="TOWN"), _obj("town", 30, 30, purpose="TOWN")])
+    a = ME.score_map(fm)
+    b = ME.score_map(fm)
+    assert a == b
+
+
+def test_corpus_beats_empty():
+    corpus = ME.score_map(OR.load_faithful("All for One"))
+    empty = ME.score_map(_fm([]))
+    assert corpus["total"] > empty["total"]
+    assert corpus["dist"] > empty["dist"]      # an empty map is far from the corpus distribution
+
+
+def test_reach_zero_without_start():
+    # no town ⇒ no start seed ⇒ reachability term is zero
+    reach, rep = ME._reach_score(_fm([]))
+    assert reach == 0.0
+    assert rep["start"] is None
+
+
+def test_relational_pair_completeness():
+    lone = _fm([_obj("monolithOneWayEntrance", 5, 5, sub="blue")])
+    assert ME.relational_complete(lone) is False
+    paired = _fm([_obj("monolithOneWayEntrance", 5, 5, sub="blue"),
+                  _obj("monolithOneWayExit", 40, 40, sub="blue")])
+    assert ME.relational_complete(paired) is True
+    # a two-way monolith with a single end is also incomplete
+    half = _fm([_obj("monolithTwoWay", 5, 5, sub="red")])
+    assert ME.relational_complete(half) is False
+
+
+def test_feature_keys_stable():
+    ka = list(ME.features(_fm([_obj("town", 10, 10, purpose="TOWN")])).keys())
+    kb = list(ME.features(OR.load_faithful("All for One")).keys())
+    assert ka == kb                            # identical ordered schema for any map
+
+
+def test_value_gradient_sign():
+    # rewards far from the lone town ⇒ positive outward gradient; near town ⇒ not positive
+    far = _fm([_obj("town", 2, 2, purpose="TOWN"),
+               _obj("treasureChest", 45, 45, purpose="REWARD_PICKUP")])
+    near = _fm([_obj("town", 24, 24, purpose="TOWN"),
+                _obj("treasureChest", 25, 25, purpose="REWARD_PICKUP")])
+    assert ME.features(far)["value_gradient"] > ME.features(near)["value_gradient"]

@@ -563,6 +563,112 @@ def _pick_identity(entry_list, rng):
     return rng.choices(ids, weights=ws, k=1)[0]
 
 
+_DECOR_TERR = None
+_NEUTRAL_MIN = 6   # an identity on >= this many terrains is terrain-neutral (rocks, generic)
+
+
+def _decor_terrains():
+    """animation -> frozenset(terrain ids) it appears under in the corpus catalog (objlib). Lets a
+    zone keep its decoration terrain-consistent — no snow trees on grass."""
+    global _DECOR_TERR
+    if _DECOR_TERR is None:
+        m = collections.defaultdict(set)
+        for _purpose, byterr in OR._OBJLIB.items():
+            for tid, items in byterr.items():
+                for it in items:
+                    if it.get("animation"):
+                        m[it["animation"]].add(int(tid))
+        _DECOR_TERR = {a: frozenset(s) for a, s in m.items()}
+    return _DECOR_TERR
+
+
+def _filter_terrain(pool, terr_id):
+    """Keep only decoration identities appropriate for ``terr_id`` (appear on it in the corpus, or
+    are terrain-neutral). Unknown identities are kept; if filtering empties the pool, keep the
+    original (never break placement). ``pool`` is a list of {identity, weight} entries."""
+    if not pool:
+        return pool
+    dt = _decor_terrains()
+
+    def ok(e):
+        ts = dt.get((e.get("identity") or {}).get("animation"))
+        return (not ts) or (terr_id in ts) or (len(ts) >= _NEUTRAL_MIN)
+    out = [e for e in pool if ok(e)]
+    return out or pool
+
+
+_BORDER_IDENTS = None
+
+
+def _border_idents(terr_id):
+    """1x1 blocking DECORATION identities for a terrain — the material for a CONTINUOUS border
+    belt: a single-tile footprint sits exactly on its rim tile, so the ring is unbroken and never
+    spills onto a neighbour's terrain. Falls back to the smallest blocking decoration, then grass."""
+    global _BORDER_IDENTS
+    if _BORDER_IDENTS is None:
+        _BORDER_IDENTS = {}
+        for tid, items in OR._OBJLIB.get("DECORATION", {}).items():
+            ones, smalls = [], []
+            for it in items:
+                mask = it.get("mask") or []
+                if not any("B" in r for r in mask):
+                    continue
+                ent = {"identity": {k: it[k] for k in ("type", "subtype", "animation", "mask")},
+                       "weight": 1}
+                if mask == ["B"]:
+                    ones.append(ent)
+                if sum(len(r) for r in mask) <= 2:
+                    smalls.append(ent)
+            _BORDER_IDENTS[int(tid)] = ones or smalls
+    return _BORDER_IDENTS.get(terr_id) or _BORDER_IDENTS.get(2) or []
+
+
+_VEG_IDENTS = None
+# water features are blocking in the catalog but do NOT read as an obstacle — never use them as a
+# zone-border ridge (the belt must be real obstacles: mountains, trees, hills, rocks).
+_NON_OBSTACLE_TYPES = {"lake", "lakeDUPLICATE", "frozenLake", "riverDelta", "kelp", "reef"}
+
+
+def _veg_idents(terr_id):
+    """Blocking DECORATION that reads as a real OBSTACLE (mountains AND trees, hills, rocks; any
+    footprint size) for a terrain — the material for a natural border ridge that may overlap. Water
+    features are excluded. Falls back to grass."""
+    global _VEG_IDENTS
+    if _VEG_IDENTS is None:
+        _VEG_IDENTS = {}
+        for tid, items in OR._OBJLIB.get("DECORATION", {}).items():
+            pool = [{"identity": {k: it[k] for k in ("type", "subtype", "animation", "mask")},
+                     "weight": 1}
+                    for it in items if any("B" in r for r in (it.get("mask") or []))
+                    and it.get("type") not in _NON_OBSTACLE_TYPES]
+            _VEG_IDENTS[int(tid)] = pool
+    return _VEG_IDENTS.get(terr_id) or _VEG_IDENTS.get(2) or []
+
+
+_INTERIOR_IDENTS = None
+
+
+def _interior_idents(terr_id):
+    """Terrain-matched DECORATION for INTERIOR scatter — flora and SMALL obstacles (footprint <= 4
+    cells) that texture a zone's interior without sealing it. Water features excluded; non-blocking
+    overlay flora is kept so interiors read as lived-in, not empty. Falls back to grass."""
+    global _INTERIOR_IDENTS
+    if _INTERIOR_IDENTS is None:
+        _INTERIOR_IDENTS = {}
+        for tid, items in OR._OBJLIB.get("DECORATION", {}).items():
+            pool = []
+            for it in items:
+                if it.get("type") in _NON_OBSTACLE_TYPES:
+                    continue
+                mask = it.get("mask") or []
+                if sum(len(r) for r in mask) > 4:      # keep interior pieces small & walkable
+                    continue
+                pool.append({"identity": {k: it[k] for k in ("type", "subtype", "animation", "mask")},
+                             "weight": 1})
+            _INTERIOR_IDENTS[int(tid)] = pool
+    return _INTERIOR_IDENTS.get(terr_id) or _INTERIOR_IDENTS.get(2) or []
+
+
 # ---------------------------------------------------------------------------
 # Decoration as a density FIELD over the shape-intrinsic frame.
 #
@@ -1140,6 +1246,31 @@ def tile_terrain(id_grid, W, H):
              for x in range(W)] for y in range(H)]
 
 
+def drop_water(grid):
+    """Return a copy of a faithful cell grid with every WATER tile reassigned to the nearest
+    land terrain (multi-source BFS through the water), then re-tiled so shores become clean
+    ground. ROCK seams are left intact (they are the intended zone separators, not water)."""
+    H = len(grid)
+    W = len(grid[0]) if H else 0
+    ids = [[c["t"] for c in row] for row in grid]
+    seen = [[ids[y][x] != TS.WATER and ids[y][x] != TS.ROCK for x in range(W)] for y in range(H)]
+    dq = collections.deque((x, y) for y in range(H) for x in range(W) if seen[y][x])
+    while dq:                                          # land frontier floods into adjacent water
+        x, y = dq.popleft()
+        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            nx, ny = x + dx, y + dy
+            if 0 <= nx < W and 0 <= ny < H and not seen[ny][nx] and ids[ny][nx] == TS.WATER:
+                seen[ny][nx] = True
+                ids[ny][nx] = ids[y][x]
+                dq.append((nx, ny))
+    if any(ids[y][x] == TS.WATER for y in range(H) for x in range(W)):   # water walled-in by rock
+        land = collections.Counter(t for row in ids for t in row
+                                   if t != TS.WATER and t != TS.ROCK)
+        fill = land.most_common(1)[0][0] if land else 2   # 2 = grass
+        ids = [[fill if t == TS.WATER else t for t in row] for row in ids]
+    return tile_terrain(ids, W, H)
+
+
 _MARKOV_MODEL = {}
 
 
@@ -1214,14 +1345,20 @@ def load_patch_pool(out_dir: str | None = None):
     return pool
 
 
+def nearest_patch_paths(pool, terrain_type, area, k=8):
+    """The k library patch paths of this terrain whose size is closest to `area`
+    (nearest first). Empty if the terrain has no patches."""
+    cands = pool.get(TNAME.get(terrain_type, ""))
+    if not cands:
+        return []
+    return [p for _a, p in sorted(cands, key=lambda ap: abs(ap[0] - area))[:k]]
+
+
 def pick_patch(pool, terrain_type, area, rng, k=8):
     """A library patch of this terrain whose size is closest to `area` (random among
     the k closest, for variety). None if the terrain has no patches."""
-    cands = pool.get(TNAME.get(terrain_type, ""))
-    if not cands:
-        return None
-    near = sorted(cands, key=lambda ap: abs(ap[0] - area))[:k]
-    return rng.choice(near)[1]
+    paths = nearest_patch_paths(pool, terrain_type, area, k)
+    return rng.choice(paths) if paths else None
 
 
 def _patch_source(patch):
@@ -1505,6 +1642,8 @@ RELATIONAL_TYPES = {"monolithOneWayEntrance", "monolithOneWayExit", "monolithTwo
                     "borderGate", "borderGuard", "keymasterTent", "seerHut",
                     "subterraneanGate", "whirlpool"}
 VEG_SCALE = 0.7  # fraction of the corpus decoration budget to lay (rest stays clearing)
+INTERIOR_SCALE = 0.18    # graph path: fraction of interior tiles eligible for scatter decoration
+INTERIOR_THRESH = 0.45   # graph path: only the clump cores (noise above this) get interior decor
 
 
 _GUARDABLE_PRIO = {"BANK": 4, "MINE": 3, "REWARD_PICKUP": 2, "RESOURCE_PILE": 1, "DWELLING": 0}
@@ -1824,9 +1963,16 @@ def _approach_toward(o, mouths, ts, blocked, base):
     return min(appr, key=lambda t: _dist(t, tgt))
 
 
-def synthesize_zone(z, canon, rg, border_tiles, seed, level, global_hard):
+def synthesize_zone(z, canon, rg, border_tiles, seed, level, global_hard,
+                    veg="grammar", gan_ctx=None, patch_pool=None, strict_terrain=False,
+                    terr_grid=None):
     """Construct one zone from a (terrain,role) grammar: relational setpiece + carved
-    empty skeleton + rim wall with a few gaps + openness-budgeted vegetation."""
+    empty skeleton + rim wall with a few gaps + openness-budgeted vegetation.
+
+    ``veg="gan"`` with a loaded ``gan_ctx=(G, D, layers)`` replaces the rule-based vegetation fill
+    (step 7) with the learned GAN field decoded by the genetic algorithm; ``veg="patch"`` with a
+    loaded ``patch_pool`` instead quilts real corpus patch fragments via a genetic algorithm
+    (:mod:`veg_patch`); the default ``"grammar"`` keeps the original rule-based fill unchanged."""
     rng = random.Random(seed)
     ts = z["tiles_set"]
     placed, gameplay_hard, reserved, wall = [], set(), set(), set()
@@ -1911,25 +2057,108 @@ def synthesize_zone(z, canon, rg, border_tiles, seed, level, global_hard):
                 _put_guard(m)
                 n_g -= 1
 
-    # 6. wall: rim band of mountains/trees, minus entrance gaps and reserved lanes
-    wall_pool = (rg.get("wall") or {}).get("idents")
-    thick = int((rg.get("wall") or {}).get("thickness", 1))
-    ring = _rim_band(ts, boundary, thick)
-    wall_tiles = sorted(t for t in ring
-                        if t not in entrance_tiles and t not in reserved
-                        and t not in gameplay_hard)
-    if wall_pool and wall_tiles:
-        wobjs = _place_decor_cells({0: wall_tiles}, {0: 0.9}, {0: 1.0},
-                                   lambda k: wall_pool, ts, gameplay_hard | reserved,
-                                   set(gameplay_hard) | reserved | entrance_tiles, rng, level)
-        placed += wobjs
-        wall = {(o["x"], o["y"]) for o in wobjs}
+    if not strict_terrain:
+        # 6. wall: rim band of mountains/trees, minus entrance gaps and reserved lanes
+        wall_pool = (rg.get("wall") or {}).get("idents")
+        thick = int((rg.get("wall") or {}).get("thickness", 1))
+        ring = _rim_band(ts, boundary, thick)
+        wall_tiles = sorted(t for t in ring
+                            if t not in entrance_tiles and t not in reserved
+                            and t not in gameplay_hard)
+        if wall_pool and wall_tiles:
+            wobjs = _place_decor_cells({0: wall_tiles}, {0: 0.9}, {0: 1.0},
+                                       lambda k: wall_pool, ts, gameplay_hard | reserved,
+                                       set(gameplay_hard) | reserved | entrance_tiles, rng, level)
+            placed += wobjs
+            wall = {(o["x"], o["y"]) for o in wobjs}
+    else:
+        # 6. BORDER ridge (graph path): terrain-matched mountains & trees along the INTERNAL zone
+        # borders only (NOT the map edge), allowed to overlap for a natural ridge. Entrances and a
+        # 1-tile margin around every placed object stay clear so nothing gets sealed; no interior
+        # scatter. This is the only vegetation on a graph map — the rim defines the zone.
+        gh = len(terr_grid) if terr_grid else 0
+        gw = len(terr_grid[0]) if gh else 0
+        pool = _veg_idents(z["terrain_type"])
+        keep_open = set(entrance_tiles)
+        for t in entrance_tiles:
+            keep_open.update(_ring1(t))
+        for o in placed:
+            for cx, cy, _b in OR.mask_cells(o["mask"], o["x"], o["y"]):
+                keep_open.add((cx, cy))
+                keep_open.update(_ring1((cx, cy)))
+        for t in sorted(boundary):
+            if t in keep_open or t in gameplay_hard or t not in ts:
+                continue
+            # internal border only: at least one 4-neighbour is another in-bounds zone (skip map edge)
+            if not any(0 <= t[0] + dx < gw and 0 <= t[1] + dy < gh
+                       and (t[0] + dx, t[1] + dy) not in ts
+                       for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1))):
+                continue
+            if not pool:
+                break
+            ident = _pick_identity(pool, rng)
+            cells = list(OR.mask_cells(ident["mask"], t[0], t[1]))
+            if any((cx, cy) in gameplay_hard for cx, cy, blk in cells if blk):
+                continue                       # never bury gameplay (overlap with decoration is fine)
+            if any(cx <= 0 or cy <= 0 or cx >= gw - 1 or cy >= gh - 1 for cx, cy, _b in cells):
+                continue                       # no vegetation on the map edge (footprint included)
+            placed.append({**ident, "x": t[0], "y": t[1], "l": level, "_purpose": "DECORATION"})
+            wall.add(t)
+
+        # 6b. INTERIOR decoration (graph path): on top of the border ridge, terrain-matched flora /
+        # small obstacles scattered through the zone INTERIOR with clearings (a value-noise field
+        # gives clumps and open ground). Never on the border (that is the ridge), never on an
+        # entrance / reserved lane, never burying gameplay; carve-eligible so the zone stays walkable.
+        ipool = _interior_idents(z["terrain_type"])
+        interior = [t for t in ts if t not in boundary and t not in gameplay_hard
+                    and t not in reserved and t not in entrance_tiles and t not in wall]
+        if ipool and interior:
+            (minx, miny, maxx, maxy), _ = zone_bbox_mask(z["tiles"])
+            NW, NH = maxx - minx + 1, maxy - miny + 1
+            noise = _value_noise(NW, NH, max(2, min(NW, NH) // 5), rng)
+            interior.sort(key=lambda t: noise[t[1] - miny][t[0] - minx], reverse=True)
+            blockset = gameplay_hard | reserved
+            for t in interior[:max(1, int(INTERIOR_SCALE * len(interior)))]:
+                if noise[t[1] - miny][t[0] - minx] < INTERIOR_THRESH:
+                    break                          # below the clump threshold = clearing
+                ident = _pick_identity(ipool, rng)
+                cells = list(OR.mask_cells(ident["mask"], t[0], t[1]))
+                if any((cx, cy) in blockset for cx, cy, blk in cells if blk):
+                    continue                       # never bury gameplay or fill a reserved lane
+                if any(cx <= 0 or cy <= 0 or cx >= gw - 1 or cy >= gh - 1 for cx, cy, _b in cells):
+                    continue                       # keep the map edge clear (footprint included)
+                placed.append({**ident, "x": t[0], "y": t[1], "l": level, "_purpose": "DECORATION"})
+                for cx, cy, blk in cells:          # carve-eligible if it ever seals the interior
+                    if blk and (cx, cy) in ts:
+                        wall.add((cx, cy))
 
     # 7. vegetation: CLUMPED with clearings (overlapping clumps where a smooth noise
     # field is high, open ground where it is low) so interiors breathe; the per-cell
     # count is the learned openness budget, concentrated into the clumps not spread flat.
-    veg_pool = (rg.get("veg") or {}).get("idents")
-    openness = rg.get("openness")
+    if veg == "gan" and gan_ctx is not None:
+        # learned vegetation: GAN field decoded by the GA (footprint-valid, never buries
+        # the gameplay placed above). Replaces the rule-based clump fill below. The
+        # condition is cropped from the full-map ``layers`` so the generator sees the
+        # neighbour terrain + map edge; ``border_tiles`` (the inter-zone passages) are
+        # protected so a mountain wall on the seam keeps its one-tile gap.
+        import veg_gan as VG
+        G, D, layers = gan_ctx
+        placed += VG.decorate_zone(z, layers, border_tiles, gameplay_hard, level, G, D, seed)
+        veg_pool = openness = None
+    elif veg == "patch" and patch_pool is not None:
+        # patch-quilt vegetation: real corpus patch fragments assembled by a GA to match the
+        # corpus distribution (footprint-valid, never buries gameplay; the inter-zone passages
+        # in ``border_tiles`` stay open). Replaces the rule-based clump fill below.
+        import veg_patch as VP
+        placed += VP.decorate_zone(z, canon, patch_pool, border_tiles, gameplay_hard,
+                                   seed=seed, level=level)
+        veg_pool = openness = None
+    else:
+        veg_pool = (rg.get("veg") or {}).get("idents")
+        if strict_terrain:
+            veg_pool = None        # graph path: vegetation belongs on the BORDER belt only — no
+            #                        interior scatter (that was the clutter); the rim defines zones.
+        openness = rg.get("openness")
     if veg_pool and openness:
         (minx, miny, maxx, maxy), _ = zone_bbox_mask(z["tiles"])
         NW, NH = maxx - minx + 1, maxy - miny + 1
@@ -1979,11 +2208,15 @@ def synthesize_zone(z, canon, rg, border_tiles, seed, level, global_hard):
     return placed
 
 
-def _zone_passages(zones, zone_label, W, H):
+def _zone_passages(zones, zone_label, W, H, allowed_pairs=None):
     """For each adjacent land-zone PAIR, choose ONE shared passage and mark the open
     tiles on BOTH sides (a 3-tile window around the interface midpoint). Computing the
     gap at the map level — not per zone — guarantees the two zones' wall gaps ALIGN, so
-    regions actually interconnect (decision: entrances at real zone borders)."""
+    regions actually interconnect (decision: entrances at real zone borders).
+
+    ``allowed_pairs`` (from the graph planner): if given, open ONLY those zone-id pairs;
+    every other interface stays sealed by the rim-wall vegetation belt (the planned graph's
+    non-edges become solid mountain/forest separators with no chokepoint)."""
     iface = collections.defaultdict(list)
     for zid, z in zones.items():
         for (x, y) in (z.get("boundary_tiles") or []):
@@ -1997,6 +2230,10 @@ def _zone_passages(zones, zone_label, W, H):
     seen = set()
     for (a, b), atiles in iface.items():
         if (a, b) in seen:
+            continue
+        if allowed_pairs is not None and (a, b) not in allowed_pairs:
+            seen.add((a, b))
+            seen.add((b, a))
             continue
         seen.add((a, b))
         seen.add((b, a))
@@ -2096,14 +2333,76 @@ def _place_relational(zones, regions, objects, grammar, rng, level, two_level):
     return out
 
 
-def generate_map(terrain, W, H, seed=0, min_area=12, name=None, grammar=None):
+def _seed_to_zone(x, y, zones, zone_label, W, H, min_area):
+    if 0 <= x < W and 0 <= y < H:
+        z = zone_label[y][x]
+        if z >= 0 and z in zones and zones[z]["area"] >= min_area:
+            return z
+    return None
+
+
+def _roles_from_seeds(zones, zone_label, role_seeds, base, W, H, min_area):
+    """Override the per-zone roles for zones containing a planned graph node's seed tile
+    (mapgraph); zones with no seed keep their ``base`` (grammar-sampled) role."""
+    roles = dict(base)
+    for (x, y, role) in role_seeds:
+        z = _seed_to_zone(x, y, zones, zone_label, W, H, min_area)
+        if z is not None:
+            roles[z] = role
+    return roles
+
+
+def _allowed_pairs(zones, zone_label, edge_seeds, W, H, min_area):
+    """Map planned graph edges (pairs of node seed coords) to the zone-id pairs that should
+    have a passage; every other interface stays sealed by its vegetation rim wall."""
+    pairs = set()
+    for (pa, pb) in edge_seeds:
+        za = _seed_to_zone(pa[0], pa[1], zones, zone_label, W, H, min_area)
+        zb = _seed_to_zone(pb[0], pb[1], zones, zone_label, W, H, min_area)
+        if za is not None and zb is not None and za != zb:
+            pairs.add((za, zb))
+            pairs.add((zb, za))
+    return pairs
+
+
+def generate_map(terrain, W, H, seed=0, min_area=12, name=None, grammar=None,
+                 veg="grammar", weights=None, plan=None):
     """Synthesize a full map: assign each land zone a role, then construct it from the
-    learned feature grammar. Zones smaller than min_area stay bare terrain."""
+    learned feature grammar. Zones smaller than min_area stay bare terrain.
+
+    ``veg="gan"`` decorates each zone with the learned GAN+GA vegetation instead of the
+    rule-based fill; if the weights are missing it warns and falls back to ``"grammar"``.
+    ``plan`` (from the graph generator) carries ``role_seeds`` (per-zone role override by
+    seed tile) and ``edge_seeds`` (which zone borders get a passage; the rest stay walled)."""
     grammar = grammar or _load_or_build_grammar()
     rng = random.Random(seed)
     zones, zone_label, canon = _segment_level(terrain)
     roles = _assign_roles(zones, grammar, min_area, rng)
-    passages = _zone_passages(zones, zone_label, W, H)
+    allowed_pairs = None
+    if plan and plan.get("role_seeds"):
+        roles = _roles_from_seeds(zones, zone_label, plan["role_seeds"], roles, W, H, min_area)
+    if plan and plan.get("edge_seeds"):
+        allowed_pairs = _allowed_pairs(zones, zone_label, plan["edge_seeds"], W, H, min_area)
+    passages = _zone_passages(zones, zone_label, W, H, allowed_pairs)
+
+    gan_ctx = None
+    patch_pool = None
+    if veg == "gan":
+        import veg_gan as VG
+        import veg_data as VD
+        wpath = weights or VG.DEFAULT_WEIGHTS
+        if os.path.exists(wpath):
+            G, D, _cfg = VG.load_models(wpath)
+            # full-map condition layers once → cross-zone terrain + map-edge context.
+            layers = VD.compute_cond_layers(terrain, canon, zones, zone_label)
+            gan_ctx = (G, D, layers)
+        else:
+            print(f"  --veg gan: weights {wpath} not found; falling back to grammar fill")
+            veg = "grammar"
+    elif veg == "patch":
+        patch_pool = load_patch_pool()      # GA quilts real corpus patches (no neural net)
+
+    strict_terrain = bool(plan)   # graph-planned maps keep each zone's decoration terrain-pure
     objects, report, global_hard = [], [], set()
     for zid in sorted(zones):
         z = zones[zid]
@@ -2118,7 +2417,9 @@ def generate_map(terrain, W, H, seed=0, min_area=12, name=None, grammar=None):
             continue
         borders = sorted(passages.get(zid, set()))
         placed = synthesize_zone(z, canon[zid], rg, borders,
-                                 seed ^ (zid * 2654435761 & 0xFFFFFFFF), 0, global_hard)
+                                 seed ^ (zid * 2654435761 & 0xFFFFFFFF), 0, global_hard,
+                                 veg=veg, gan_ctx=gan_ctx, patch_pool=patch_pool,
+                                 strict_terrain=strict_terrain, terr_grid=terrain)
         objects += placed
         report.append((zid, terr, z["area"], role, len(placed)))
     objects += _place_relational(zones, sorted(roles), objects, grammar, rng, 0, False)
@@ -2729,11 +3030,27 @@ def cmd_run(args):
     print("  next (after you confirm): rebuild --zone N --deform  (rough different-shape warp)")
 
 
+def build_layout(kind, seed, size):
+    """Return (terr, W, H, info, plan). The graph generator plans roles + edges; the texture
+    layouts (region/skeleton/jigsaw/markov) return plan=None."""
+    if kind == "graph":
+        import mapgraph as MG
+        return MG.realize(seed, size)
+    terr, W, H, info = LAYOUTS[kind](seed, size, None)
+    return terr, W, H, info, None
+
+
 def _generate_one(kind, args, grammar):
-    terr, W, H, info = LAYOUTS[kind](args.seed, args.size, None)
+    terr, W, H, info, plan = build_layout(kind, args.seed, args.size)
+    if getattr(args, "no_water", False):
+        terr = drop_water(terr)
+        info += " no-water"
     name = f"Gen-{kind}-s{args.seed}"
     fm, report = generate_map(terr, W, H, seed=args.seed, min_area=args.min_zone,
-                              name=name, grammar=grammar)
+                              name=name, grammar=grammar,
+                              veg=getattr(args, "veg", "grammar"),
+                              weights=getattr(args, "weights", None),
+                              plan=plan)
     filled = [r for r in report if r[4]]
     print(f"\n[{kind}] {info}  {W}x{H}: {len(report)} zones >= {args.min_zone}t, "
           f"{len(filled)} filled, {len(fm['objects'])} objects")
@@ -2757,6 +3074,156 @@ def cmd_generate(args):
     print("\nrenders to compare:")
     for o in outs:
         print(f"  {o}")
+
+
+def cmd_veg_train(args):
+    import veg_gan as VG
+    out = args.out or VG.DEFAULT_WEIGHTS
+    print(f"=== veg-train: seed={args.seed} epochs={args.epochs} windows={args.windows} "
+          f"width={args.width} ga_every={args.ga_every} resume={args.resume} -> {out} ===")
+    VG.train(seed=args.seed, epochs=args.epochs, n_windows=args.windows, width=args.width,
+             ga_every=args.ga_every, out=out, resume=args.resume)
+
+
+def _veg_sample_patch(args):
+    """VEGETATION ONLY (patch-quilt GA): generate terrain, place just the GA-quilted real-patch
+    vegetation per zone (no gameplay, no rule-based wall), and render. Isolates the patch
+    vegetation for evaluation. No weights/torch — uses the corpus patch library."""
+    import veg_patch as VP
+    pool = load_patch_pool()
+    terr, W, H, info = LAYOUTS[args.layout](args.seed, args.size, None)
+    if getattr(args, "no_water", False):
+        terr = drop_water(terr)
+        info += " no-water"
+    zones, zone_label, canon = _segment_level(terr)
+    passages = _zone_passages(zones, zone_label, W, H)
+    objects = []
+    for zid in sorted(zones):
+        z = zones[zid]
+        if z["area"] < args.min_zone or not (0 <= z["terrain_type"] < 8):
+            continue
+        objects += VP.decorate_zone(z, canon[zid], pool, passages.get(zid), set(),
+                                    seed=args.seed ^ (zid * 2654435761 & 0xFFFFFFFF))
+    fm = {"name": f"VegOnly-patch-{args.layout}-s{args.seed}", "width": W, "height": H,
+          "twoLevel": False, "players": 0, "terrain": [terr], "objects": objects}
+    land = sum(1 for zid in zones for _ in zones[zid]["tiles"]
+               if 0 <= zones[zid]["terrain_type"] < 8)
+    print(f"[veg-sample VEGETATION-ONLY patch] {info} {W}x{H}: {len(objects)} vegetation objects "
+          f"over {land} land tiles (density {len(objects)/max(land,1):.2f})")
+    out = os.path.join(ROOT, "out", "render", f"vegonly_patch_{args.layout}_s{args.seed}.png")
+    render_fm(fm, out, title=f"patch-quilt vegetation only: {info}")
+    print(f"  render -> {out}")
+
+
+def cmd_veg_sample(args):
+    """VEGETATION ONLY: generate terrain, place just the learned GAN+GA vegetation per zone
+    (no gameplay objects, no rule-based rim wall), and render so vegetation vs free tiles is
+    clearly visible. This isolates the GAN's vegetation for evaluation."""
+    if getattr(args, "veg", "gan") == "patch":
+        return _veg_sample_patch(args)
+    import veg_gan as VG
+    wpath = args.weights or VG.DEFAULT_WEIGHTS
+    if not os.path.exists(wpath):
+        print(f"weights {wpath} not found — run veg-train first")
+        return
+    import veg_data as VD
+    terr, W, H, info = LAYOUTS[args.layout](args.seed, args.size, None)
+    if getattr(args, "no_water", False):
+        terr = drop_water(terr)
+        info += " no-water"
+    G, D, _cfg = VG.load_models(wpath)
+    zones, zone_label, canon = _segment_level(terr)
+    # full-map condition layers + inter-zone passages, computed once (cross-zone context).
+    layers = VD.compute_cond_layers(terr, canon, zones, zone_label)
+    passages = _zone_passages(zones, zone_label, W, H)
+    objects = []
+    for zid in sorted(zones):
+        z = zones[zid]
+        if z["area"] < args.min_zone or not (0 <= z["terrain_type"] < 8):
+            continue
+        objects += VG.decorate_zone(z, layers, passages.get(zid), set(), 0, G, D,
+                                    seed=args.seed ^ (zid * 2654435761 & 0xFFFFFFFF))
+    fm = {"name": f"VegOnly-{args.layout}-s{args.seed}", "width": W, "height": H,
+          "twoLevel": False, "players": 0, "terrain": [terr], "objects": objects}
+    land = sum(1 for zid in zones for _ in zones[zid]["tiles"]
+               if 0 <= zones[zid]["terrain_type"] < 8)
+    print(f"[veg-sample VEGETATION-ONLY] {info} {W}x{H}: {len(objects)} vegetation objects "
+          f"over {land} land tiles (density {len(objects)/max(land,1):.2f})")
+    out = os.path.join(ROOT, "out", "render", f"vegonly_{args.layout}_s{args.seed}.png")
+    render_fm(fm, out, title=f"GAN vegetation only: {info}")
+    print(f"  render -> {out}")
+
+
+def _parse_seeds(spec):
+    """'0-4' or '0,1,2' or '0-2,5' -> [0,1,2,3,4] / [0,1,2] / [0,1,2,5]."""
+    out = []
+    for part in str(spec).split(","):
+        if "-" in part:
+            a, b = part.split("-")
+            out += list(range(int(a), int(b) + 1))
+        elif part:
+            out.append(int(part))
+    return out
+
+
+def gen_fm(layout, veg, seed, size, min_zone, grammar, weights=None):
+    """Generate ONE full map (no render/save) for the leaderboard. Returns the faithful dict."""
+    terr, W, H, _info, plan = build_layout(layout, seed, size)
+    fm, _report = generate_map(terr, W, H, seed=seed, min_area=min_zone,
+                               name=f"Gen-{layout}-{veg}-s{seed}", grammar=grammar,
+                               veg=veg, weights=weights, plan=plan)
+    return fm
+
+
+def _runnable_veg(veg, weights):
+    """Filter veg modes whose assets are missing (gan weights / patch library)."""
+    if veg == "gan":
+        import veg_gan as VG
+        return os.path.exists(weights or VG.DEFAULT_WEIGHTS)
+    if veg == "patch":
+        return os.path.exists(os.path.join(ROOT, "out", "patches", "index.csv"))
+    return True
+
+
+def cmd_compare(args):
+    """Race generators on the map-level yardstick: for each (layout × veg) over the seed set,
+    generate a full map and score it with mapeval, then print a leaderboard (mean ± std)."""
+    import mapeval as ME
+    seeds = _parse_seeds(args.seeds)
+    grammar = _load_or_build_grammar()
+    specs = [(lay, veg) for lay in args.layouts for veg in args.veg
+             if _runnable_veg(veg, args.weights)]
+    print(f"=== compare: seeds={seeds} size={args.size} "
+          f"specs={[f'{l}:{v}' for l, v in specs]} ===")
+    rows = []
+    for lay, veg in specs:
+        recs = []
+        for s in seeds:
+            try:
+                fm = gen_fm(lay, veg, s, args.size, args.min_zone, grammar, args.weights)
+                recs.append(ME.score_map(fm))
+            except Exception as e:
+                print(f"  {lay}:{veg} s{s} FAILED: {e}")
+        if not recs:
+            continue
+
+        def col(k):
+            v = np.array([r[k] for r in recs], float)
+            return v.mean(), v.std()
+        rows.append((f"{lay}:{veg}", col("total"), col("reach"), col("dist"),
+                     col("balance"), sum(r["ok"] for r in recs), len(recs)))
+    rows.sort(key=lambda r: -r[1][0])
+    print(f"\n{'generator':<18}{'total':>14}{'reach':>14}{'dist':>14}{'balance':>14}  ok")
+
+    def fmt(m, s):
+        return f"{m:.3f}±{s:.3f}"
+    for name, tot, reach, dist, bal, nok, n in rows:
+        print(f"{name:<18}{fmt(*tot):>14}{fmt(*reach):>14}{fmt(*dist):>14}"
+              f"{fmt(*bal):>14}  {nok}/{n}")
+    # corpus reference band so the leaderboard is interpretable
+    names, mean, std = ME._corpus_stats()
+    print(f"\n(corpus reference: {len(ME.OR.all_map_names())} maps; "
+          f"a generator's 'dist' nearer 1.0 is closer to the corpus distribution)")
 
 
 def cmd_grammar(args):
@@ -2868,13 +3335,63 @@ def main():
     pg = sub.add_parser("generate", help="full map synthesized from the learned feature grammar")
     pg.add_argument("--seed", type=int, default=0)
     pg.add_argument("--size", type=int, default=72, help="W=H of the generated map")
-    pg.add_argument("--layout", choices=["region", "skeleton", "jigsaw", "markov", "all"],
-                    default="region", help="terrain layout generator; all = the 3 alternatives")
+    pg.add_argument("--layout",
+                    choices=["region", "skeleton", "jigsaw", "markov", "graph", "all"],
+                    default="region", help="terrain layout generator; graph = zone-graph "
+                    "planner (connectivity-first); all = the 3 texture alternatives")
     pg.add_argument("--min-zone", type=int, default=12, dest="min_zone",
                     help="leave zones smaller than this as bare terrain (default 12)")
     pg.add_argument("--rebuild-grammar", action="store_true", dest="rebuild_grammar",
                     help="relearn out/grammar.json from the patch library before generating")
+    pg.add_argument("--no-water", action="store_true", dest="no_water",
+                    help="reassign water tiles to the nearest land terrain (land-only map)")
+    pg.add_argument("--veg", choices=["grammar", "gan", "patch"], default="grammar",
+                    help="vegetation fill: grammar=rule-based (default), gan=learned GAN+GA, "
+                         "patch=GA quilt of real corpus patches (needs the `patches` library)")
+    pg.add_argument("--weights", default=None,
+                    help="veg GAN weights for --veg gan (default out/veg_gan.pt)")
     pg.set_defaults(func=cmd_generate)
+
+    pcmp = sub.add_parser("compare",
+                          help="race generators on the map-level yardstick (mapeval) and print "
+                               "a leaderboard of total/reach/dist/balance vs the corpus")
+    pcmp.add_argument("--seeds", default="0-4", help="seed set, e.g. 0-4 or 0,1,2 (default 0-4)")
+    pcmp.add_argument("--size", type=int, default=72, help="W=H of each generated map")
+    pcmp.add_argument("--min-zone", type=int, default=12, dest="min_zone")
+    pcmp.add_argument("--layouts", nargs="+",
+                      default=["region", "skeleton", "jigsaw", "markov", "graph"],
+                      help="layouts to race (graph = zone-graph planner; wfc once added)")
+    pcmp.add_argument("--veg", nargs="+", default=["grammar"],
+                      help="veg fills to race: grammar (default), gan, patch")
+    pcmp.add_argument("--weights", default=None, help="veg GAN weights for --veg gan")
+    pcmp.set_defaults(func=cmd_compare)
+
+    pvt = sub.add_parser("veg-train", help="train the vegetation GAN (PyTorch) -> out/veg_gan.pt")
+    pvt.add_argument("--seed", type=int, default=0)
+    pvt.add_argument("--epochs", type=int, default=5)
+    pvt.add_argument("--windows", type=int, default=None, help="cap training windows (default all)")
+    pvt.add_argument("--width", type=int, default=64, help="base conv width")
+    pvt.add_argument("--ga-every", type=int, default=0, dest="ga_every",
+                     help="coevolution: feed GA hard-negatives to D every N steps (0=off)")
+    pvt.add_argument("--resume", action="store_true",
+                     help="continue from out/veg_gan.pt.ckpt (G/D/optimizers/EMA/step)")
+    pvt.add_argument("--out", default=None, help="weights path (default out/veg_gan.pt)")
+    pvt.set_defaults(func=cmd_veg_train)
+
+    pvs = sub.add_parser("veg-sample",
+                         help="sample learned vegetation over generated terrain and render "
+                              "a real-vs-GAN comparison")
+    pvs.add_argument("--seed", type=int, default=0)
+    pvs.add_argument("--size", type=int, default=72, help="W=H of the generated terrain")
+    pvs.add_argument("--layout", choices=["region", "skeleton", "jigsaw", "markov"],
+                     default="region")
+    pvs.add_argument("--min-zone", type=int, default=12, dest="min_zone")
+    pvs.add_argument("--veg", choices=["gan", "patch"], default="gan",
+                     help="gan=learned GAN+GA (default), patch=GA quilt of real corpus patches")
+    pvs.add_argument("--no-water", action="store_true", dest="no_water",
+                     help="reassign water tiles to the nearest land terrain (land-only map)")
+    pvs.add_argument("--weights", default=None, help="weights path (default out/veg_gan.pt)")
+    pvs.set_defaults(func=cmd_veg_sample)
 
     args = ap.parse_args()
     args.func(args)
