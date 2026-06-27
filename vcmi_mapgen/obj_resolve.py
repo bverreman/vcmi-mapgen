@@ -57,8 +57,13 @@ def purpose_of(obj: dict) -> str:
     return ON.resolve(obj["cls"], obj["sub"]).get("purpose", "UNKNOWN")
 
 
+def cluster_of(obj: dict) -> str:
+    """Macro-cluster of a faithful object (DECORATION / VISIBLE / GATE / QUEST_PAIR)."""
+    return ON.resolve(obj["cls"], obj["sub"]).get("cluster", "VISIBLE")
+
+
 def info_of(obj: dict) -> dict:
-    """Full ontology record (purpose, relational, terrain_coupled, ...)."""
+    """Full ontology record (purpose, cluster, relational, terrain_coupled, ...)."""
     return ON.resolve(obj["cls"], obj["sub"])
 
 
@@ -68,8 +73,9 @@ def exact_identity(obj: dict) -> dict:
 
 
 def is_blocking(mask: list[str]) -> bool:
-    """True if the object's footprint blocks movement (mask contains 'B')."""
-    return any("B" in row for row in mask)
+    """True if the object's footprint blocks movement (mask has a 'B' or 'X' cell — 'X' is a
+    blocked-and-visitable building action tile)."""
+    return any(ch in "BX" for row in mask for ch in row)
 
 
 def is_relational(obj: dict) -> bool:
@@ -80,19 +86,20 @@ def is_relational(obj: dict) -> bool:
 def mask_cells(mask: list[str], x: int, y: int):
     """Tiles a mask covers when anchored at (x, y).
 
-    Convention (matches render_footprint / the .h3m mask): rows x cols, anchor at
-    the bottom-right cell; 'B' = blocking, 'A'/'V' = visitable/overlay, ' ' = empty.
-    Yields (tx, ty, blocking_bool) for every non-empty cell.
+    Convention: anchor (x, y) is the BOTTOM-RIGHT tile of the footprint. H3 reads masks
+    bottom-to-top AND right-to-left; the LEAF_META/.h3m rows are already bottom-up, so column 0 is
+    the RIGHTMOST (anchor) tile -> `tx = x - c`. (The old `x - (ww-1-c)` mirrored the footprint
+    horizontally vs the sprite/VCMI -- it placed the sawmill's visit tile, pine trunks, etc. on the
+    wrong side; on the corpus that more than halves the objects whose visit tile lands on water or
+    another object.) 'B' = blocking, 'X' = blocking + visitable, 'A' = passable + visitable,
+    'V' = passable overlay, ' ' = empty. Yields (tx, ty, blocking_bool) per non-empty cell.
     """
     hh = len(mask)
-    ww = max((len(r) for r in mask), default=0)
     for r, row in enumerate(mask):
         for c, ch in enumerate(row):
             if ch == " ":
                 continue
-            tx = x - (ww - 1 - c)
-            ty = y - (hh - 1 - r)
-            yield tx, ty, (ch == "B")
+            yield x - c, y - (hh - 1 - r), (ch in ("B", "X"))
 
 
 # ---------------------------------------------------------------------------

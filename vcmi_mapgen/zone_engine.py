@@ -37,6 +37,7 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import terrain_segment as TS
 import obj_resolve as OR
+import ontology as ON
 import faithful as FA
 import render as RD
 
@@ -563,110 +564,237 @@ def _pick_identity(entry_list, rng):
     return rng.choices(ids, weights=ws, k=1)[0]
 
 
-_DECOR_TERR = None
-_NEUTRAL_MIN = 6   # an identity on >= this many terrains is terrain-neutral (rocks, generic)
-
-
-def _decor_terrains():
-    """animation -> frozenset(terrain ids) it appears under in the corpus catalog (objlib). Lets a
-    zone keep its decoration terrain-consistent — no snow trees on grass."""
-    global _DECOR_TERR
-    if _DECOR_TERR is None:
-        m = collections.defaultdict(set)
-        for _purpose, byterr in OR._OBJLIB.items():
-            for tid, items in byterr.items():
-                for it in items:
-                    if it.get("animation"):
-                        m[it["animation"]].add(int(tid))
-        _DECOR_TERR = {a: frozenset(s) for a, s in m.items()}
-    return _DECOR_TERR
-
-
 def _filter_terrain(pool, terr_id):
-    """Keep only decoration identities appropriate for ``terr_id`` (appear on it in the corpus, or
-    are terrain-neutral). Unknown identities are kept; if filtering empties the pool, keep the
-    original (never break placement). ``pool`` is a list of {identity, weight} entries."""
+    """Keep only decoration identities native to ``terr_id`` per the ONTOLOGY (or terrain-
+    independent 'land'/'water'). Unknown identities are kept; if filtering empties the pool keep
+    the original (never break placement). ``pool`` is a list of {identity, weight} entries."""
     if not pool:
         return pool
-    dt = _decor_terrains()
+    name = TNAME.get(terr_id)
+    generic = "water" if name == "water" else "land"
 
     def ok(e):
-        ts = dt.get((e.get("identity") or {}).get("animation"))
-        return (not ts) or (terr_id in ts) or (len(ts) >= _NEUTRAL_MIN)
+        ts = ON.terrains_of((e.get("identity") or {}).get("animation") or "")
+        return (not ts) or (name in ts) or (generic in ts)
     out = [e for e in pool if ok(e)]
     return out or pool
 
 
-_BORDER_IDENTS = None
+def _enriched_decor_pool(learned, terr_id, full_fn):
+    """The decoration identity pool used by the grammar (region/markov/…) fill.
+
+    The learned ``veg``/``wall`` pools are harvested per (terrain, role) from the corpus,
+    so they (a) carry cross-terrain contamination — decoration that merely sat on a
+    border of a patch of this terrain — and (b) are weighted by raw corpus frequency,
+    which buries the long tail so only a handful of common sprites ever show. Three
+    corrections, so a generated zone actually exercises the FULL per-terrain decoration
+    ontology rather than the corpus's favourites:
+
+      * terrain purity — drop identities whose animation never appears on ``terr_id``
+        (``_filter_terrain``; terrain-neutral rocks survive);
+      * full coverage — union in EVERY terrain-native decoration from the authoritative
+        per-terrain pool (``full_fn`` = ``_veg_idents`` / ``_interior_idents`` / …), keyed
+        by animation so nothing already present is duplicated;
+      * variety — compress the corpus weights (``w -> 1 + ln(1+w)``) and floor the
+        ontology tail at a real weight, so common sprites still lead but the rest of the
+        catalog genuinely appears.
+    """
+    out, seen = [], set()
+    for e in _filter_terrain(learned or [], terr_id):
+        anim = (e.get("identity") or {}).get("animation")
+        if _is_excluded_anim(anim):
+            continue                       # learned corpus idents can include water canals/deltas
+        # The corpus contributes only the frequency WEIGHT; the identity itself (mask, type) is
+        # re-sourced from the ontology so the placed object is ontology-authoritative.
+        ident = ON.identity_of(anim) if ON.has_animation(anim) else e["identity"]
+        out.append({"identity": ident, "weight": 1.0 + math.log1p(max(e.get("weight", 1), 1))})
+        if anim:
+            seen.add(anim)
+    for e in full_fn(terr_id) or []:
+        anim = (e.get("identity") or {}).get("animation")
+        if anim and anim in seen:
+            continue
+        out.append({"identity": e["identity"], "weight": 1.6})
+        if anim:
+            seen.add(anim)
+    return out
+
+
+# water features are blocking in the catalog but do NOT read as an obstacle — never use them as a
+# zone-border ridge (the belt must be real obstacles: mountains, trees, hills, rocks). These are
+# the ONTOLOGY type-level (category) names for the catalog's water features.
+# Decoration categories that must NEVER be placed on any terrain: water-canal / water-feature
+# tiles (river deltas, the avlswt water-canal class, lakes, reefs, kelp) that read as misplaced
+# water cutting through land. Excluded unconditionally in the pools, the MRF learning (so the
+# category field can't assign them), and the MRF decode.
+EXCLUDE_DECOR_TYPES = {"LAKE", "FROZEN_LAKE", "RIVER_DELTA", "KELP", "REEF", "CLASS_177",
+                       "CLASS_199"}
+
+
+def _is_excluded_anim(anim):
+    """True if an animation's ontology category is an excluded water-canal/water-feature type."""
+    if not anim:
+        return False
+    idx = ON.category_of(anim)
+    return idx is not None and ON.veg_categories()[idx] in EXCLUDE_DECOR_TYPES
+
+
+def _ident_entries(identities):
+    """Wrap ontology placement identities as uniform-weight pool entries."""
+    return [{"identity": i, "weight": 1} for i in identities]
 
 
 def _border_idents(terr_id):
-    """1x1 blocking DECORATION identities for a terrain — the material for a CONTINUOUS border
-    belt: a single-tile footprint sits exactly on its rim tile, so the ring is unbroken and never
-    spills onto a neighbour's terrain. Falls back to the smallest blocking decoration, then grass."""
-    global _BORDER_IDENTS
-    if _BORDER_IDENTS is None:
-        _BORDER_IDENTS = {}
-        for tid, items in OR._OBJLIB.get("DECORATION", {}).items():
-            ones, smalls = [], []
-            for it in items:
-                mask = it.get("mask") or []
-                if not any("B" in r for r in mask):
-                    continue
-                ent = {"identity": {k: it[k] for k in ("type", "subtype", "animation", "mask")},
-                       "weight": 1}
-                if mask == ["B"]:
-                    ones.append(ent)
-                if sum(len(r) for r in mask) <= 2:
-                    smalls.append(ent)
-            _BORDER_IDENTS[int(tid)] = ones or smalls
-    return _BORDER_IDENTS.get(terr_id) or _BORDER_IDENTS.get(2) or []
-
-
-_VEG_IDENTS = None
-# water features are blocking in the catalog but do NOT read as an obstacle — never use them as a
-# zone-border ridge (the belt must be real obstacles: mountains, trees, hills, rocks).
-_NON_OBSTACLE_TYPES = {"lake", "lakeDUPLICATE", "frozenLake", "riverDelta", "kelp", "reef"}
+    """1x1 (else <=2 cell) blocking DECORATION for a CONTINUOUS rim belt — a single-tile footprint
+    sits exactly on its rim tile so the ring is unbroken and never spills onto a neighbour. Sourced
+    from the ONTOLOGY's per-terrain decoration; falls back to the smallest blocking decor, then grass."""
+    pool = ON.decor_pool(terr_id, blocking=True, exclude_types=EXCLUDE_DECOR_TYPES)
+    ones = [i for i in pool if i["mask"] == ["B"]]
+    smalls = [i for i in pool if sum(len(r) for r in i["mask"]) <= 2]
+    chosen = ones or smalls
+    if not chosen and terr_id != 2:
+        return _border_idents(2)
+    return _ident_entries(chosen)
 
 
 def _veg_idents(terr_id):
-    """Blocking DECORATION that reads as a real OBSTACLE (mountains AND trees, hills, rocks; any
-    footprint size) for a terrain — the material for a natural border ridge that may overlap. Water
-    features are excluded. Falls back to grass."""
-    global _VEG_IDENTS
-    if _VEG_IDENTS is None:
-        _VEG_IDENTS = {}
-        for tid, items in OR._OBJLIB.get("DECORATION", {}).items():
-            pool = [{"identity": {k: it[k] for k in ("type", "subtype", "animation", "mask")},
-                     "weight": 1}
-                    for it in items if any("B" in r for r in (it.get("mask") or []))
-                    and it.get("type") not in _NON_OBSTACLE_TYPES]
-            _VEG_IDENTS[int(tid)] = pool
-    return _VEG_IDENTS.get(terr_id) or _VEG_IDENTS.get(2) or []
-
-
-_INTERIOR_IDENTS = None
+    """Blocking real-OBSTACLE DECORATION (mountains/trees/hills/rocks; any size; water features
+    excluded) for a natural border ridge that may overlap — from the ONTOLOGY. Falls back to grass."""
+    pool = [i for i in ON.decor_pool(terr_id, blocking=True, exclude_types=EXCLUDE_DECOR_TYPES)]
+    if not pool and terr_id != 2:
+        return _veg_idents(2)
+    return _ident_entries(pool)
 
 
 def _interior_idents(terr_id):
     """Terrain-matched DECORATION for INTERIOR scatter — flora and SMALL obstacles (footprint <= 4
-    cells) that texture a zone's interior without sealing it. Water features excluded; non-blocking
-    overlay flora is kept so interiors read as lived-in, not empty. Falls back to grass."""
-    global _INTERIOR_IDENTS
-    if _INTERIOR_IDENTS is None:
-        _INTERIOR_IDENTS = {}
-        for tid, items in OR._OBJLIB.get("DECORATION", {}).items():
-            pool = []
-            for it in items:
-                if it.get("type") in _NON_OBSTACLE_TYPES:
-                    continue
-                mask = it.get("mask") or []
-                if sum(len(r) for r in mask) > 4:      # keep interior pieces small & walkable
-                    continue
-                pool.append({"identity": {k: it[k] for k in ("type", "subtype", "animation", "mask")},
-                             "weight": 1})
-            _INTERIOR_IDENTS[int(tid)] = pool
-    return _INTERIOR_IDENTS.get(terr_id) or _INTERIOR_IDENTS.get(2) or []
+    cells), water features excluded, non-blocking flora kept — from the ONTOLOGY. Falls back to grass."""
+    pool = ON.decor_pool(terr_id, max_cells=4, exclude_types=EXCLUDE_DECOR_TYPES)
+    if not pool and terr_id != 2:
+        return _interior_idents(2)
+    return _ident_entries(pool)
+
+
+# ---------------------------------------------------------------------------
+# Autocorrelated decoration: a spatially-coherent CATEGORY field + stacking.
+#
+# The "looks too random" problem is that identity was drawn independently per tile, so adjacent
+# tiles in a clump got unrelated sprites (salt-and-pepper). Instead we lay a coarse CATEGORY field
+# over the zone — each ~CLUMP_CELL-sized block is assigned ONE ontology decoration category
+# (mountains / oak trees / rocks / …), so neighbouring tiles share a kind ("a stand of trees", "a
+# field of rocks"). The concrete sprite within a category is still varied, and tiles may STACK a
+# non-blocking flora overlay on the base (real H3 layers decoration). Everything is driven by the
+# per-zone seeded rng so a given map seed reproduces exactly.
+# ---------------------------------------------------------------------------
+
+CLUMP_CELL = 5        # edge (tiles) of a single-category patch — the coherence length of a "stand"
+OVERLAY_PROB = 0.28   # chance a placed decoration also gets a non-blocking flora overlay (stacking)
+_OVERLAY_IDENTS = {}  # terr_id -> [non-blocking small flora identities] (ontology, cached)
+
+
+def _pool_category_weights(pool):
+    """Aggregate a decoration pool [{identity, weight}] into {ontology-category-name: weight}."""
+    cats = ON.veg_categories()
+    w = collections.defaultdict(float)
+    for e in pool or []:
+        anim = (e.get("identity") or {}).get("animation")
+        idx = ON.category_of(anim) if anim else None
+        if idx is not None:
+            w[cats[idx]] += max(e.get("weight", 1), 0.0)
+    return w
+
+
+def _category_field(NW, NH, cats, weights, rng, cell=CLUMP_CELL):
+    """Coarse categorical field over an NH×NW bbox: each cell-sized block draws ONE category
+    (weighted by ``weights``); every fine tile inherits its block's category. Gives coherent
+    same-kind patches. Returns field[y][x] -> category name, or None if there are no categories."""
+    if not cats:
+        return None
+    gw = max(1, NW // cell + 1)
+    gh = max(1, NH // cell + 1)
+    blk = [[rng.choices(cats, weights=weights, k=1)[0] for _ in range(gw)] for _ in range(gh)]
+    return [[blk[min(gh - 1, y // cell)][min(gw - 1, x // cell)] for x in range(NW)]
+            for y in range(NH)]
+
+
+EMPTY_CAT = "EMPTY"     # the MRF's "no decoration here" state — a learned clearing
+MRF_SWEEPS = 3          # Gibbs relaxation passes over the zone (more = smoother/longer-range)
+_MRF_ALPHA = 0.5        # Laplace smoothing so an unseen adjacency is rare, not impossible
+
+
+def _zone_category_field(ts, terr_id, catmrf, rng, sweeps=MRF_SWEEPS):
+    """Sample a spatially-correlated category per tile by Gibbs sampling the learned per-terrain
+    category MRF (corpus 4-adjacency co-occurrence). Each tile is resampled from
+    ``P(c) ∝ unary(c) · Π_neighbours P(c | neighbour-category)`` so adjacent tiles share a kind
+    and clearings (the ``EMPTY`` state) form coherent gaps — the joint corpus texture, not an
+    independent per-block draw. Returns ``{tile: category-name}`` (``EMPTY`` included), or ``None``
+    when no MRF is available for this terrain. Fully seeded → deterministic for a given rng."""
+    if not catmrf:
+        return None
+    unary = catmrf.get("unary") or {}
+    pair = catmrf.get("pair") or {}
+    # excluded water-canal categories never appear in the field (safeguard for a stale grammar:
+    # a freshly learned MRF already omits them — see learn_grammar).
+    cats = [c for c in sorted(unary) if c not in EXCLUDE_DECOR_TYPES]
+    if not cats:
+        return None
+    n = len(cats)
+    tot_u = sum(unary.values()) + _MRF_ALPHA * n
+    uprob = [(unary.get(c, 0) + _MRF_ALPHA) / tot_u for c in cats]
+    # row-normalised transition: P(neighbour=c2 | centre=c1) — the directional adjacency affinity.
+    trans = {}
+    for c1 in cats:
+        row = pair.get(c1, {})
+        s = sum(row.get(c2, 0) for c2 in cats) + _MRF_ALPHA * n
+        trans[c1] = {c2: (row.get(c2, 0) + _MRF_ALPHA) / s for c2 in cats}
+    tiles = sorted(ts)
+    field = {t: rng.choices(cats, weights=uprob, k=1)[0] for t in tiles}      # unary init
+    for _ in range(max(1, sweeps)):
+        for t in tiles:
+            neigh = [field[m] for m in _ring1(t) if m in field]
+            w = []
+            for i, c in enumerate(cats):
+                p = uprob[i]
+                tc = trans[c]
+                for nc in neigh:
+                    p *= tc[nc]
+                w.append(p)
+            field[t] = rng.choices(cats, weights=w, k=1)[0]
+    return field
+
+
+_ONE_TILE_IDENTS = {}
+
+
+def _one_tile_obstacle(terr_id, rng):
+    """A single-tile blocking obstacle (mask ``["B"]``/≤2 cells) for tight gaps — it covers its
+    anchor without sealing an adjacent corridor, so dense interior cover never blocks navigation.
+    Sourced from the ontology via :func:`_border_idents`."""
+    if terr_id not in _ONE_TILE_IDENTS:
+        _ONE_TILE_IDENTS[terr_id] = [e["identity"] for e in _border_idents(terr_id)
+                                     if e["identity"]["mask"] == ["B"]]
+    pool = _ONE_TILE_IDENTS[terr_id]
+    return rng.choice(pool) if pool else None
+
+
+def _overlay_ident(terr_id, rng):
+    """A non-blocking small flora identity for an overlay stack on ``terr_id`` (ontology), or None."""
+    if terr_id not in _OVERLAY_IDENTS:
+        _OVERLAY_IDENTS[terr_id] = ON.decor_pool(terr_id, blocking=False, max_cells=4,
+                                                 exclude_types=EXCLUDE_DECOR_TYPES)
+    pool = _OVERLAY_IDENTS[terr_id]
+    return rng.choice(pool) if pool else None
+
+
+def _stack_decor(placed, ident, t, level, terr_id, rng):
+    """Place a decoration base at tile ``t`` and, per :data:`OVERLAY_PROB`, a non-blocking flora
+    overlay on top (a 2-high stack) — both as separate DECORATION dicts (the renderer paint-sorts
+    them by (l, y, x) so the overlay draws over the base)."""
+    placed.append({**ident, "x": t[0], "y": t[1], "l": level, "_purpose": "DECORATION"})
+    if rng.random() < OVERLAY_PROB:
+        ov = _overlay_ident(terr_id, rng)
+        if ov and ov.get("animation") != ident.get("animation"):
+            placed.append({**ov, "x": t[0], "y": t[1], "l": level, "_purpose": "DECORATION"})
 
 
 # ---------------------------------------------------------------------------
@@ -759,13 +887,19 @@ def _bin_pool(prof, k):
 
 
 def _place_decor_cells(cells_by_key, key_dens, key_spacing, key_pool, tgt_tiles,
-                       hard_block, used, rng, level=0):
+                       hard_block, used, rng, level=0, catfield=None, bbox=None,
+                       terr_id=None, stack=False):
     """Shared decoration placer: for each spatial key (a depth bin, or a
     depth x sweep cell) put n = dens * |target tiles in cell| objects, weighted
     uniformly within the cell and min-spaced by the cell's own grain. Never buries
     gameplay (skips stamps whose blocking footprint hits hard_block). Rim first
-    (lowest depth bin) so the wall is laid before interior fill competes for tiles."""
+    (lowest depth bin) so the wall is laid before interior fill competes for tiles.
+
+    If ``catfield`` (+ ``bbox`` origin + ``terr_id``) is given, the sprite at each tile is drawn
+    from that tile's coherent CATEGORY (an ontology decode) rather than independently from the
+    pool, so the belt reads as same-kind stretches. ``stack=True`` adds a non-blocking overlay."""
     placed = []
+    mnx, mny = bbox if bbox else (0, 0)
     for key in sorted(cells_by_key, key=lambda kk: (kk[0] if isinstance(kk, tuple) else kk)):
         tiles = [t for t in cells_by_key[key] if t not in used]
         if not tiles:
@@ -783,11 +917,19 @@ def _place_decor_cells(cells_by_key, key_dens, key_spacing, key_pool, tgt_tiles,
         if not pool:
             continue
         for (x, y) in chosen:
-            ident = _pick_identity(pool, rng)
+            ident = None
+            if catfield is not None:
+                cat = catfield[y - mny][x - mnx]
+                ident = ON.decode_identity(cat, terr_id, rng) if cat else None
+            if ident is None:
+                ident = _pick_identity(pool, rng)
             cells = [(cx, cy) for cx, cy, blk in OR.mask_cells(ident["mask"], x, y) if blk]
             if any(c in hard_block for c in cells):
                 continue              # VCMI: decoration must not bury gameplay
-            placed.append({**ident, "x": x, "y": y, "l": level, "_purpose": "DECORATION"})
+            if stack and terr_id is not None:
+                _stack_decor(placed, ident, (x, y), level, terr_id, rng)
+            else:
+                placed.append({**ident, "x": x, "y": y, "l": level, "_purpose": "DECORATION"})
             used.add((x, y))
     return placed
 
@@ -1239,8 +1381,61 @@ def _tile_cell(t, sig, x, y, tiler):
     return {"t": t, "view": view, "rt": 0, "rd": 0, "ot": 0, "od": 0, "m": mm}
 
 
+MIN_TERRAIN_PATCH = 4   # no terrain patch smaller than this — tiny speckles are merged into the
+#                         dominant neighbour, so terrain reads as coherent regions (and doesn't
+#                         fragment the map into unplayable sliver-zones).
+
+
+def _despeckle_ids(ids, W, H, min_patch=MIN_TERRAIN_PATCH):
+    """Reassign every connected same-terrain patch smaller than ``min_patch`` tiles to the terrain
+    it borders most, iterating until no small patch remains (a merge can expose a new one)."""
+    ids = [row[:] for row in ids]
+    NB4 = ((1, 0), (-1, 0), (0, 1), (0, -1))
+    for _ in range(24):
+        comp = [[-1] * W for _ in range(H)]
+        comps = []
+        cid = 0
+        for y in range(H):
+            for x in range(W):
+                if comp[y][x] >= 0:
+                    continue
+                t = ids[y][x]
+                stack, tiles = [(x, y)], [(x, y)]
+                comp[y][x] = cid
+                while stack:
+                    a, b = stack.pop()
+                    for dx, dy in NB4:
+                        nx, ny = a + dx, b + dy
+                        if 0 <= nx < W and 0 <= ny < H and comp[ny][nx] < 0 and ids[ny][nx] == t:
+                            comp[ny][nx] = cid
+                            stack.append((nx, ny))
+                            tiles.append((nx, ny))
+                comps.append((tiles, t))
+                cid += 1
+        changed = False
+        for tiles, t in comps:
+            if len(tiles) >= min_patch:
+                continue
+            nbr = collections.Counter()
+            for x, y in tiles:
+                for dx, dy in NB4:
+                    nx, ny = x + dx, y + dy
+                    if 0 <= nx < W and 0 <= ny < H and ids[ny][nx] != t:
+                        nbr[ids[ny][nx]] += 1
+            if nbr:
+                newt = nbr.most_common(1)[0][0]
+                for x, y in tiles:
+                    ids[y][x] = newt
+                changed = True
+        if not changed:
+            break
+    return ids
+
+
 def tile_terrain(id_grid, W, H):
-    """Terrain-id grid -> faithful cell grid with corpus-correct transition views."""
+    """Terrain-id grid -> faithful cell grid with corpus-correct transition views. Tiny terrain
+    speckles (< MIN_TERRAIN_PATCH tiles) are first merged into their dominant neighbour."""
+    id_grid = _despeckle_ids(id_grid, W, H)
     tiler = _learn_terrain_tiler()
     return [[_tile_cell(id_grid[y][x], _neigh8(id_grid, x, y, W, H, id_grid[y][x]), x, y, tiler)
              for x in range(W)] for y in range(H)]
@@ -1285,7 +1480,10 @@ def markov_terrain_level(W, H, seed):
     rnd = random.Random(seed)
     g = MT.generate(M, W, H, rnd)
     MT.gibbs(g, M4, M["marg"], rnd, sweeps=6)
-    return [[_cell(g[y][x], x, y) for x in range(W)] for y in range(H)]
+    # `g` is an int terrain-id grid; route it through the corpus-learned tiler so
+    # terrain seams (shores especially) get real transition/dither views instead of
+    # flat interior frames — otherwise water borders render as hard square edges.
+    return tile_terrain(g, W, H)
 
 
 def deform_terrain_level(src_terr, zone, W, H, fx=1.3, fy=1.3):
@@ -1604,7 +1802,12 @@ def layout_jigsaw(seed, size, out_dir=None):
                     grid[oy + dy][ox + dx] = _cell(tt, ox + dx, oy + dy)
                 filled += len(mask)
                 break
-    return grid, W, H, "jigsaw"
+    # Re-tile through the corpus-learned tiler so piece/water seams get real transition
+    # views (curved beaches), not the flat interior frames `_cell` paints. This only
+    # relabels view/mirror per tile — terrain ids and the 1-tile water gaps that keep
+    # pieces as separate zones are untouched.
+    ids = [[grid[y][x]["t"] for x in range(W)] for y in range(H)]
+    return tile_terrain(ids, W, H), W, H, "jigsaw"
 
 
 LAYOUTS = {"markov": lambda s, z, od: (markov_terrain_level(z, z, s), z, z, "markov"),
@@ -1631,22 +1834,62 @@ GRAMMAR_PATH = os.path.join(ROOT, "out", "grammar.json")
 LOOT_PURPOSES = ("BANK", "REWARD_PICKUP", "RESOURCE_PILE")
 GUARDABLE = {"BANK", "REWARD_PICKUP", "RESOURCE_PILE", "MINE", "DWELLING"}
 ROLE_ANCHOR = {"town": "TOWN", "mine": "MINE", "treasure": "BANK", "dwelling": "DWELLING"}
+# A placement GROUP forms around a single anchor that must be a VISITABLE destination (interacted
+# with by standing on its 'A' visit tile) or a PICKABLE reward — never a guard, lone INFO sign, or
+# decoration (the user's rule: "cluster around visitable object and pickable resources / artifacts").
+# Anything else (INFO, decoration) may only join a group as a member.
+ANCHOR_PURPOSES = {
+    "TOWN", "MINE", "DWELLING", "BANK",                    # visitable destinations
+    "STAT_PERMANENT", "SPELL_SKILL", "BONUS_TEMP", "MANA",  # visitable bonus/skill sites
+    "REWARD_PICKUP", "RESOURCE_PILE",                      # pickable loot / resource piles
+}
+# Anchor priority when a cluster holds several eligible objects (tie broken by larger footprint):
+# the most "important" destination organizes the set-piece (a town over a mine over a pickup).
+_ANCHOR_PRIO = {"TOWN": 9, "BANK": 8, "MINE": 7, "DWELLING": 6, "STAT_PERMANENT": 5,
+                "SPELL_SKILL": 4, "BONUS_TEMP": 3, "MANA": 2, "REWARD_PICKUP": 1, "RESOURCE_PILE": 0}
+GROUP_EPS = 3            # single-linkage radius (tiles) that ties two gameplay objects into one group:
+#                          3 balances corpus multi-object fraction (~0.59, vs map-level 0.64) against
+#                          tight set-piece diameter (~2 tiles) — 4 chains whole dense zones together.
+GROUP_MEAN_SIZE = 4.0    # divides the zone budget into N groups. Higher than the raw corpus mean
+#                          (~3.2) on purpose: it keeps gameplay density low enough that the blocking
+#                          anchor bodies don't ring the open space into non-carveable pockets.
+GROUP_MEMBER_CAP = 3     # max members stamped per group, so a set-piece stays compact (not a dump)
+# Anchors with a BLOCKING body (a 'B' footprint) wall the open space; too many ring a zone into
+# sealed pockets the reachability carve (decoration-only) can't open. Cap them per zone and fill the
+# remaining groups with PICKABLE anchors (resource piles / loot — single non-blocking 'A' tiles).
+BLOCK_ANCHORS = {"TOWN", "MINE", "DWELLING", "BANK"}
+PICK_ANCHORS = {"REWARD_PICKUP", "RESOURCE_PILE"}
 NON_GAMEPLAY = ("DECORATION", "TERRAIN_MODIFIER")
 # Purposes NEVER scattered independently: TOWN defines a town zone (anchor only); HERO is
 # map-relational; TRANSPORT/QUEST_GATE/WATER_TRANSPORT objects are only meaningful in matched
 # SETS (portal entrance+exit, gate+key) or with context (boats need water) — placed by
 # _place_relational at the map level, or dropped, so we never emit a lone half of a pair.
 SATELLITE_SKIP = {"TOWN", "HERO", "TRANSPORT", "QUEST_GATE", "WATER_TRANSPORT"}
+# Whether to emit relational sets (portals, border gates + keymaster tents, seer huts). Disabled
+# for now: their pairing/placement is not yet coherent, so we exclude these objects entirely.
+PLACE_RELATIONAL = False
 # Relational families captured into the grammar catalog, paired by subtype (= color/portal id).
 RELATIONAL_TYPES = {"monolithOneWayEntrance", "monolithOneWayExit", "monolithTwoWay",
                     "borderGate", "borderGuard", "keymasterTent", "seerHut",
                     "subterraneanGate", "whirlpool"}
-VEG_SCALE = 0.7  # fraction of the corpus decoration budget to lay (rest stays clearing)
+VEG_SCALE = 0.95  # fraction of the decoration budget to lay (rest stays clearing). High: real H3
+#                   interiors are mostly obstacle cover (mountains/forests) with carved clearings.
+WALL_THICK_MIN = 3       # minimum inter-zone belt thickness — zones are delimited by a real
+#                          mountain/forest range, not a 1-tile seam (only the passage gaps open).
+MIN_INTERIOR_COVER = 0.92  # floor on interior obstacle coverage (of the free, non-corridor tiles)
+#                            so terrain is mostly wooded/rocky (~60-70% of the zone) with the carved
+#                            corridors + a few low-noise clearings as the navigable minority.
 INTERIOR_SCALE = 0.18    # graph path: fraction of interior tiles eligible for scatter decoration
 INTERIOR_THRESH = 0.45   # graph path: only the clump cores (noise above this) get interior decor
+NAV_REACH_FRAC = 0.40    # target fraction of OPEN land the start must reach: the navigable basin is
+#                          grown to this (corpus mean ~0.35) by carving decoration into the nearest
+#                          unreached open pocket, so the map has real navigable space, not fragments.
 
 
 _GUARDABLE_PRIO = {"BANK": 4, "MINE": 3, "REWARD_PICKUP": 2, "RESOURCE_PILE": 1, "DWELLING": 0}
+# Only WORTHY guardables get a dedicated monster — a lone resource pile usually stays unguarded,
+# so guards read as protecting real rewards (mines/dwellings/banks/artifacts), not random scatter.
+GUARD_WORTHY = {"BANK", "MINE", "DWELLING", "REWARD_PICKUP"}
 
 
 def _role_of(purposes):
@@ -1691,6 +1934,45 @@ def _pick_anchor(gp, role):
     return max(cands, key=lambda o: len(o["mask"]) * (len(o["mask"][0]) if o["mask"] else 0))
 
 
+def _footprint_area(o):
+    """Bounding-box cell count of an object's mask (proxy for object size)."""
+    m = o.get("mask") or []
+    return len(m) * (len(m[0]) if m else 0)
+
+
+def _cluster_objects(objs, eps=GROUP_EPS):
+    """Single-linkage spatial clusters: two objects are linked when their Manhattan distance is
+    <= eps; clusters are the connected components. O(n^2) over a zone's handful of gameplay objects."""
+    n = len(objs)
+    parent = list(range(n))
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    for i in range(n):
+        for j in range(i + 1, n):
+            if _manh(objs[i], objs[j]) <= eps:
+                ri, rj = find(i), find(j)
+                if ri != rj:
+                    parent[ri] = rj
+    comps = collections.defaultdict(list)
+    for i, o in enumerate(objs):
+        comps[find(i)].append(o)
+    return list(comps.values())
+
+
+def _group_anchor(cluster):
+    """The object that organizes a cluster: the highest-priority ANCHOR_PURPOSES member (visitable
+    or pickable), ties broken by larger footprint. None if the cluster has no eligible anchor."""
+    cands = [o for o in cluster if o.get("_purpose") in ANCHOR_PURPOSES]
+    if not cands:
+        return None
+    return max(cands, key=lambda o: (_ANCHOR_PRIO.get(o["_purpose"], -1), _footprint_area(o)))
+
+
 def _wall_thickness(decor, canon_zone, tiles_set):
     """How many depth bins from the rim are packed enough (dens>=0.4) to read as a wall."""
     prof = decor_bins(decor, canon_zone, tiles_set)
@@ -1712,9 +1994,19 @@ def learn_grammar(lib_dir=None):
     samples = collections.defaultdict(list)
     idc = collections.defaultdict(lambda: collections.defaultdict(collections.Counter))
     ids = {}
+    # spatial-correlation MRF over decoration CATEGORIES (per terrain name): the corpus 4-adjacency
+    # co-occurrence of ontology categories, with an explicit EMPTY state so clearings are learned
+    # jointly with clumping. cat_unary[terr][c] = tile count; cat_pair[terr][c1][c2] = adjacency count.
+    cat_unary = collections.defaultdict(collections.Counter)
+    cat_pair = collections.defaultdict(lambda: collections.defaultdict(collections.Counter))
     opens = collections.defaultdict(
         lambda: [[[0.0, 0] for _ in range(Sx)] for _ in range(K)])
     rel_catalog = collections.defaultdict(dict)  # type -> subtype -> identity
+    # group/composition archetypes: spatial clusters of gameplay objects, keyed by (terr, anchor
+    # purpose). grp_samples records each cluster's member multiset + member radii + guard presence;
+    # grp_idc holds the concrete identity catalog per (key, member-purpose) for re-synthesis.
+    grp_samples = collections.defaultdict(list)
+    grp_idc = collections.defaultdict(lambda: collections.defaultdict(collections.Counter))
 
     for path in paths:
         patch = json.load(open(path))
@@ -1762,11 +2054,64 @@ def learn_grammar(lib_dir=None):
             sat[p]["depths"].append(_obj_canon(o, canon, ts)[0])
             addid(p, o)
 
+        # GROUP/COMPOSITION archetypes: cluster this zone's gameplay objects spatially, key each
+        # cluster by its anchor purpose (a visitable/pickable), and record the member multiset +
+        # member radii + whether the cluster is guarded. Identities go into grp_idc for re-synthesis.
+        for cl in _cluster_objects(gp, GROUP_EPS):
+            ganc = _group_anchor(cl)
+            if ganc is None:
+                continue                          # no visitable/pickable -> not a placeable group
+            gkey = (terr, ganc["_purpose"])
+            gk = _ik(ganc)
+            grp_idc[gkey]["_anchor"][gk] += 1
+            ids[gk] = {"type": ganc["type"], "subtype": ganc["subtype"],
+                       "animation": ganc["animation"], "mask": ganc["mask"]}
+            members = collections.Counter()
+            radii, has_guard = [], False
+            for o in cl:
+                if o is ganc:
+                    continue
+                if o["_purpose"] == "GUARD":
+                    has_guard = True
+                    continue
+                members[o["_purpose"]] += 1
+                radii.append(_euclid(o, ganc))
+                ok = _ik(o)
+                grp_idc[gkey][o["_purpose"]][ok] += 1
+                ids[ok] = {"type": o["type"], "subtype": o["subtype"],
+                           "animation": o["animation"], "mask": o["mask"]}
+            grp_samples[gkey].append(
+                {"members": dict(members), "radii": radii, "guard": has_guard})
+
         for o in objs:
             if o["_purpose"] == "DECORATION":
                 d = _obj_canon(o, canon, ts)[0]
                 addid("wall" if _depth_bin(d) <= 1 else "veg", o)
         thick = _wall_thickness([o for o in objs if o["_purpose"] == "DECORATION"], canon, ts)
+
+        # rasterize this zone's decoration into a per-tile CATEGORY grid (blocking footprint cells
+        # carry their ontology category; everything else is EMPTY) and accumulate the per-terrain
+        # 4-adjacency co-occurrence — the joint structure the marginal grammar throws away.
+        _cats = ON.veg_categories()
+        catg = {}
+        for o in objs:
+            if o["_purpose"] != "DECORATION":
+                continue
+            idx = ON.category_of(o.get("animation"))
+            if idx is None:
+                continue
+            cname = _cats[idx]
+            if cname in EXCLUDE_DECOR_TYPES:
+                continue                       # water canals/deltas never enter the MRF -> stay EMPTY
+            for cx, cy, blk in OR.mask_cells(o["mask"], o["x"], o["y"]):
+                if blk and (cx, cy) in ts:
+                    catg[(cx, cy)] = cname
+        for t in ts:
+            c1 = catg.get(t, EMPTY_CAT)
+            cat_unary[terr][c1] += 1
+            for n in _ring1(t):
+                if n in ts:
+                    cat_pair[terr][c1][catg.get(n, EMPTY_CAT)] += 1
 
         occ = set()
         for o in objs:
@@ -1847,8 +2192,39 @@ def learn_grammar(lib_dir=None):
             "wall": {"idents": idlist(key, "wall"),
                      "thickness": max(1, round(statistics.fmean(thicks)) if thicks else 1)},
             "veg": {"idents": idlist(key, "veg")}}
+    # group/composition archetypes -> grammar["_groups"][terr][anchor_purpose]. members[p] = the
+    # [mean, sd] count of member purpose p per cluster; spread = member-radius stats; guard_rate =
+    # fraction of clusters carrying a guard; idents = concrete identity catalog per member purpose
+    # ("_anchor" = the anchor identities). Only group STRUCTURE is learned; identities stay sourced.
+    def grp_idlist(gkey, p):
+        return [{"identity": ids[k], "weight": c} for k, c in grp_idc[gkey][p].most_common()]
+
+    groups_out = collections.defaultdict(dict)
+    for gkey, recs in grp_samples.items():
+        terr, apur = gkey
+        w = len(recs)
+        mpurp = {p for r in recs for p in r["members"]}
+        members = {}
+        for p in sorted(mpurp):
+            counts = [r["members"].get(p, 0) for r in recs]
+            members[p] = [round(statistics.fmean(counts), 3),
+                          round(statistics.pstdev(counts) if len(counts) > 1 else 0.0, 3)]
+        radii = [d for r in recs for d in r["radii"]]
+        gflags = [1.0 if r["guard"] else 0.0 for r in recs]
+        groups_out[terr][apur] = {
+            "weight": w,
+            "members": members,
+            "guard_rate": round(statistics.fmean(gflags), 3) if gflags else 0.0,
+            "spread_mu": round(statistics.fmean(radii), 3) if radii else 0.0,
+            "spread_sd": round(statistics.pstdev(radii) if len(radii) > 1 else 0.0, 3),
+            "idents": {p: grp_idlist(gkey, p) for p in grp_idc[gkey]}}
+
     out = {t: dict(r) for t, r in grammar.items()}
     out["_relational"] = {t: dict(s) for t, s in rel_catalog.items()}
+    out["_catmrf"] = {terr: {"unary": dict(cu),
+                             "pair": {c1: dict(cat_pair[terr][c1]) for c1 in cat_pair[terr]}}
+                      for terr, cu in cat_unary.items()}
+    out["_groups"] = {terr: dict(g) for terr, g in groups_out.items()}
     return out
 
 
@@ -1904,35 +2280,78 @@ def _add_hard(hard, o, ts):
             hard.add((cx, cy))
 
 
-def _fits(ident, x, y, ts, hard):
+def _mask_anchor_cells(mask, x, y):
+    """Yield the (tx, ty) of the mask's 'A' (visitable-anchor) cells — the tile the hero stands
+    on / that triggers the object — using the same bottom-right anchoring as ``OR.mask_cells``
+    (col 0 is the rightmost/anchor tile, `tx = x - c`; see OR.mask_cells's column-flip note)."""
+    hh = len(mask)
+    for r, row in enumerate(mask):
+        for c, ch in enumerate(row):
+            if ch == "A":
+                yield x - c, y - (hh - 1 - r)
+
+
+def _visit_tiles(o, ts):
+    """The tiles that must stay open + reachable for an object to be usable: its 'A' visit-anchor
+    cells (a mine entrance, a shrine's stand-on tile). Objects with no 'A' (e.g. a town visited from
+    beside it) fall back to the in-zone, non-blocking footprint-adjacent tiles. In-zone tiles only."""
+    anchors = [t for t in _mask_anchor_cells(o["mask"], o["x"], o["y"]) if t in ts]
+    if anchors:
+        return anchors
+    blockers = {(cx, cy) for cx, cy, blk in OR.mask_cells(o["mask"], o["x"], o["y"]) if blk}
+    out = []
+    for cx, cy, _b in OR.mask_cells(o["mask"], o["x"], o["y"]):
+        for n in _ring1((cx, cy)):
+            if n in ts and n not in blockers:
+                out.append(n)
+    return out
+
+
+def _fits(ident, x, y, ts, hard, keep_open=()):
     for cx, cy, blk in OR.mask_cells(ident["mask"], x, y):
-        if blk and ((cx, cy) not in ts or (cx, cy) in hard):
+        if blk and ((cx, cy) not in ts or (cx, cy) in hard or (cx, cy) in keep_open):
             return False
     return True
+
+
+def _reserve_approach(o, ts, hard, keep_open):
+    """Keep every visit tile of ``o`` open and reserve ONE adjacent approach tile, so a later
+    gameplay object's blocking footprint can never seal the only way in (the cause of towns/mines
+    getting walled off by their own neighbours — a non-carveable enclosure the carve can't open)."""
+    for vt in _visit_tiles(o, ts):
+        keep_open.add(vt)
+        for n in _ring1(vt):
+            if n in ts and n not in hard:
+                keep_open.add(n)
+                break
 
 
 def _dist(a, b):
     return math.hypot(a[0] - b[0], a[1] - b[1])
 
 
-def _place_anchor(A, ts, canon, hard, rng, level):
+def _place_anchor(A, ts, canon, hard, rng, level, keep_open=None):
+    keep_open = keep_open if keep_open is not None else set()
     tiles = list(ts)
     mu, sd = A["depth_mu"], A["depth_sd"]
     weights = [_gauss(canon[t][0], mu, sd) for t in tiles]
     for t in _weighted_spaced(tiles, weights, min(16, len(tiles)), 1.0, rng):
         ident = _pick_identity(A["idents"], rng)
-        if _fits(ident, t[0], t[1], ts, hard):
+        if _fits(ident, t[0], t[1], ts, hard, keep_open):
             o = {**ident, "x": t[0], "y": t[1], "l": level,
                  "_purpose": A.get("purpose") or "TOWN"}
             _add_hard(hard, o, ts)
+            _reserve_approach(o, ts, hard, keep_open)
             return o, t
     return None, None
 
 
-def _place_by_depth(p, pool, n, ts, canon, hard, rng, level, mu, sd):
+def _place_by_depth(p, pool, n, ts, canon, hard, rng, level, mu, sd, keep_open=None):
     """Place n objects of purpose p where this purpose sits in the shape (depth
     signature), spread with a min separation that lets n fit the area (the corpus
-    spread, not a tight anchor radius — that isn't what the data shows)."""
+    spread, not a tight anchor radius — that isn't what the data shows). Each placed object
+    reserves an open approach (``keep_open``) so they cannot wall each other off."""
+    keep_open = keep_open if keep_open is not None else set()
     tiles = list(ts)
     weights = [_gauss(canon[t][0], mu, sd) for t in tiles]
     min_sep = max(1.5, 0.6 * math.sqrt(len(ts) / max(n, 1)))
@@ -1941,9 +2360,10 @@ def _place_by_depth(p, pool, n, ts, canon, hard, rng, level, mu, sd):
         if len(out) >= n:
             break
         ident = _pick_identity(pool, rng)
-        if _fits(ident, t[0], t[1], ts, hard):
+        if _fits(ident, t[0], t[1], ts, hard, keep_open):
             o = {**ident, "x": t[0], "y": t[1], "l": level, "_purpose": p}
             _add_hard(hard, o, ts)
+            _reserve_approach(o, ts, hard, keep_open)
             out.append(o)
     return out
 
@@ -1965,7 +2385,7 @@ def _approach_toward(o, mouths, ts, blocked, base):
 
 def synthesize_zone(z, canon, rg, border_tiles, seed, level, global_hard,
                     veg="grammar", gan_ctx=None, patch_pool=None, strict_terrain=False,
-                    terr_grid=None):
+                    terr_grid=None, catmrf=None, gameplay=True, groups=None):
     """Construct one zone from a (terrain,role) grammar: relational setpiece + carved
     empty skeleton + rim wall with a few gaps + openness-budgeted vegetation.
 
@@ -1989,86 +2409,261 @@ def synthesize_zone(z, canon, rg, border_tiles, seed, level, global_hard,
         entrance_tiles = {t for r in runs for t in r}
     mouths = [_centroid_tile(r) for r in runs] or [_centroid_tile(list(ts))]
 
-    # 2. anchor (deep, open, central)
-    anchor_obj = anchor_tile = None
-    A = rg.get("anchor")
-    if A and A.get("idents"):
-        anchor_obj, anchor_tile = _place_anchor(A, ts, canon, gameplay_hard, rng, level)
-        if anchor_obj:
-            placed.append(anchor_obj)
-    base = anchor_tile or _centroid_tile(list(ts))
-
-    # 3. satellites: a per-zone gameplay BUDGET (keeps zones breathing regardless of
-    # corpus outliers) split across purposes by their learned density; each purpose is
-    # positioned by its own depth signature (where it sits in the shape).
-    area = z["area"]
-    sats = rg.get("satellites", {})
-    gp_budget = max(3, area // 12)
-    tot_d = sum(sp.get("density", 0.0) for sp in sats.values()) or 1.0
-    guardables = []
-    if anchor_obj and (A.get("purpose") in GUARDABLE):
-        guardables.append(anchor_obj)
-    for p, sp in sorted(sats.items(), key=lambda kv: _prio(kv[0])):
-        if p in SATELLITE_SKIP:
-            continue
-        pool = sp.get("idents")
-        n = _stochastic_round(gp_budget * sp.get("density", 0.0) / tot_d, rng)
-        if not pool or n <= 0:
-            continue
-        objs = _place_by_depth(p, pool, n, ts, canon, gameplay_hard, rng, level,
-                               sp.get("depth_mu", 0.5), sp.get("depth_sd", 0.2))
-        placed += objs
-        if p in GUARDABLE:
-            guardables += objs
-
-    # 4. carve the open SKELETON (designed empty space): entrance->base lanes + aprons
+    # 2. carve the navigable SKELETON first (entrances -> centre): the reserved network gameplay
+    # backs onto. Placing the skeleton BEFORE gameplay lets every multi-tile object sit with its
+    # blocking body OFF the corridor (in the to-be-vegetation area) and only its visit tile ON the
+    # network — so the object's body MERGES with the vegetation wall instead of forming a fresh wall
+    # in open ground (the cause of non-carveable enclosures). 1-wide, widened on diagonal steps.
+    def _carve_corridor(a, b):
+        line = [t for t in _line_tiles(a, b) if t in ts]
+        reserved.update(line)
+        for (ax, ay), (bx, by) in zip(line, line[1:]):
+            if ax != bx and ay != by:            # diagonal step: widen by one orthogonal tile
+                w = (bx, ay) if (bx, ay) in ts else (ax, by)
+                if w in ts:
+                    reserved.add(w)
+    centre = _centroid_tile(list(ts))
     for m in mouths:
-        for t in _line_tiles(m, base):
-            if t in ts:
-                reserved.add(t)
-                reserved.update(n for n in _ring1(t) if n in ts)
-    for o in placed:
-        reserved.update(_apron(o, ts, 1))
+        _carve_corridor(m, centre)
+    reserved.add(centre)
+
+    keep_open = set()
+
+    def _connect_visit(o):
+        """Join o's visit tile to the navigable network (a short spur) and keep it open."""
+        vts = _visit_tiles(o, ts)
+        if not vts:
+            return
+        if reserved and not (set(vts) & reserved):
+            vt = min(vts, key=lambda v: min((v[0] - r[0]) ** 2 + (v[1] - r[1]) ** 2 for r in reserved))
+            near = min(reserved, key=lambda r: (r[0] - vt[0]) ** 2 + (r[1] - vt[1]) ** 2)
+            _carve_corridor(vt, near)
+        reserved.update(vts)
+
+    def _place_backed(pool, n, mu, sd, purpose):
+        """Place up to n objects of ``purpose`` BACKED INTO the to-be-vegetation: the blocking body
+        must not sit on the reserved corridor (so it never walls the navigable net), and its visit
+        tile is joined to the network. Positioned by the corpus depth signature, min-spaced."""
+        if not pool or n <= 0:
+            return []
+        tiles = list(ts)
+        weights = [_gauss(canon[t][0], mu, sd) for t in tiles]
+        min_sep = max(1.5, 0.6 * math.sqrt(len(ts) / max(n, 1)))
+        out = []
+        for t in _weighted_spaced(tiles, weights, n * 3, min_sep, rng):
+            if len(out) >= n:
+                break
+            ident = _pick_identity(pool, rng)
+            if not _fits(ident, t[0], t[1], ts, gameplay_hard, keep_open):
+                continue
+            blk = [(cx, cy) for cx, cy, b in OR.mask_cells(ident["mask"], t[0], t[1]) if b]
+            if any(c in reserved for c in blk):
+                continue                         # body must not wall the navigable corridor (the rule)
+            o = {**ident, "x": t[0], "y": t[1], "l": level, "_purpose": purpose}
+            _add_hard(gameplay_hard, o, ts)
+            _reserve_approach(o, ts, gameplay_hard, keep_open)
+            _connect_visit(o)
+            out.append(o)
+        return out
+
+    # 3+4. anchor (town) + satellites (mines/dwellings/visitables): each backed into vegetation with
+    # its visit tile on the network. Skipped entirely for non-gameplay (decorative island) zones —
+    # gameplay on a water-locked island can never be reached, so islands carry only scenery.
+    anchor_obj = anchor_tile = None
+    base = centre
+    guardables = []
+    A = rg.get("anchor")
+    if gameplay:
+        if A and A.get("idents"):
+            objs = _place_backed(A["idents"], 1, A.get("depth_mu", 0.5), A.get("depth_sd", 0.2),
+                                 A.get("purpose") or "TOWN")
+            if objs:
+                anchor_obj = objs[0]
+                anchor_tile = (anchor_obj["x"], anchor_obj["y"])
+                placed.append(anchor_obj)
+        base = anchor_tile or centre
+        terr_name = TNAME.get(z["terrain_type"])
+        glib = groups or {}
+        G = rg.get("guard")
+        if anchor_obj and (A.get("purpose") in GUARDABLE):
+            guardables.append(anchor_obj)
+
+        def _entries(idlist, purpose):
+            """Identity entries for `_pick_identity`: the learned group idents if present, else the
+            ontology gameplay pool at unit weight. Group STRUCTURE is corpus; IDENTITY is ontology."""
+            if idlist:
+                return idlist
+            pool = ON.gameplay_pool(terr_name, purpose)
+            return [{"identity": i, "weight": 1} for i in pool] if pool else None
+
+        def _place_member_near(entries, purpose, ax, ay, rmu, rsd):
+            """One member of `purpose` near (ax,ay) at radius ~N(rmu,rsd), backed into to-be-
+            vegetation (blocking body OFF the reserved corridor), visit tile joined to the network."""
+            if not entries:
+                return None
+            rad = max(1.0, rng.gauss(rmu, rsd)) if rsd > 0 else rmu
+            cands = [t for t in ts if t not in gameplay_hard]
+            cands.sort(key=lambda t: (abs((abs(t[0] - ax) + abs(t[1] - ay)) - rad),
+                                      (t[0] * 73856093 ^ t[1] * 19349663) & 0xFFFF))
+            for t in cands[:80]:
+                ident = _pick_identity(entries, rng)
+                if not _fits(ident, t[0], t[1], ts, gameplay_hard, keep_open):
+                    continue
+                blk = [(cx, cy) for cx, cy, b in OR.mask_cells(ident["mask"], t[0], t[1]) if b]
+                if any(c in reserved for c in blk):
+                    continue
+                o = {**ident, "x": t[0], "y": t[1], "l": level, "_purpose": purpose}
+                _add_hard(gameplay_hard, o, ts)
+                _reserve_approach(o, ts, gameplay_hard, keep_open)
+                _connect_visit(o)
+                return o
+            return None
+
+        def _place_group(arch, ganchor):
+            """Stamp one group's members around an already-placed visitable/pickable anchor, then ONE
+            guard for the whole group at the corpus guard_rate. Returns the placed members + guard."""
+            ax, ay = ganchor["x"], ganchor["y"]
+            rmu = min(max(arch.get("spread_mu", 3.0), 2.0), 6.0)   # clamp -> compact set-piece
+            rsd = min(arch.get("spread_sd", 1.0), 3.0)
+            out, drawn = [], 0
+            for p, ms in sorted(arch.get("members", {}).items(), key=lambda kv: -kv[1][0]):
+                if drawn >= GROUP_MEMBER_CAP or p in SATELLITE_SKIP or p == "GUARD":
+                    continue
+                n = min(_stochastic_round(ms[0], rng), GROUP_MEMBER_CAP - drawn)
+                for _ in range(n):
+                    o = _place_member_near(_entries((arch.get("idents") or {}).get(p), p),
+                                           p, ax, ay, rmu, rsd)
+                    if not o:
+                        break
+                    out.append(o)
+                    drawn += 1
+                    if p in GUARDABLE:
+                        guardables.append(o)
+            if G and G.get("idents") and rng.random() < arch.get("guard_rate", 0.0):
+                gtile = _approach_toward(ganchor, mouths, ts, gameplay_hard, base)
+                if gtile and gtile not in gameplay_hard:
+                    gid = _pick_identity(G["idents"], rng)
+                    out.append({**gid, "x": gtile[0], "y": gtile[1], "l": level, "_purpose": "GUARD"})
+                    gameplay_hard.add(gtile)
+                    reserved.discard(gtile)
+            return out
+
+        gp_budget = max(3, z["area"] // 12)
+        if glib:
+            # ORDER = intentional clusters: place gameplay as GROUPS (anchor + co-occurring members
+            # + one guard), not as an independent per-purpose scatter. Anchors are visitable/pickable.
+            n_groups = max(1, round(gp_budget / GROUP_MEAN_SIZE))
+            if anchor_obj and glib.get(anchor_obj["_purpose"]):
+                placed += _place_group(glib[anchor_obj["_purpose"]], anchor_obj)   # town's economy etc.
+                n_groups -= 1
+            # additional groups: sample an anchor purpose by corpus weight (never an extra TOWN),
+            # guaranteeing the first is a visitable so a zone is never left with nothing to visit, and
+            # capping blocking-bodied anchors so they never ring the open space into sealed pockets.
+            add = [(ap, a.get("weight", 1)) for ap, a in glib.items() if ap != "TOWN"]
+            vis = set(ON.visitable_purposes())
+            block_cap = max(1, z["area"] // 120)
+            n_block = 1 if (anchor_obj and anchor_obj["_purpose"] in BLOCK_ANCHORS) else 0
+            for gi in range(max(0, n_groups)):
+                pool_c = add
+                if gi == 0:
+                    pool_c = [c for c in add if c[0] in vis] or add
+                if n_block >= block_cap:              # blocking budget spent -> pickable anchors only
+                    pool_c = [c for c in pool_c if c[0] in PICK_ANCHORS] or \
+                             [c for c in add if c[0] in PICK_ANCHORS] or pool_c
+                if not pool_c:
+                    break
+                ap = rng.choices([c[0] for c in pool_c], weights=[max(c[1], 1) for c in pool_c], k=1)[0]
+                if ap in BLOCK_ANCHORS:
+                    n_block += 1
+                arch = glib[ap]
+                objs = _place_backed(_entries((arch.get("idents") or {}).get("_anchor"), ap),
+                                     1, 0.5, 0.2, ap)
+                if not objs:
+                    continue
+                placed.append(objs[0])
+                if ap in GUARDABLE:
+                    guardables.append(objs[0])
+                placed += _place_group(arch, objs[0])
+        else:
+            # legacy fallback (grammar without a _groups library): independent per-purpose satellites
+            sats = rg.get("satellites", {})
+            tot_d = sum(sp.get("density", 0.0) for sp in sats.values()) or 1.0
+            for p, sp in sorted(sats.items(), key=lambda kv: _prio(kv[0])):
+                if p in SATELLITE_SKIP:
+                    continue
+                n = _stochastic_round(gp_budget * sp.get("density", 0.0) / tot_d, rng)
+                objs = _place_backed(sp.get("idents"), n, sp.get("depth_mu", 0.5),
+                                     sp.get("depth_sd", 0.2), p)
+                placed += objs
+                if p in GUARDABLE:
+                    guardables += objs
+
+    reserved |= keep_open          # the reserved visit-tile approaches stay open through the fill
     reserved -= gameplay_hard
 
-    # 5. guards: protect guardables (the MEANING) — a guard on each one's approach toward
-    # the nearest entrance, most-valuable first; leftovers plug the entrance mouths.
+    # 5. guards: a monster GUARDS something. Put one on the approach tile (between the loot and the
+    # way in) of every WORTHY guardable — mines, dwellings, banks, reward pickups — so each monster
+    # visibly protects a real reward. Minor resource piles are left unguarded (H3 rarely guards a
+    # lone wood pile), which is what stops guards reading as random scatter. Plus one per entrance
+    # chokepoint. The guard tile leaves the reserved corridor so the obstacle fill keeps its doorway.
     G = rg.get("guard")
-    if G and G.get("idents"):
-        n_g = _stochastic_round(G.get("density", 0.0) * area, rng)
-        n_g = min(n_g, len(guardables) + len(mouths)) if (guardables or mouths) else 0
-
+    if gameplay and G and G.get("idents"):
         def _put_guard(tile):
             gid = _pick_identity(G["idents"], rng)
             placed.append({**gid, "x": tile[0], "y": tile[1], "l": level, "_purpose": "GUARD"})
             gameplay_hard.add(tile)
+            reserved.discard(tile)
 
-        for obj in sorted(guardables, key=lambda o: -_GUARDABLE_PRIO.get(o["_purpose"], 0)):
-            if n_g <= 0:
-                break
-            gtile = _approach_toward(obj, mouths, ts, gameplay_hard, base)
-            if gtile and gtile not in gameplay_hard:
-                _put_guard(gtile)
-                n_g -= 1
-        for m in mouths:                       # chokepoint guards at the gaps
-            if n_g <= 0:
-                break
+        if not (groups or {}):
+            # legacy path only: one guard on every WORTHY guardable's approach. The group path
+            # already placed one guard per group at the corpus rate, so this would double-guard.
+            worthy = [o for o in guardables if o["_purpose"] in GUARD_WORTHY]
+            for obj in sorted(worthy, key=lambda o: -_GUARDABLE_PRIO.get(o["_purpose"], 0)):
+                gtile = _approach_toward(obj, mouths, ts, gameplay_hard, base)
+                if gtile and gtile not in gameplay_hard:
+                    _put_guard(gtile)
+        for m in mouths:                       # chokepoint guards at the entrance gaps (both paths)
             if m in ts and m not in gameplay_hard:
                 _put_guard(m)
-                n_g -= 1
+
+    # spatially-correlated category field for the whole zone, Gibbs-sampled from the learned
+    # per-terrain MRF (corpus 4-adjacency co-occurrence). One field feeds the rim wall AND the
+    # interior fill so the decoration reads as continuous corpus-like stands of one kind with
+    # learned clearings (the EMPTY state). None when this terrain has no MRF -> the old marginal
+    # category field + openness floor are used as a fallback.
+    catmap = _zone_category_field(ts, z["terrain_type"], catmrf, rng)
+
+    def _catmap_grid(minx, miny, NW, NH):
+        """Project the zone catmap dict into the [y-miny][x-minx] array `_place_decor_cells`/the
+        ridge loops index (EMPTY -> None so those callers fall back to their pool pick)."""
+        return [[(lambda c: None if c in (None, EMPTY_CAT) else c)(catmap.get((minx + xx, miny + yy)))
+                 for xx in range(NW)] for yy in range(NH)]
 
     if not strict_terrain:
-        # 6. wall: rim band of mountains/trees, minus entrance gaps and reserved lanes
-        wall_pool = (rg.get("wall") or {}).get("idents")
-        thick = int((rg.get("wall") or {}).get("thickness", 1))
+        # 6. wall: rim band of mountains/trees, minus entrance gaps and reserved lanes.
+        # Enrich the learned pool to the full per-terrain obstacle ontology (terrain-pure,
+        # whole catalog, flattened weights) so the rim isn't the same few corpus mountains.
+        wall_pool = _enriched_decor_pool((rg.get("wall") or {}).get("idents"),
+                                         z["terrain_type"], _veg_idents)
+        thick = max(WALL_THICK_MIN, int((rg.get("wall") or {}).get("thickness", 1)))
         ring = _rim_band(ts, boundary, thick)
         wall_tiles = sorted(t for t in ring
                             if t not in entrance_tiles and t not in reserved
                             and t not in gameplay_hard)
         if wall_pool and wall_tiles:
+            (wminx, wminy, wmaxx, wmaxy), _ = zone_bbox_mask(z["tiles"])
+            if catmap is not None:                 # MRF categories (spatially correlated)
+                wcatfield = _catmap_grid(wminx, wminy, wmaxx - wminx + 1, wmaxy - wminy + 1)
+            else:                                  # fallback: independent marginal category blocks
+                wcat_w = _pool_category_weights(wall_pool)
+                wcatfield = (_category_field(wmaxx - wminx + 1, wmaxy - wminy + 1,
+                                             list(wcat_w), list(wcat_w.values()), rng)
+                             if wcat_w else None)
             wobjs = _place_decor_cells({0: wall_tiles}, {0: 0.9}, {0: 1.0},
                                        lambda k: wall_pool, ts, gameplay_hard | reserved,
-                                       set(gameplay_hard) | reserved | entrance_tiles, rng, level)
+                                       set(gameplay_hard) | reserved | entrance_tiles, rng, level,
+                                       catfield=wcatfield, bbox=(wminx, wminy),
+                                       terr_id=z["terrain_type"])
             placed += wobjs
             wall = {(o["x"], o["y"]) for o in wobjs}
     else:
@@ -2079,6 +2674,14 @@ def synthesize_zone(z, canon, rg, border_tiles, seed, level, global_hard,
         gh = len(terr_grid) if terr_grid else 0
         gw = len(terr_grid[0]) if gh else 0
         pool = _veg_idents(z["terrain_type"])
+        (rminx, rminy, rmaxx, rmaxy), _ = zone_bbox_mask(z["tiles"])
+        if catmap is not None:
+            rcatfield = _catmap_grid(rminx, rminy, rmaxx - rminx + 1, rmaxy - rminy + 1)
+        else:
+            rcat_w = _pool_category_weights(pool)
+            rcatfield = (_category_field(rmaxx - rminx + 1, rmaxy - rminy + 1,
+                                         list(rcat_w), list(rcat_w.values()), rng)
+                         if rcat_w else None)
         keep_open = set(entrance_tiles)
         for t in entrance_tiles:
             keep_open.update(_ring1(t))
@@ -2096,7 +2699,10 @@ def synthesize_zone(z, canon, rg, border_tiles, seed, level, global_hard,
                 continue
             if not pool:
                 break
-            ident = _pick_identity(pool, rng)
+            cat = rcatfield[t[1] - rminy][t[0] - rminx] if rcatfield else None
+            ident = ON.decode_identity(cat, z["terrain_type"], rng) if cat else None
+            if ident is None:
+                ident = _pick_identity(pool, rng)
             cells = list(OR.mask_cells(ident["mask"], t[0], t[1]))
             if any((cx, cy) in gameplay_hard for cx, cy, blk in cells if blk):
                 continue                       # never bury gameplay (overlap with decoration is fine)
@@ -2116,12 +2722,20 @@ def synthesize_zone(z, canon, rg, border_tiles, seed, level, global_hard,
             (minx, miny, maxx, maxy), _ = zone_bbox_mask(z["tiles"])
             NW, NH = maxx - minx + 1, maxy - miny + 1
             noise = _value_noise(NW, NH, max(2, min(NW, NH) // 5), rng)
+            if catmap is not None:
+                catfield = _catmap_grid(minx, miny, NW, NH)
+            else:
+                cat_w = _pool_category_weights(ipool)
+                catfield = _category_field(NW, NH, list(cat_w), list(cat_w.values()), rng) if cat_w else None
             interior.sort(key=lambda t: noise[t[1] - miny][t[0] - minx], reverse=True)
             blockset = gameplay_hard | reserved
             for t in interior[:max(1, int(INTERIOR_SCALE * len(interior)))]:
                 if noise[t[1] - miny][t[0] - minx] < INTERIOR_THRESH:
                     break                          # below the clump threshold = clearing
-                ident = _pick_identity(ipool, rng)
+                cat = catfield[t[1] - miny][t[0] - minx] if catfield else None
+                ident = ON.decode_identity(cat, z["terrain_type"], rng) if cat else None
+                if ident is None:
+                    ident = _pick_identity(ipool, rng)
                 cells = list(OR.mask_cells(ident["mask"], t[0], t[1]))
                 if any((cx, cy) in blockset for cx, cy, blk in cells if blk):
                     continue                       # never bury gameplay or fill a reserved lane
@@ -2131,6 +2745,12 @@ def synthesize_zone(z, canon, rg, border_tiles, seed, level, global_hard,
                 for cx, cy, blk in cells:          # carve-eligible if it ever seals the interior
                     if blk and (cx, cy) in ts:
                         wall.add((cx, cy))
+                if rng.random() < OVERLAY_PROB:    # 2-high stack: non-blocking flora overlay
+                    ov = _overlay_ident(z["terrain_type"], rng)
+                    if ov and ov.get("animation") != ident.get("animation") and not any(
+                            cx <= 0 or cy <= 0 or cx >= gw - 1 or cy >= gh - 1
+                            for cx, cy, _b in OR.mask_cells(ov["mask"], t[0], t[1])):
+                        placed.append({**ov, "x": t[0], "y": t[1], "l": level, "_purpose": "DECORATION"})
 
     # 7. vegetation: CLUMPED with clearings (overlapping clumps where a smooth noise
     # field is high, open ground where it is low) so interiors breathe; the per-cell
@@ -2154,15 +2774,48 @@ def synthesize_zone(z, canon, rg, border_tiles, seed, level, global_hard,
                                    seed=seed, level=level)
         veg_pool = openness = None
     else:
-        veg_pool = (rg.get("veg") or {}).get("idents")
+        # interior cover is mostly OBSTACLE vegetation (mountains/trees/rocks) in coherent stands
+        # with carved clearings — the obstacles are what make the terrain read as wooded/mountainous
+        # rather than empty, and they shape the navigable pockets where gameplay sits.
+        veg_pool = _enriched_decor_pool((rg.get("veg") or {}).get("idents"),
+                                        z["terrain_type"], _veg_idents)
         if strict_terrain:
             veg_pool = None        # graph path: vegetation belongs on the BORDER belt only — no
             #                        interior scatter (that was the clutter); the rim defines zones.
         openness = rg.get("openness")
-    if veg_pool and openness:
+    if veg_pool and catmap is not None:
+        # PLAN A — the learned category MRF drives BOTH which category fills a tile AND where the
+        # zone stays clear (the EMPTY state): the corpus's joint spatial texture, replacing the
+        # value-noise clumping + the coverage floor. Each free tile whose MRF category is a real
+        # obstacle category gets that category's sprite; EMPTY tiles are the learned clearings.
+        # Reserved corridors + gameplay are skipped (stay open) and the global carve is the safety
+        # net, so coverage is whatever the corpus says — not a hardcoded target.
+        blockset = gameplay_hard | reserved
+        used = set(gameplay_hard) | reserved | wall | entrance_tiles
+        for t in sorted(ts):
+            if t in used:
+                continue
+            cat = catmap.get(t)
+            if not cat or cat == EMPTY_CAT:
+                continue                       # a learned clearing — leave it open
+            ident = ON.decode_identity(cat, z["terrain_type"], rng)
+            if ident is None:                  # category empty on this terrain -> pool fallback
+                ident = _pick_identity(veg_pool, rng)
+            if any((cx, cy) in blockset for cx, cy, blk in
+                   OR.mask_cells(ident["mask"], t[0], t[1]) if blk):
+                ident = _one_tile_obstacle(z["terrain_type"], rng)   # don't clip a corridor
+                if ident is None:
+                    continue
+            _stack_decor(placed, ident, t, level, z["terrain_type"], rng)
+            used.add(t)
+    elif veg_pool and openness:
         (minx, miny, maxx, maxy), _ = zone_bbox_mask(z["tiles"])
         NW, NH = maxx - minx + 1, maxy - miny + 1
         noise = _value_noise(NW, NH, max(2, min(NW, NH) // 5), rng)
+        # coherent same-kind patches: which CATEGORY fills each tile (a stand of one species),
+        # weighted by the pool's category mix; the concrete sprite is still varied within it.
+        cat_w = _pool_category_weights(veg_pool)
+        catfield = _category_field(NW, NH, list(cat_w), list(cat_w.values()), rng) if cat_w else None
 
         def clump(t):
             return noise[t[1] - miny][t[0] - minx]
@@ -2174,17 +2827,30 @@ def synthesize_zone(z, canon, rg, border_tiles, seed, level, global_hard,
         used = set(gameplay_hard) | reserved | wall | entrance_tiles
         for (k, s2), tl in cells.items():
             op = openness[k][s2] if k < len(openness) and s2 < len(openness[k]) else 0.85
-            n = _stochastic_round(VEG_SCALE * max(0.0, 1.0 - op) * len(tl), rng)
+            free = sorted((t for t in tl if t not in used), key=clump, reverse=True)
+            if not free:
+                continue
+            # obstacle COVERAGE of the FREE (non-corridor, non-gameplay) tiles: the learned openness
+            # gives the relative shape (where the corpus left clearings), floored high so interiors
+            # are mostly wooded/rocky; the densest tiles by noise fill first -> stands with gaps. The
+            # reserved skeleton lanes + object aprons stay clear, so the cover IS the navigable carve.
+            cover = max(VEG_SCALE * max(0.0, 1.0 - op), MIN_INTERIOR_COVER)
+            n = _stochastic_round(cover * len(free), rng)   # cover of the FREE (non-corridor) tiles
             if n <= 0:
                 continue
-            free = sorted((t for t in tl if t not in used), key=clump, reverse=True)
-            for t in free[:n]:                 # fill the clump cores first (overlapping)
-                ident = _pick_identity(veg_pool, rng)
+            for t in free[:n]:                 # fill the densest tiles by noise first
+                cat = catfield[t[1] - miny][t[0] - minx] if catfield else None
+                ident = ON.decode_identity(cat, z["terrain_type"], rng) if cat else None
+                if ident is None:              # category empty on this terrain -> pool fallback
+                    ident = _pick_identity(veg_pool, rng)
                 if any((cx, cy) in blockset for cx, cy, blk in
                        OR.mask_cells(ident["mask"], t[0], t[1]) if blk):
-                    continue                   # never bury gameplay or fill a reserved lane
-                placed.append({**ident, "x": t[0], "y": t[1], "l": level,
-                               "_purpose": "DECORATION"})
+                    # the multi-tile obstacle would clip a corridor/gameplay -> drop a single-tile
+                    # obstacle on this free tile instead, so the gap is still covered, not left open.
+                    ident = _one_tile_obstacle(z["terrain_type"], rng)
+                    if ident is None:
+                        continue
+                _stack_decor(placed, ident, t, level, z["terrain_type"], rng)
                 used.add(t)
 
     # 8. reachability safety: open space must reach gameplay; carve the wall if not.
@@ -2365,6 +3031,248 @@ def _allowed_pairs(zones, zone_label, edge_seeds, W, H, min_area):
     return pairs
 
 
+def _global_reachability_carve(objects, terrain, W, H, grow=True):
+    """GUARANTEE global connectivity after the dense obstacle fill: the open land that touches
+    gameplay must form ONE connected component. Find the gameplay-touching open components and,
+    while there is more than one, carve the cheapest line of obstacles (a 0-1 BFS that pays 1 to
+    cross an obstacle tile, 0 to walk open land) between the largest and the rest — removing the
+    decoration objects on the carved path. Water and gameplay footprints are barriers, never carved.
+    Returns the surviving objects (decoration removed along carved paths)."""
+    from collections import deque
+    # 4-connectivity ONLY: must match the movement model in traverse.passable_grid (NB4). An
+    # 8-connected carve would "connect" tiles diagonally that the hero cannot actually walk between,
+    # reporting a basin the game can't traverse (the cause of near-zero reachable maps).
+    NB = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+
+    def land(x, y):
+        return 0 <= x < W and 0 <= y < H and terrain[y][x]["t"] < 8
+
+    blocked = [[False] * W for _ in range(H)]
+    carveable = [[False] * W for _ in range(H)]      # obstacle tile we may remove
+    decor_at = collections.defaultdict(set)          # (x,y) -> decoration object indices covering it
+    for i, o in enumerate(objects):
+        if o.get("l", 0) != 0:
+            continue
+        dec = o["_purpose"] == "DECORATION"
+        for cx, cy, blk in OR.mask_cells(o["mask"], o["x"], o["y"]):
+            if blk and 0 <= cx < W and 0 <= cy < H:
+                blocked[cy][cx] = True
+                if dec:
+                    decor_at[(cx, cy)].add(i)
+                    carveable[cy][cx] = True
+    for o in objects:                                # gameplay footprints are never carveable
+        if o.get("l", 0) == 0 and o["_purpose"] != "DECORATION":
+            for cx, cy, blk in OR.mask_cells(o["mask"], o["x"], o["y"]):
+                if blk and 0 <= cx < W and 0 <= cy < H:
+                    carveable[cy][cx] = False
+
+    def is_open(x, y):
+        return land(x, y) and not blocked[y][x]
+
+    def _carve_decor_on(t):                          # un-bury a tile by removing the decoration on it
+        for i in list(decor_at.get(t, ())):
+            if i in removed:
+                continue
+            removed.add(i)
+            for cx, cy, blk in OR.mask_cells(objects[i]["mask"], objects[i]["x"], objects[i]["y"]):
+                if blk and 0 <= cx < W and 0 <= cy < H:
+                    blocked[cy][cx] = False
+                    carveable[cy][cx] = False
+                    decor_at[(cx, cy)].discard(i)
+
+    # Seed the connectivity search from every open tile adjacent to a gameplay object (broad — this
+    # is what keeps the navigable network large), AND from each object's VISIT TILE (the 'A' tile the
+    # hero stands on). If an object's visit tiles are ALL sealed by decoration, un-bury the best one
+    # so a fully-walled object still becomes reachable. The carve below then unions everything into
+    # ONE start-reachable component.
+    removed = set()
+    gp_adj = set()
+    for o in objects:
+        if o.get("l", 0) != 0 or o["_purpose"] in ("DECORATION", "GUARD"):
+            continue
+        cells = list(OR.mask_cells(o["mask"], o["x"], o["y"]))
+        vts = [t for t in _mask_anchor_cells(o["mask"], o["x"], o["y"]) if land(*t)]
+        if not vts:                                  # no 'A' (e.g. town) -> open land beside the body
+            blk = {(cx, cy) for cx, cy, b in cells if b}
+            vts = [n for cx, cy, _b in cells for n in _ring1((cx, cy)) if land(*n) and n not in blk]
+        if vts and not any(is_open(*t) for t in vts):   # fully sealed -> un-bury the first visit tile
+            _carve_decor_on(vts[0])
+        gp_adj.update(t for t in vts if is_open(*t))
+        for cx, cy, _b in cells:                      # broad: open tiles adjacent to the body
+            for dx, dy in NB + [(0, 0)]:
+                if is_open(cx + dx, cy + dy):
+                    gp_adj.add((cx + dx, cy + dy))
+
+    def gp_components():
+        seen, comps = set(), []
+        for t in gp_adj:
+            if t in seen or not is_open(*t):
+                continue
+            q, comp = deque([t]), [t]
+            seen.add(t)
+            while q:
+                x, y = q.popleft()
+                for dx, dy in NB:
+                    n = (x + dx, y + dy)
+                    if n not in seen and is_open(*n):
+                        seen.add(n)
+                        q.append(n)
+                        comp.append(n)
+            comps.append(comp)
+        return comps
+
+    def _carve_to(roots, is_target):
+        """0-1 BFS from the open ``roots`` (0 to walk open, 1 to cross a carveable obstacle); carve
+        the cheapest line of removable decoration to the nearest tile satisfying ``is_target``.
+        Returns True if a path was carved."""
+        dist, prev, dq, tgt = {}, {}, deque(), None
+        for t in roots:
+            dist[t] = 0
+            dq.append(t)
+        while dq:
+            cur = dq.popleft()
+            if cur not in roots and is_target(cur):
+                tgt = cur
+                break
+            cx, cy = cur
+            for dx, dy in NB:
+                nx, ny = cx + dx, cy + dy
+                if not land(nx, ny):
+                    continue
+                if blocked[ny][nx] and not carveable[ny][nx]:
+                    continue                         # water / gameplay barrier
+                w = 1 if blocked[ny][nx] else 0
+                nd = dist[cur] + w
+                if (nx, ny) not in dist or nd < dist[(nx, ny)]:
+                    dist[(nx, ny)] = nd
+                    prev[(nx, ny)] = cur
+                    (dq.appendleft if w == 0 else dq.append)((nx, ny))
+        if tgt is None:
+            return False
+        node = tgt
+        while node is not None:
+            for i in list(decor_at.get(node, ())):
+                if i in removed:
+                    continue
+                removed.add(i)
+                for cx, cy, blk in OR.mask_cells(objects[i]["mask"], objects[i]["x"], objects[i]["y"]):
+                    if blk and 0 <= cx < W and 0 <= cy < H:
+                        blocked[cy][cx] = False
+                        carveable[cy][cx] = False
+                        decor_at[(cx, cy)].discard(i)
+            node = prev.get(node)
+        return True
+
+    def _flood_open(seeds):                          # connected open tiles reachable from seeds
+        seen = set(s for s in seeds if is_open(*s))
+        dq = deque(seen)
+        while dq:
+            x, y = dq.popleft()
+            for dx, dy in NB:
+                n = (x + dx, y + dy)
+                if n not in seen and is_open(*n):
+                    seen.add(n)
+                    dq.append(n)
+        return seen
+
+    # 1) connect every gameplay-touching open component into ONE (so all gameplay is mutually reachable)
+    for _ in range(400):
+        comps = gp_components()
+        if len(comps) <= 1:
+            break
+        comps.sort(key=len, reverse=True)
+        root, others = set(comps[0]), set().union(*(set(c) for c in comps[1:]))
+        if not _carve_to(root, lambda t: t in others):
+            break
+
+    # 2) GROW the START TOWN's navigable basin to a corpus-like fraction of the open land: carve the
+    # cheapest decoration into the nearest unreached open pocket until the basin reaches NAV_REACH_FRAC
+    # of all open tiles. The basin must be the START's region (the town reaching the most open land —
+    # what _pick_main_town / traverse use as the start), NOT merely the largest gameplay component, or
+    # growth widens a region the hero never reaches. This absorbs the surrounding gameplay pockets too.
+    # ``grow`` is off for the pure GRAPH layout (its closed zone-separation belts must stay closed —
+    # the spanning tree already guarantees connectivity); on for markov/markov-graph, whose dense fill
+    # fragments the open space and needs the basin widened.
+    if grow:
+        def _obj_open_seed(o):
+            vts = [t for t in _mask_anchor_cells(o["mask"], o["x"], o["y"]) if land(*t) and is_open(*t)]
+            if vts:
+                return vts
+            blk = {(cx, cy) for cx, cy, b in OR.mask_cells(o["mask"], o["x"], o["y"]) if b}
+            return [n for cx, cy, _b in OR.mask_cells(o["mask"], o["x"], o["y"])
+                    for n in _ring1((cx, cy)) if land(*n) and is_open(*n) and n not in blk]
+        towns = [o for o in objects if o.get("l", 0) == 0 and o.get("_purpose") == "TOWN"]
+        basin = None
+        if towns:
+            basin = max((_flood_open(_obj_open_seed(o)) for o in towns), key=len, default=None)
+        if not basin:
+            comps = gp_components()
+            basin = set(max(comps, key=len)) if comps else set()
+        if basin:
+            reach = set(basin)
+            open_total = sum(1 for y in range(H) for x in range(W) if is_open(x, y))
+
+            def _grow():
+                nonlocal reach
+                for _ in range(1200):
+                    if len(reach) >= NAV_REACH_FRAC * open_total:
+                        return
+                    if not _carve_to(reach, lambda t: is_open(*t) and t not in reach):
+                        return
+                    reach = _flood_open(reach)
+            _grow()
+            # RESCUE: if the start basin is still tiny it is RINGED BY GAMEPLAY bodies (the town's own
+            # economy mines + neighbours), which decoration-only carving cannot escape. As a last
+            # resort let non-town gameplay become carveable and reconnect — sacrificing a few objects
+            # is far better than a start that reaches almost nothing.
+            if len(reach) < 0.20 * open_total:
+                for i, o in enumerate(objects):
+                    if o.get("l", 0) != 0 or o["_purpose"] in ("DECORATION", "TOWN"):
+                        continue
+                    for cx, cy, blk in OR.mask_cells(o["mask"], o["x"], o["y"]):
+                        if blk and 0 <= cx < W and 0 <= cy < H and blocked[cy][cx]:
+                            decor_at[(cx, cy)].add(i)
+                            carveable[cy][cx] = True
+                _grow()
+
+    return [o for i, o in enumerate(objects) if i not in removed] if removed else objects
+
+
+def _pick_main_town(objects, terrain, W, H):
+    """The starting town must sit on the LARGEST connected landmass so the map is playable from
+    the start (markov terrain scatters zones across many water-separated islands; a start stranded
+    on a 30-tile island reaches almost nothing). Returns ``{"x","y"}`` in the main_town convention
+    (town anchor minus (2,2)), or None. Picks the town whose reachable passable land is biggest."""
+    import traverse as TR
+    blocked, _W, _H = TR.passable_grid({"terrain": [terrain], "objects": objects}, 0)
+    NB4 = [(1, 0), (-1, 0), (0, 1), (0, -1)]
+    towns = [o for o in objects if o.get("l", 0) == 0 and TR.TYPE2PURPOSE.get(o.get("type")) == "TOWN"]
+    if not towns:
+        return None
+
+    def reach_size(o):
+        seeds = set()
+        for ax, ay, ch in TR._mask_cells(o["x"], o["y"], o["mask"]):
+            if ch != "A":
+                continue
+            for dx, dy in NB4 + [(0, 0)]:
+                nx, ny = ax + dx, ay + dy
+                if 0 <= nx < W and 0 <= ny < H and not blocked[ny][nx]:
+                    seeds.add((nx, ny))
+        seen, st = set(seeds), list(seeds)
+        while st:
+            x, y = st.pop()
+            for dx, dy in NB4:
+                n = (x + dx, y + dy)
+                if 0 <= n[0] < W and 0 <= n[1] < H and not blocked[n[1]][n[0]] and n not in seen:
+                    seen.add(n)
+                    st.append(n)
+        return len(seen)
+
+    best = max(towns, key=reach_size)
+    return {"x": best["x"] - 2, "y": best["y"] - 2, "l": best.get("l", 0)}
+
+
 def generate_map(terrain, W, H, seed=0, min_area=12, name=None, grammar=None,
                  veg="grammar", weights=None, plan=None):
     """Synthesize a full map: assign each land zone a role, then construct it from the
@@ -2402,7 +3310,9 @@ def generate_map(terrain, W, H, seed=0, min_area=12, name=None, grammar=None,
     elif veg == "patch":
         patch_pool = load_patch_pool()      # GA quilts real corpus patches (no neural net)
 
-    strict_terrain = bool(plan)   # graph-planned maps keep each zone's decoration terrain-pure
+    # graph-planned maps keep each zone's decoration terrain-pure (border-ridge only); graph-on-markov
+    # opts out (strict_terrain=False in its plan) so it keeps the markov MRF interior fill + water.
+    strict_terrain = bool(plan) and plan.get("strict_terrain", True)
     objects, report, global_hard = [], [], set()
     for zid in sorted(zones):
         z = zones[zid]
@@ -2416,18 +3326,34 @@ def generate_map(terrain, W, H, seed=0, min_area=12, name=None, grammar=None,
             report.append((zid, terr, z["area"], role, 0))
             continue
         borders = sorted(passages.get(zid, set()))
+        catmrf = (grammar.get("_catmrf") or {}).get(terr)
+        groups = (grammar.get("_groups") or {}).get(terr)
+        play_zones = plan.get("play_zones") if plan else None
+        gameplay = play_zones is None or zid in set(play_zones)
         placed = synthesize_zone(z, canon[zid], rg, borders,
                                  seed ^ (zid * 2654435761 & 0xFFFFFFFF), 0, global_hard,
                                  veg=veg, gan_ctx=gan_ctx, patch_pool=patch_pool,
-                                 strict_terrain=strict_terrain, terr_grid=terrain)
+                                 strict_terrain=strict_terrain, terr_grid=terrain, catmrf=catmrf,
+                                 gameplay=gameplay, groups=groups)
         objects += placed
         report.append((zid, terr, z["area"], role, len(placed)))
-    objects += _place_relational(zones, sorted(roles), objects, grammar, rng, 0, False)
+    if PLACE_RELATIONAL:
+        # Relational sets (transport portals, border gates + their keymaster tents, seer huts):
+        # only meaningful as correctly matched, reachability-ordered pairs. Disabled for now —
+        # the current pairing/placement is not coherent, so we exclude them entirely rather than
+        # emit improper gates/tents/portals.
+        objects += _place_relational(zones, sorted(roles), objects, grammar, rng, 0, False)
+    # GLOBAL reachability: the dense per-zone obstacle fill can leave zones sealed from each other;
+    # carve the minimal obstacle lines so every gameplay object sits in one connected open network.
+    objects = _global_reachability_carve(objects, terrain, W, H, grow=not strict_terrain)
     import traverse as TR
     n_towns = sum(1 for o in objects if TR.TYPE2PURPOSE.get(o.get("type")) == "TOWN")
     fm = {"name": name or f"Generated-s{seed}", "width": W, "height": H,
           "twoLevel": False, "players": max(1, n_towns), "terrain": [terrain],
           "objects": objects}
+    main_town = _pick_main_town(objects, terrain, W, H)   # start on the largest landmass
+    if main_town is not None:
+        fm["main_town"] = main_town
     return fm, report
 
 
@@ -2778,6 +3704,132 @@ def cmd_render_patches(args):
             print(f"  {os.path.relpath(sp, out_dir)}")
 
 
+# Editor-style passability overlay colours (the four real mask states; see ontology mask docs).
+_MASK_OVERLAY_COLORS = {
+    "B": (235, 40, 40, 120),    # blocked
+    "X": (245, 140, 25, 150),   # blocked + visitable (a building's action tile, visited adjacent)
+    "A": (245, 225, 40, 165),   # passable + visitable (walk-onto pickup / stand-on tile)
+    "V": (70, 170, 255, 85),    # passable overlay / overhang
+}
+
+
+def _mask_overlay(full_sprite, grid, tile):
+    """Editor-style passability overlay: the object's full 6x8 B/X/A/V `grid` drawn TRANSLUCENT
+    over the FULL (uncropped) sprite canvas. H3 sprites are CENTRED on their footprint and sit on
+    the ground, so the mask's active bounding box is centred HORIZONTALLY and bottom-aligned
+    VERTICALLY within the sprite's tile grid. (The objects.txt grid is NOT simply left-justified:
+    e.g. a 1-tile pine whose art is on the right tile, a seer-hut tile centred under a 3-wide hut,
+    a town gate at the centre column -- absolute `sx = c` lands those on the wrong, often empty,
+    tile.) Validated against art: pine `B` on the trunk, wood pile `A` on the logs, seer hut
+    centred, town gate at the sprite centre. '.' grid cells are outside the footprint and not drawn.
+    Cropped to the union of sprite content + footprint. (This sprite-canvas frame is distinct from
+    the map-placement bottom-RIGHT anchor in render_editor/obj_resolve -- do not conflate them.)"""
+    from PIL import Image, ImageDraw
+
+    base = full_sprite.convert("RGBA")
+    cols_t, rows_t = base.width // tile, base.height // tile
+    act = [(r, c) for r, row in enumerate(grid) for c, ch in enumerate(row) if ch != "."]
+    if not act:
+        return base
+    r0 = min(r for r, _ in act); r1 = max(r for r, _ in act)
+    c0 = min(c for _, c in act); c1 = max(c for _, c in act)
+    cw, chh = c1 - c0 + 1, r1 - r0 + 1
+    coff = (cols_t - cw + 1) // 2              # centre footprint horizontally (round outward)
+    roff = rows_t - chh                        # bottom-align vertically (object sits on the ground)
+
+    ov = Image.new("RGBA", base.size, (0, 0, 0, 0))
+    d = ImageDraw.Draw(ov)
+    cells = []                                 # tile-pixel boxes covered by a non-'.' grid cell
+    for r in range(r0, r1 + 1):
+        for c in range(c0, c1 + 1):
+            ch = grid[r][c]
+            col = _MASK_OVERLAY_COLORS.get(ch)
+            if col is None:                    # '.' (passable inside bbox is 'V'; truly outside skipped)
+                continue
+            sx, sy = (c - c0) + coff, (r - r0) + roff   # centred column; rows bottom-aligned
+            if not (0 <= sx < cols_t and 0 <= sy < rows_t):
+                continue
+            x0, y0 = sx * tile, sy * tile
+            d.rectangle((x0, y0, x0 + tile - 1, y0 + tile - 1), fill=col,
+                        outline=(0, 0, 0, 90))
+            if ch != "V":
+                cells.append((x0, y0, x0 + tile, y0 + tile))
+    base.alpha_composite(ov)
+
+    sb = base.getbbox()                        # union of sprite content + footprint
+    boxes = [b for b in [sb] if b] + cells
+    if boxes:
+        x0 = min(b[0] for b in boxes); y0 = min(b[1] for b in boxes)
+        x1 = max(b[2] for b in boxes); y1 = max(b[3] for b in boxes)
+        base = base.crop((x0, y0, x1, y1))
+    return base
+
+
+def cmd_render_ontology(args):
+    """Render every leaf of the ontology tree to its full path on disk:
+    out/ontology/<CLUSTER>/<PURPOSE>/<type>/<terrain>/<leaf>.png
+    and, next to each, `<leaf>.mask.png` -- the same sprite with its passability mask overlaid
+    the way the editor draws it (translucent B/X/A/V cells, bottom-left/footprint justified).
+
+    The directory layout mirrors the hardcoded ontology.TAXONOMY exactly -- the absolute object list
+    the VCMI/H3 map editor can place (from objects.txt), every CLUSTER -> PURPOSE -> type -> terrain
+    -> leaf edge down to the sprite. A leaf's sprite is its `animation` DEF (frame 0); colour-keyed
+    quest objects (border gate/guard, keymaster tent) sit under "land" with one leaf per colour.
+    """
+    import csv
+    import shutil
+    import render_editor as RE
+    import ontology as ON
+
+    out_root = args.out or os.path.join(ROOT, "out", "ontology")
+    tree = ON.build_tree()
+
+    if os.path.isdir(out_root):                 # rebuild cleanly (path shape may change across runs)
+        shutil.rmtree(out_root)
+    os.makedirs(out_root, exist_ok=True)
+
+    rows = []
+    per_cluster = collections.Counter()
+    skipped = 0
+    for cluster, purpose, typ, terrain, name, anim in ON.iter_leaves(tree):
+        groups = RE.get_def(anim)
+        if not groups or not groups[0]:
+            skipped += 1
+            continue
+        full = groups[0][0]                     # full canvas (kept for tile-aligned mask overlay)
+        bbox = full.getbbox()                   # trim transparent margin for the plain sprite
+        sprite = full.crop(bbox) if bbox else full
+        # collapse redundant consecutive levels (DECORATION/DECORATION/..., VISIBLE/TOWN/TOWN/...).
+        chain = [cluster, purpose, typ]
+        parts = [chain[0]] + [x for i, x in enumerate(chain[1:], 1) if x != chain[i - 1]]
+        parts.append(terrain)
+        # colour/subtype-keyed leaves (name != animation) become a faction/colour FOLDER level, so
+        # towns read as VISIBLE/TOWN/<faction>/... rather than one cryptic file per faction.
+        if name != anim:
+            parts.append(name)
+        leaf = anim
+        d = os.path.join(out_root, *parts)
+        os.makedirs(d, exist_ok=True)
+        png = os.path.join(d, f"{leaf}.png")
+        sprite.save(png)
+        mpng = os.path.join(d, f"{leaf}.mask.png")   # same sprite with the passability mask overlaid
+        gridmask = ON.full_mask_of(anim) or ON.mask_of(anim)
+        _mask_overlay(full, gridmask, RE.TILE).save(mpng)
+        per_cluster[cluster] += 1
+        rows.append((cluster, purpose, typ, terrain, name, anim,
+                     os.path.relpath(png, out_root), os.path.relpath(mpng, out_root)))
+
+    with open(os.path.join(out_root, "index.csv"), "w", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(("cluster", "purpose", "type", "terrain", "leaf", "animation", "png", "mask_png"))
+        w.writerows(sorted(rows))
+
+    print(f"ontology catalog -> {out_root}/  ({len(rows)} PNGs, {skipped} skipped: no sprite)")
+    for c in ON.CLUSTERS:
+        print(f"  {c:11s} {per_cluster[c]:5d}")
+    print(f"  index.csv ({len(rows)} rows)")
+
+
 def cmd_inspect(args):
     out = os.path.join(ROOT, "out", "render", f"{slug(args.name)}_segmentation.png")
     path, tables = render_segmentation(args.name, out)
@@ -3031,11 +4083,19 @@ def cmd_run(args):
 
 
 def build_layout(kind, seed, size):
-    """Return (terr, W, H, info, plan). The graph generator plans roles + edges; the texture
+    """Return (terr, W, H, info, plan). ``graph`` plans roles+edges on synthetic pure-land terrain;
+    ``markov-graph`` plans the same connectivity-first graph over MARKOV terrain (keeps water/shores
+    + the MRF decoration) by segmenting it and planning over the largest landmass; the plain texture
     layouts (region/skeleton/jigsaw/markov) return plan=None."""
     if kind == "graph":
         import mapgraph as MG
         return MG.realize(seed, size)
+    if kind == "markov-graph":
+        import mapgraph as MG
+        terr, W, H, _info = LAYOUTS["markov"](seed, size, None)
+        zones, zone_label, _canon = _segment_level(terr)
+        plan = MG.plan_over_segmentation(zones, zone_label, W, H, seed)
+        return terr, W, H, plan.get("info", "markov-graph"), plan
     terr, W, H, info = LAYOUTS[kind](seed, size, None)
     return terr, W, H, info, None
 
@@ -3277,6 +4337,12 @@ def main():
                      help="patches per contact-sheet page")
     prp.set_defaults(func=cmd_render_patches)
 
+    pro = sub.add_parser("render-ontology",
+                         help="render one sprite per documented ontology item to "
+                              "out/ontology/<CLUSTER>/<terrain>/<type>.png")
+    pro.add_argument("--out", default=None, help="output dir (default out/ontology)")
+    pro.set_defaults(func=cmd_render_ontology)
+
     pi = sub.add_parser("inspect", help="segmentation + labels PNG")
     pi.add_argument("name")
     pi.set_defaults(func=cmd_inspect)
@@ -3336,9 +4402,10 @@ def main():
     pg.add_argument("--seed", type=int, default=0)
     pg.add_argument("--size", type=int, default=72, help="W=H of the generated map")
     pg.add_argument("--layout",
-                    choices=["region", "skeleton", "jigsaw", "markov", "graph", "all"],
-                    default="region", help="terrain layout generator; graph = zone-graph "
-                    "planner (connectivity-first); all = the 3 texture alternatives")
+                    choices=["region", "skeleton", "jigsaw", "markov", "graph", "markov-graph", "all"],
+                    default="region", help="terrain layout generator; graph = zone-graph planner "
+                    "(connectivity-first, pure land); markov-graph = that graph planned over markov "
+                    "terrain (water + shores kept); all = the 3 texture alternatives")
     pg.add_argument("--min-zone", type=int, default=12, dest="min_zone",
                     help="leave zones smaller than this as bare terrain (default 12)")
     pg.add_argument("--rebuild-grammar", action="store_true", dest="rebuild_grammar",

@@ -31,6 +31,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import obj_resolve as OR
+import ontology as ON
 import zone_engine as ZE  # _segment_level (segmentation + canonical depth/sweep)
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -120,84 +121,55 @@ def _terrain_at(fm: dict, lvl: int, x: int, y: int) -> int:
     return WATER
 
 
-# --- lazy singleton accessors ----------------------------------------------
-_TAX: dict | None = None
-_CAT_INDEX: dict | None = None
-
-
-def _tax() -> dict:
-    global _TAX, _CAT_INDEX
-    if _TAX is None:
-        _TAX = build_taxonomy()
-        _CAT_INDEX = {c: i for i, c in enumerate(_TAX["categories"])}
-    return _TAX
-
+# --- category vocabulary: delegated to the ONTOLOGY (single source of truth) -----------
+# The decoration category vocabulary is the ontology's DECORATION type-level keys, plus a
+# trailing "OTHER" channel for objects the ontology cannot categorise. Identity decoding and
+# terrain coupling come from the ontology too, so the GAN/patch decoders place only
+# ontology-authoritative objects — never corpus-harvested identities.
 
 def categories() -> list[str]:
-    return list(_tax()["categories"])
+    return ON.veg_categories() + ["OTHER"]
 
 
 def num_categories() -> int:
-    return len(_tax()["categories"])
+    return len(ON.veg_categories()) + 1
 
 
-MIN_TERRAIN_SHARE = 0.01   # a category "belongs" to a terrain only if it is at least this
-                           # fraction of that terrain's decoration (filters boundary artifacts).
+def _other_index() -> int:
+    return len(ON.veg_categories())
+
+
+MIN_TERRAIN_SHARE = 0.01   # retained for signature compatibility (presence is now the criterion).
 
 
 def terrain_category_counts() -> np.ndarray:
-    """Float [10 × C]: total corpus decoration count of each category on each terrain."""
-    tax = _tax()
-    cats = tax["categories"]
-    pool = tax["pool"]
-    M = np.zeros((10, len(cats)), dtype=np.float64)
-    for ci, cat in enumerate(cats):
-        by_terr = pool.get(cat, {})
-        for t in range(10):
-            for _ident, cnt in by_terr.get(str(t), []):
-                M[t, ci] += cnt
-    return M
+    """Float [10 × C]: 1.0 where a category is native to a terrain in the ontology (incl. the
+    terrain-independent 'land'/'water' bucket), else 0. The trailing OTHER column is 0."""
+    M = np.array(ON.category_terrain_matrix(), dtype=np.float64)   # [10 × (C-1)]
+    return np.concatenate([M, np.zeros((M.shape[0], 1))], axis=1)  # append OTHER column
 
 
 def allowed_matrix(min_share: float = MIN_TERRAIN_SHARE) -> np.ndarray:
-    """Bool [10 terrains × C]: ``allowed[t, c]`` iff category ``c`` makes up at least ``min_share``
-    of terrain ``t``'s decoration in the corpus. A frequency threshold (not mere presence) is the
-    ground-truth terrain-coupling — it keeps the species that BELONG on a terrain and drops rare
-    boundary artifacts (e.g. a stray oak anchored on lava). Used to mask the generator."""
-    M = terrain_category_counts()
-    totals = M.sum(axis=1, keepdims=True)
-    share = M / np.maximum(totals, 1.0)
-    A = share >= min_share
-    # never leave a land terrain with zero allowed categories (keep its top few)
-    for t in range(8):
-        if not A[t].any() and M[t].any():
-            A[t, np.argsort(-M[t])[:5]] = True
-    return A
+    """Bool [10 terrains × C]: ``allowed[t, c]`` iff category ``c`` is native to terrain ``t`` in the
+    ontology (the authoritative terrain coupling). The OTHER channel is never allowed."""
+    A = np.array(ON.category_terrain_matrix(), dtype=bool)         # [10 × (C-1)]
+    return np.concatenate([A, np.zeros((A.shape[0], 1), dtype=bool)], axis=1)
 
 
 def category_of(identity: dict) -> int:
-    """Channel index for a decoration identity (OTHER if its type is unknown)."""
-    _tax()
-    cat = _norm_type(identity.get("type", "OTHER"))
-    return _CAT_INDEX.get(cat, _CAT_INDEX["OTHER"])
+    """Channel index for a decoration identity, via the ontology (OTHER if uncategorisable)."""
+    idx = ON.category_of(identity.get("animation") or "")
+    return idx if idx is not None else _other_index()
 
 
 def decode_identity(cat_idx: int, terrain_id: int, rng: random.Random) -> dict | None:
-    """Concrete {type,subtype,animation,mask} for a category on a terrain (weighted).
+    """Concrete {type,subtype,animation,mask} for a category on a terrain, from the ontology.
 
-    Falls back to the category's other terrains, then to None (caller skips the gene).
-    """
-    tax = _tax()
-    cat = tax["categories"][cat_idx]
-    by_terr = tax["pool"].get(cat, {})
-    # NO cross-terrain fallback: a category is only materialized on a terrain where it actually
-    # occurs in the corpus, so terrain-inappropriate sprites are never placed.
-    cands = by_terr.get(str(terrain_id))
-    if not cands:
+    Returns None for the OTHER channel or when the category has no ontology decoration native to
+    the terrain (caller skips the gene)."""
+    if cat_idx >= _other_index():
         return None
-    weights = [max(w, 1) for _ident, w in cands]
-    chosen = rng.choices(cands, weights=weights, k=1)[0]
-    return dict(chosen[0])
+    return ON.decode_identity(cat_idx, terrain_id, rng)
 
 
 # ---------------------------------------------------------------------------

@@ -19,11 +19,12 @@ def test_taxonomy_categories():
     cats = VD.categories()
     assert len(cats) >= 10 and cats[-1] == "OTHER"
     assert VD.num_categories() == len(cats)
-    # a known decoration type maps to its own (non-OTHER) channel, and round-trips
+    # categories are the ONTOLOGY decoration type-level keys; a known decoration animation maps
+    # to its own (non-OTHER) channel (case-insensitive), and an unknown animation -> OTHER.
     idx = VD.category_of({"type": "mountain", "subtype": "object",
                           "animation": "AVLMTSN1", "mask": ["B"]})
-    assert cats[idx] == "mountain"
-    assert VD.category_of({"type": "totallyUnknownType"}) == cats.index("OTHER")
+    assert cats[idx] == "MOUNTAIN"
+    assert VD.category_of({"animation": "no_such_def_xyz"}) == cats.index("OTHER")
 
 
 def test_window_shapes():

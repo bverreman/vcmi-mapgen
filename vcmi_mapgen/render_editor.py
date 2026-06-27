@@ -51,8 +51,10 @@ class LodIndex:
         if key not in self._files:
             return None
         path, off, size, csize = self._files[key]
+        # csize == 0 means the entry is stored UNCOMPRESSED: the payload is `size` bytes, not 0.
+        nbytes = csize if csize else size
         with open(path, "rb") as f:
-            f.seek(off); raw = f.read(csize)
+            f.seek(off); raw = f.read(nbytes)
         if csize == size or csize == 0:
             return raw
         try:

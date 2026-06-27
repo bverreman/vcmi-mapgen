@@ -42,9 +42,9 @@ def visitable_from(mask):
     """The 3x3 approach grid VCMI needs for visitable templates. Buildings (have
     blocked body) are entered from the sides/below; free-standing pickups/monsters
     from all 8 directions. None for pure decoration (no visitable tile)."""
-    if not any("A" in r for r in mask):
+    if not any(ch in "AX" for r in mask for ch in r):     # 'A' or 'X' = a visitable tile
         return None
-    if any("B" in r for r in mask):
+    if any(ch in "BX" for r in mask for ch in r):         # has a blocked body -> a building
         return ["---", "+-+", "+++"]
     return ["+++", "+-+", "+++"]
 

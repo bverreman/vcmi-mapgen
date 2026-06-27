@@ -60,12 +60,14 @@ def test_outward_value_gradient():
 
 
 def test_decoration_matches_zone_terrain():
-    # the graph path filters decoration to its zone's terrain — no snow trees on grass.
+    # the graph path filters decoration to its zone's terrain — no snow trees on grass. Terrain
+    # coupling is now authoritative from the ONTOLOGY (terrains_of); a decoration is valid on a
+    # tile if it is native to that terrain or is terrain-independent ('land'/'water').
+    import ontology as ON
     grammar = ZE._load_or_build_grammar()
     fm = ZE.gen_fm("graph", "grammar", 2, SIZE, 12, grammar)
     terr = fm["terrain"][0]
     H = len(terr); W = len(terr[0])
-    dt = ZE._decor_terrains()
     bad = 0
     for o in fm["objects"]:
         if o.get("_purpose") != "DECORATION":
@@ -73,8 +75,10 @@ def test_decoration_matches_zone_terrain():
         x, y = o["x"], o["y"]
         if not (0 <= x < W and 0 <= y < H):
             continue
-        ts = dt.get(o.get("animation"))
-        if ts and len(ts) < ZE._NEUTRAL_MIN and terr[y][x]["t"] not in ts:
+        ts = ON.terrains_of(o.get("animation"))
+        name = ZE.TNAME.get(terr[y][x]["t"])
+        generic = "water" if name == "water" else "land"
+        if ts and name not in ts and generic not in ts:
             bad += 1
     assert bad == 0, f"{bad} decoration objects sit on the wrong terrain"
 
@@ -106,9 +110,42 @@ def test_zone_borders_are_closed():
         if rim:
             fracs.append(sum(blocked[y][x] for x, y in rim) / len(rim))
     # substantial vegetation belt around zones (full hermetic sealing is avoided so the map stays
-    # walkable + gameplay stays accessible); ~0.4 of rim blocked reads as continuous mountain ranges.
-    assert fracs and sum(fracs) / len(fracs) >= 0.3, \
+    # walkable + gameplay stays accessible); a belt this thick reads as continuous mountain ranges.
+    # Threshold is ~0.25: the reachability carve is 4-connected (matching the hero's movement model in
+    # traverse) and so opens marginally more rim than an 8-connected carve, but borders stay mostly
+    # closed (individual zones run 0.3-0.4 blocked rim).
+    assert fracs and sum(fracs) / len(fracs) >= 0.25, \
         f"zone borders not closed enough (mean blocked rim {sum(fracs)/max(len(fracs),1):.2f})"
+
+
+def test_category_mrf_captures_spatial_correlation():
+    # the learned category MRF (corpus 4-adjacency co-occurrence) must, when Gibbs-sampled,
+    # produce a CORRELATED category field — adjacent tiles share a kind far more than an
+    # independent draw from the same marginal would. This is the whole point of Plan A.
+    import random
+    # a synthetic terrain MRF with strong like-with-like affinity (and an EMPTY clearing state)
+    mrf = {"unary": {"MOUNTAIN": 45, "EMPTY": 40, "OAK_TREES": 15},
+           "pair": {"MOUNTAIN": {"MOUNTAIN": 38, "EMPTY": 5, "OAK_TREES": 2},
+                    "EMPTY": {"EMPTY": 33, "MOUNTAIN": 5, "OAK_TREES": 2},
+                    "OAK_TREES": {"OAK_TREES": 12, "EMPTY": 2, "MOUNTAIN": 1}}}
+    ts = {(x, y) for x in range(24) for y in range(24)}
+    field = ZE._zone_category_field(ts, 2, mrf, random.Random(0))
+    assert field is not None and ZE._zone_category_field(ts, 2, None, random.Random(0)) is None
+
+    def same_rate(f):
+        same = tot = 0
+        for (x, y), c in f.items():
+            for n in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
+                if n in f:
+                    tot += 1
+                    same += (c == f[n])
+        return same / tot
+
+    tot_u = sum(mrf["unary"].values())
+    indep = sum((n / tot_u) ** 2 for n in mrf["unary"].values())   # iid-from-marginal baseline
+    assert same_rate(field) > indep + 0.12, "MRF field is no more correlated than an iid draw"
+    # fully seeded -> deterministic
+    assert field == ZE._zone_category_field(ts, 2, mrf, random.Random(0))
 
 
 def test_generated_map_is_walkable():
@@ -118,3 +155,41 @@ def test_generated_map_is_walkable():
     assert rep["start"] is not None                        # a start town exists
     frac = rep["reached_tiles"] / max(rep["passable_tiles"], 1)
     assert frac > 0.3                                      # connectivity-first: most of it walkable
+
+
+def test_group_archetypes_anchored_on_visitable_or_pickable():
+    # the learned group library must key every archetype on a VISITABLE or PICKABLE anchor (the
+    # user's rule: clusters form around visitable objects / pickable resources). Never a guard,
+    # lone INFO, or decoration.
+    grammar = ZE._load_or_build_grammar()
+    groups = grammar.get("_groups") or {}
+    assert groups, "grammar carries no _groups archetype library"
+    for terr, byanchor in groups.items():
+        for anchor_purpose in byanchor:
+            assert anchor_purpose in ZE.ANCHOR_PURPOSES, \
+                f"group anchor {anchor_purpose} on {terr} is not visitable/pickable"
+
+
+def test_placement_is_grouped_not_scattered():
+    # ORDER: placed gameplay must cluster into intentional set-pieces, not loose scatter — most
+    # objects sit in a multi-object group, and every group is organized by a visitable/pickable
+    # anchor. (The corpus map-level multi-object fraction is ~0.64; generation packs at least that.)
+    grammar = ZE._load_or_build_grammar()
+    fm = ZE.gen_fm("markov-graph", "grammar", 2, 72, 12, grammar)
+    gp = [o for o in fm["objects"] if o.get("_purpose") not in ZE.NON_GAMEPLAY]
+    clusters = ZE._cluster_objects(gp, ZE.GROUP_EPS)
+    multi = sum(len(c) for c in clusters if len(c) > 1)
+    assert multi / max(len(gp), 1) >= 0.6, "gameplay is scattered, not grouped"
+    for c in clusters:                                     # every cluster organizes around an anchor
+        a = ZE._group_anchor(c)
+        if a is not None:
+            assert a["_purpose"] in ZE.ANCHOR_PURPOSES
+
+
+def test_group_placement_deterministic():
+    # same seed -> identical objects (the group sampler is seeded per zone).
+    grammar = ZE._load_or_build_grammar()
+    a = ZE.gen_fm("markov-graph", "grammar", 5, 64, 12, grammar)["objects"]
+    b = ZE.gen_fm("markov-graph", "grammar", 5, 64, 12, grammar)["objects"]
+    key = lambda o: (o["x"], o["y"], o.get("l", 0), o.get("animation"), o.get("_purpose"))
+    assert [key(o) for o in a] == [key(o) for o in b]

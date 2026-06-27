@@ -311,6 +311,98 @@ def realize(seed, size):
     return grid, W, H, info, plan
 
 
+def plan_over_segmentation(zones, zone_label, W, H, seed, min_area=12):
+    """GRAPH-ON-MARKOV: plan a connectivity-first zone graph over an EXISTING (markov) segmentation
+    instead of a synthetic Voronoi, keeping the markov terrain (water, shores, the MRF decoration).
+
+    Markov terrain scatters land zones across many water-separated landmasses; a hero can't cross
+    water (no boats), so a single-start map is only playable if all gameplay sits on ONE connected
+    landmass. We therefore plan the full graph (strategic towns spread out, a spanning-tree backbone
+    of open borders, outward role tiers) over the LARGEST landmass, and mark every zone on the
+    smaller islands as ``passage`` (decorative scenery, no gameplay). Returns the ``plan`` dict
+    (``role_seeds``/``edge_seeds``) consumed by ``zone_engine.generate_map``, with
+    ``strict_terrain=False`` so the zones keep the markov interior fill + water."""
+    import zone_engine as ZE  # noqa: F401  (kept for symmetry / future use)
+    rng = random.Random((seed ^ 0x9E3779B9) & 0xFFFFFFFF)
+    st = mine_corpus()
+    land = {zid: z for zid, z in zones.items() if 0 <= z["terrain_type"] < 8 and z["area"] >= min_area}
+    if not land:
+        return {"role_seeds": [], "edge_seeds": [], "strict_terrain": False}
+
+    rep_tile = {}                                    # a guaranteed in-zone tile per zone (for seeds)
+    for zid, z in land.items():
+        cx, cy = z["centroid"]
+        rep_tile[zid] = min(z["tiles"], key=lambda t: (t[0] - cx) ** 2 + (t[1] - cy) ** 2)
+
+    adj = collections.defaultdict(set)               # land-zone adjacency (shared 4-neighbour border)
+    for y in range(H):
+        for x in range(W):
+            za = zone_label[y][x]
+            if za not in land:
+                continue
+            for dx, dy in ((1, 0), (0, 1)):
+                nx, ny = x + dx, y + dy
+                if nx < W and ny < H:
+                    zb = zone_label[ny][nx]
+                    if zb != za and zb in land:
+                        adj[za].add(zb)
+                        adj[zb].add(za)
+
+    seen, masses = set(), []                          # connected landmasses among land zones
+    for zid in land:
+        if zid in seen:
+            continue
+        comp, stack = [], [zid]
+        seen.add(zid)
+        while stack:
+            u = stack.pop()
+            comp.append(u)
+            for v in adj[u]:
+                if v not in seen:
+                    seen.add(v)
+                    stack.append(v)
+        masses.append(comp)
+    masses.sort(key=lambda c: sum(zones[z]["area"] for z in c), reverse=True)
+
+    role_seeds, edge_seeds = [], []
+    main = masses[0]                                  # the play area: full graph plan here
+    idx = {zid: i for i, zid in enumerate(main)}
+    seeds_xy = [tuple(zones[zid]["centroid"]) for zid in main]
+    subadj = {i: {idx[v] for v in adj[zid] if v in idx} for i, zid in enumerate(main)}
+    n = len(main)
+    tree = _spanning_tree(subadj, seeds_xy)
+    deg = st["degrees"]
+    target_deg = min(max(1, round(sum(deg) / len(deg))) if deg else 2, max(1, n - 1))
+    open_edges = tree | _add_extra_edges(subadj, tree, target_deg, n, rng)
+    n_towns = min(max(1, round(sum(st["town_counts"]) / max(len(st["town_counts"]), 1))), max(1, n // 2))
+    # towns go in SUBSTANTIAL zones (>= 60th-pct area), spread out — not the extreme farthest points,
+    # which land in tiny edge/water zones that get walled off. Greedy farthest spread among candidates.
+    areas = sorted(zones[main[i]]["area"] for i in range(n))
+    thresh = areas[int(0.6 * (len(areas) - 1))] if areas else 0
+    cands = [i for i in range(n) if zones[main[i]]["area"] >= thresh] or list(range(n))
+    towns = {max(cands, key=lambda i: zones[main[i]]["area"])}
+    while len(towns) < min(n_towns, len(cands)):
+        towns.add(max((i for i in cands if i not in towns),
+                      key=lambda i: min((seeds_xy[i][0] - seeds_xy[j][0]) ** 2
+                                        + (seeds_xy[i][1] - seeds_xy[j][1]) ** 2 for j in towns)))
+    tier = _bfs_tiers(open_edges, towns, n)
+    roles = _assign_roles(st, n, towns, tier, rng)
+    for i, zid in enumerate(main):
+        tx, ty = rep_tile[zid]
+        role_seeds.append((tx, ty, roles[i]))
+    for (a, b) in open_edges:
+        edge_seeds.append((rep_tile[main[a]], rep_tile[main[b]]))
+    for mass in masses[1:]:                           # smaller islands: decorative, no gameplay
+        for zid in mass:
+            tx, ty = rep_tile[zid]
+            role_seeds.append((tx, ty, "passage"))
+    info = f"markov-graph(masses={len(masses)},main={n},towns={len(towns)},open={len(open_edges)})"
+    # gameplay lives ONLY on the main landmass (the connected play area); the smaller islands are
+    # decorative scenery — placing mines/towns on water-locked islands makes them unreachable.
+    return {"role_seeds": role_seeds, "edge_seeds": edge_seeds, "strict_terrain": False,
+            "play_zones": list(main), "info": info}
+
+
 if __name__ == "__main__":   # quick stats dump
     s = mine_corpus()
     print("corpus graph stats:",

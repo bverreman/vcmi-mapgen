@@ -57,6 +57,18 @@ Editor-quality rendering reads the H3 sprite LOD files from a local VCMI install
 
 ## Rules
 
+- **`ontology.py` is the SINGLE SOURCE OF TRUTH for objects, from tile placement through map
+  rendering.** Object identity, footprint mask, terrain coupling and decoration category for the
+  *generation* pipeline come from `ontology.py` — the hardcoded `TAXONOMY` + `LEAF_META` literals,
+  re-derived from the authoritative editor table `objects.txt` via `python -m vcmi_mapgen.ontology
+  --regen`. Use its accessors (`identity_of`, `mask_of`, `is_blocking`, `terrains_of`, `decor_pool`,
+  `veg_categories`, `category_of`, `decode_identity`, `category_terrain_matrix`). When something the
+  pipeline needs is missing, **extend the ontology** (parse it from `objects.txt` and regenerate) —
+  do NOT reach into the corpus (`data/objlib.json` / `obj_resolve._OBJLIB`, faithful maps, or a
+  `veg_data` corpus scan) for object identity/mask/category. The corpus may still inform spatial
+  *statistics* (density/openness/frequency weights), never identity. `veg_data`'s category functions
+  are thin ontology adapters; the extract/`rebuild --identity` corpus-replay path is separate and
+  unaffected.
 - The **same-shape identity guarantee is bit-exact** — `rebuild --identity --verify` must
   print `IDENTITY OK` and never re-roll object identity (no `pick_variant`), so relational
   portals/quest links survive.

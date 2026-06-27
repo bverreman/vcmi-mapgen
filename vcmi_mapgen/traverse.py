@@ -25,11 +25,12 @@ NB8 = [(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)]
 
 
 def _mask_cells(x, y, mask):
+    # anchor (x,y) = bottom-right tile; H3 reads masks right-to-left so col 0 is the rightmost
+    # (anchor) tile -> tx = x - c. Matches obj_resolve.mask_cells (see its note on the column flip).
     h = len(mask)
-    w = max(len(r) for r in mask)
     for r, row in enumerate(mask):
         for c, ch in enumerate(row):
-            yield (x - (w - 1 - c), y - (h - 1 - r), ch)
+            yield (x - c, y - (h - 1 - r), ch)
 
 
 def _dims(fm):
@@ -38,9 +39,10 @@ def _dims(fm):
 
 
 def passable_grid(fm, l=0):
-    """A tile on level `l` is blocked when it is water/rock or covered by a 'B'
-    (blocking) mask cell of an object ON THAT LEVEL. Visitable 'A' cells (town
-    approaches, monster tiles) stay passable. Rock (9) walls the underground."""
+    """A tile on level `l` is blocked when it is water/rock or covered by a blocking mask cell
+    ('B' or 'X') of an object ON THAT LEVEL. Passable visitable 'A' cells (the tile a hero stands
+    on) stay passable; 'X' (a building action tile) blocks and is visited from an adjacent tile.
+    Rock (9) walls the underground."""
     terr = fm["terrain"][l]
     W, H = len(terr[0]), len(terr)
     blocked = [[terr[y][x]["t"] in (WATER, ROCK) for x in range(W)] for y in range(H)]
@@ -48,13 +50,15 @@ def passable_grid(fm, l=0):
         if o.get("l", 0) != l:
             continue
         for cx, cy, ch in _mask_cells(o["x"], o["y"], o["mask"]):
-            if 0 <= cx < W and 0 <= cy < H and ch == "B":
+            if 0 <= cx < W and 0 <= cy < H and ch in ("B", "X"):
                 blocked[cy][cx] = True
     return blocked, W, H
 
 
 def _a_cells(o):
-    return [(cx, cy) for cx, cy, ch in _mask_cells(o["x"], o["y"], o["mask"]) if ch == "A"]
+    # visitable anchors: 'A' (stand on) and 'X' (blocked building tile, visited from adjacent — its
+    # own tile is blocked so `_approaches` will yield its passable neighbours, not the tile itself).
+    return [(cx, cy) for cx, cy, ch in _mask_cells(o["x"], o["y"], o["mask"]) if ch in ("A", "X")]
 
 
 def _approaches(o, blocked, W, H):
