@@ -279,7 +279,8 @@ TERRAIN_COUPLED = {
 }
 
 
-# class ids that are pure visual obstacles (incl. enum gaps 199/206-211 etc.)
+# class ids that are pure visual obstacles (incl. the once-unnamed AB decor classes
+# 177/199/206-211, now named LAKE_2 / TREES_2 / *_HILLS / SUBTERRANEAN_ROCKS / SWAMP_FOLIAGE)
 def _is_decoration(name, cid):
     if name.startswith("CLASS_"):  # enum gap -> decorative obstacle
         return True
@@ -327,6 +328,16 @@ DECOR_NAMES = {
     "FLOWERS2",
     "TAR_PIT",
     "GAZEBO_DECO",
+    # AB decorative classes (verified against objects.txt DEFs + sprite renders):
+    # avllk1r / avlswt* / avlxds* avlxdt* avlxgr* avlxro* avlxsu* avlxsw*
+    "LAKE_2",
+    "TREES_2",
+    "DESERT_HILLS",
+    "DIRT_HILLS",
+    "GRASS_HILLS",
+    "ROUGH_HILLS",
+    "SUBTERRANEAN_ROCKS",
+    "SWAMP_FOLIAGE",
 }
 
 
@@ -424,31 +435,6 @@ TAXONOMY = {
             "CANYON": {
                 "rough": ["avlglly0"]
             },
-            "CLASS_177": {
-                "rough": ["avllk1r"]
-            },
-            "CLASS_199": {
-                "rough": ["avltro00", "avltro01", "avltro02", "avltro03", "avltro04", "avltro05", "avltro06", "avltro07", "avltro08", "avltro09", "avltro10", "avltro11", "avltro12", "avltrro0", "avltrro1", "avltrro2", "avltrro3", "avltrro4", "avltrro5", "avltrro6", "avltrro7"],
-                "swamp": ["avlswt00", "avlswt01", "avlswt02", "avlswt03", "avlswt04", "avlswt05", "avlswt06", "avlswt07", "avlswt08", "avlswt09", "avlswt10", "avlswt11", "avlswt12", "avlswt13", "avlswt14", "avlswt15", "avlswt16", "avlswt17", "avlswt18", "avlswt19", "avlswtr0", "avlswtr1", "avlswtr2", "avlswtr3", "avlswtr4", "avlswtr5", "avlswtr6", "avlswtr7", "avlswtr8", "avlswtr9"]
-            },
-            "CLASS_206": {
-                "sand": ["avlxds01", "avlxds02", "avlxds03", "avlxds04", "avlxds05", "avlxds06", "avlxds07", "avlxds08", "avlxds09", "avlxds10", "avlxds11", "avlxds12"]
-            },
-            "CLASS_207": {
-                "dirt": ["avlxdt00", "avlxdt01", "avlxdt02", "avlxdt03", "avlxdt04", "avlxdt05", "avlxdt06", "avlxdt07", "avlxdt08", "avlxdt09", "avlxdt10", "avlxdt11"]
-            },
-            "CLASS_208": {
-                "grass": ["avlxgr01", "avlxgr02", "avlxgr03", "avlxgr04", "avlxgr05", "avlxgr06", "avlxgr07", "avlxgr08", "avlxgr09", "avlxgr10", "avlxgr11", "avlxgr12"]
-            },
-            "CLASS_209": {
-                "rough": ["avlxro01", "avlxro02", "avlxro03", "avlxro04", "avlxro05", "avlxro06", "avlxro07", "avlxro08", "avlxro09", "avlxro10", "avlxro11", "avlxro12"]
-            },
-            "CLASS_210": {
-                "subterr": ["avlxsu01", "avlxsu02", "avlxsu03", "avlxsu04", "avlxsu05", "avlxsu06", "avlxsu07", "avlxsu08", "avlxsu09", "avlxsu10", "avlxsu11", "avlxsu12"]
-            },
-            "CLASS_211": {
-                "swamp": ["avlxsw01", "avlxsw02", "avlxsw03", "avlxsw04", "avlxsw05", "avlxsw06", "avlxsw07", "avlxsw08", "avlxsw09", "avlxsw10", "avlxsw11"]
-            },
             "CRATER": {
                 "dirt": ["avlct1d0", "avlct2d0", "avlct3d0", "avlct4d0", "avlct5d0", "avlctrd0"],
                 "grass": ["avlct1g0", "avlct2g0", "avlct3g0", "avlct4g0", "avlct5g0", "avlct6g0", "avlctrg0"],
@@ -465,12 +451,21 @@ TAXONOMY = {
                 "subterr": ["avldead0", "avldead1", "avldead2", "avldead3", "avldead4", "avldead5", "avldead6", "avldead7"],
                 "swamp": ["avldead0", "avldead1", "avldead2", "avldead3", "avldead4", "avldead5", "avldead6", "avldead7", "avldt1s0", "avldt2s0", "avldt3s0", "avlswp60", "avlswp70"]
             },
+            "DESERT_HILLS": {
+                "sand": ["avlxds01", "avlxds02", "avlxds03", "avlxds04", "avlxds05", "avlxds06", "avlxds07", "avlxds08", "avlxds09", "avlxds10", "avlxds11", "avlxds12"]
+            },
+            "DIRT_HILLS": {
+                "dirt": ["avlxdt00", "avlxdt01", "avlxdt02", "avlxdt03", "avlxdt04", "avlxdt05", "avlxdt06", "avlxdt07", "avlxdt08", "avlxdt09", "avlxdt10", "avlxdt11"]
+            },
             "FLOWERS": {
                 "dirt": ["avlfl1d0", "avlfl2d0", "avlfl3d0", "avlfl4d0", "avlfl5d0", "avlfl6d0", "avlfl7d0", "avlfl8d0", "avlfl9d0"],
                 "grass": ["avlf01g0", "avlf02g0", "avlf03g0", "avlf04g0", "avlf05g0", "avlf06g0", "avlf07g0", "avlf08g0", "avlf09g0", "avlf10g0", "avlf11g0", "avlf12g0"]
             },
             "FROZEN_LAKE": {
                 "snow": ["avlflk10", "avlflk20", "avlflk30"]
+            },
+            "GRASS_HILLS": {
+                "grass": ["avlxgr01", "avlxgr02", "avlxgr03", "avlxgr04", "avlxgr05", "avlxgr06", "avlxgr07", "avlxgr08", "avlxgr09", "avlxgr10", "avlxgr11", "avlxgr12"]
             },
             "HOLE": {
                 "dirt": ["avlhold0"],
@@ -490,6 +485,9 @@ TAXONOMY = {
                 "grass": ["avllk1g0", "avllk2g0", "avllk3g0"],
                 "subterr": ["avllk1u0", "avllk2u0", "avllk3u0"],
                 "swamp": ["avllk1s0", "avllk2s0", "avllk3s0", "avlswp50"]
+            },
+            "LAKE_2": {
+                "rough": ["avllk1r"]
             },
             "LAVA_FLOW": {
                 "lava": ["avllav20", "avllav30", "avllav40", "avllav50", "avllav60", "avllav70", "avllav80", "avllav90", "avllv100", "avllv110", "avllv120", "avllv130", "avllv140", "avllv150", "avllv160", "avllv170", "avllv180", "avllv190", "avllv200", "avllv210", "avllv220", "avllv230", "avllv240", "avllv250", "avllv260"],
@@ -567,6 +565,9 @@ TAXONOMY = {
                 "swamp": ["avlrk1s0", "avlrk2s0", "avlrk3s0", "avlrk4s0"],
                 "water": ["avlrk1w0", "avlrk2w0", "avlrk3w0", "avlrk4w0"]
             },
+            "ROUGH_HILLS": {
+                "rough": ["avlxro01", "avlxro02", "avlxro03", "avlxro04", "avlxro05", "avlxro06", "avlxro07", "avlxro08", "avlxro09", "avlxro10", "avlxro11", "avlxro12"]
+            },
             "SAND_DUNE": {
                 "sand": ["avldun10", "avldun20", "avldun30"]
             },
@@ -590,12 +591,22 @@ TAXONOMY = {
                 "rough": ["avlstm1", "avlstm2", "avlstm3"],
                 "snow": ["avlp1sn0", "avlp2sn0"]
             },
+            "SUBTERRANEAN_ROCKS": {
+                "subterr": ["avlxsu01", "avlxsu02", "avlxsu03", "avlxsu04", "avlxsu05", "avlxsu06", "avlxsu07", "avlxsu08", "avlxsu09", "avlxsu10", "avlxsu11", "avlxsu12"]
+            },
+            "SWAMP_FOLIAGE": {
+                "swamp": ["avlxsw01", "avlxsw02", "avlxsw03", "avlxsw04", "avlxsw05", "avlxsw06", "avlxsw07", "avlxsw08", "avlxsw09", "avlxsw10", "avlxsw11"]
+            },
             "TREES": {
                 "dirt": ["avltr1d0", "avltr2d0", "avltr3d0"],
                 "grass": ["avlswmp0", "avlswmp1", "avlswmp2", "avlswmp3", "avlswmp4", "avlswmp5", "avlswmp6", "avlswmp7", "avltr1d0", "avltr2d0", "avltr3d0", "avlwlw10", "avlwlw20", "avlwlw30"],
                 "rough": ["avlroug0", "avlroug1", "avlroug2", "avlyuc10", "avlyuc20", "avlyuc30"],
                 "sand": ["avlplm10", "avlplm20", "avlplm30", "avlplm40", "avlplm50", "avlyuc10", "avlyuc20", "avlyuc30"],
                 "swamp": ["avlswmp0", "avlswmp1", "avlswmp2", "avlswmp3", "avlswmp4", "avlswmp5", "avlswmp6", "avlswmp7", "avltr1d0", "avltr2d0", "avltr3d0", "avlwlw10", "avlwlw20", "avlwlw30"]
+            },
+            "TREES_2": {
+                "rough": ["avltro00", "avltro01", "avltro02", "avltro03", "avltro04", "avltro05", "avltro06", "avltro07", "avltro08", "avltro09", "avltro10", "avltro11", "avltro12", "avltrro0", "avltrro1", "avltrro2", "avltrro3", "avltrro4", "avltrro5", "avltrro6", "avltrro7"],
+                "swamp": ["avlswt00", "avlswt01", "avlswt02", "avlswt03", "avlswt04", "avlswt05", "avlswt06", "avlswt07", "avlswt08", "avlswt09", "avlswt10", "avlswt11", "avlswt12", "avlswt13", "avlswt14", "avlswt15", "avlswt16", "avlswt17", "avlswt18", "avlswt19", "avlswtr0", "avlswtr1", "avlswtr2", "avlswtr3", "avlswtr4", "avlswtr5", "avlswtr6", "avlswtr7", "avlswtr8", "avlswtr9"]
             },
             "VOLCANO": {
                 "lava": ["avlvol10", "avlvol20", "avlvol30", "avlvol40", "avlvol50"]
