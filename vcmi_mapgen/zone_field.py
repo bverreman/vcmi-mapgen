@@ -286,16 +286,10 @@ def _farthest_points(ts, seedt, spacing, cand=None):
     return nodes
 
 
-def _zone_gates(ts, zones, zid):
-    """Passages (gates) through the rim belt -- the user's 'input and exit must correspond' rule.
-
-    A blocked forest belt rings the zone, but a zone is not a sealed pocket: where it borders a
-    DIFFERENT land zone there is a pass, and crucially an entry on one edge implies an exit on the
-    far edge so the zone is TRAVERSABLE end-to-end (you can come in one side and leave the other).
-    We return one representative tile per neighbouring zone (the centre of each contact segment).
-    If the zone has fewer than two such neighbours (an isolated pocket), we synthesise an antipodal
-    pair -- the two border tiles that are farthest apart -- so there is always a through-route. The
-    spanning backbone then routes a corridor to every gate, punching the belt open exactly there."""
+def _zone_fronts(ts, zones, zid):
+    """Full contact FRONTS: {neighbour zid: [zone tiles 4-touching that neighbour]}. The complete
+    per-pair border segment — `_zone_gates` collapses each front to one tile; `_zone_gate_bands`
+    keeps a corpus-wide band of it."""
     owner = {}
     for zz, z in zones.items():
         for t in z["tiles_set"]:
@@ -306,6 +300,55 @@ def _zone_gates(ts, zones, zid):
             o = owner.get((x + dx, y + dy))
             if o is not None and o != zid:
                 contacts[o].append((x, y))
+    return contacts
+
+
+def _zone_gate_bands(ts, zones, zid, open_frac=0.5, min_w=3):
+    """Wide gates — corpus zone 'gates' are broad terrain borders, not 1-tile corridors.
+
+    Returns [(rep, band)] per neighbouring zone: `rep` is the single representative tile
+    (identical to `_zone_gates`) and `band` is a frozenset of contact-front tiles around it —
+    the corpus-like OPEN share of the front (`open_frac` = fraction of corpus zone-border
+    tiles left passable, mined per terrain), never fewer than `min_w` tiles. The protected
+    web keeps the whole band vegetation-free, so the border stays as open as real maps.
+    Isolated pockets get the synthesized antipodal pair with a small border band each."""
+    contacts = _zone_fronts(ts, zones, zid)
+    out = []
+    for o in sorted(contacts):
+        tiles = contacts[o]
+        mx = sum(t[0] for t in tiles) / len(tiles)
+        my = sum(t[1] for t in tiles) / len(tiles)
+        rep = min(set(tiles), key=lambda t: (t[0] - mx) ** 2 + (t[1] - my) ** 2)
+        k = min(len(set(tiles)), max(min_w, round(open_frac * len(set(tiles)))))
+        band = sorted(set(tiles),
+                      key=lambda t: (max(abs(t[0] - rep[0]), abs(t[1] - rep[1])), t))[:k]
+        out.append((rep, frozenset(band)))
+    if len(out) < 2:
+        border = [t for t in ts if any((t[0] + dx, t[1] + dy) not in ts for dx, dy in NB4)]
+        if border:
+            mx = sum(x for x, _ in ts) / len(ts); my = sum(y for _, y in ts) / len(ts)
+            a = max(border, key=lambda t: (t[0] - mx) ** 2 + (t[1] - my) ** 2)
+            b = max(border, key=lambda t: (t[0] - a[0]) ** 2 + (t[1] - a[1]) ** 2)
+            reps = {r for r, _band in out}
+            for g in (a, b):
+                if g not in reps:
+                    band = frozenset(t for t in border
+                                     if max(abs(t[0] - g[0]), abs(t[1] - g[1])) <= min_w // 2)
+                    out.append((g, band | {g}))
+    return out
+
+
+def _zone_gates(ts, zones, zid):
+    """Passages (gates) through the rim belt -- the user's 'input and exit must correspond' rule.
+
+    A blocked forest belt rings the zone, but a zone is not a sealed pocket: where it borders a
+    DIFFERENT land zone there is a pass, and crucially an entry on one edge implies an exit on the
+    far edge so the zone is TRAVERSABLE end-to-end (you can come in one side and leave the other).
+    We return one representative tile per neighbouring zone (the centre of each contact segment).
+    If the zone has fewer than two such neighbours (an isolated pocket), we synthesise an antipodal
+    pair -- the two border tiles that are farthest apart -- so there is always a through-route. The
+    spanning backbone then routes a corridor to every gate, punching the belt open exactly there."""
+    contacts = _zone_fronts(ts, zones, zid)
     gates = []
     for o, tiles in contacts.items():
         mx = sum(t[0] for t in tiles) / len(tiles)

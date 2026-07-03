@@ -25,6 +25,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import faithful as FA           # noqa: E402
 import macro_topo as MTOPO      # noqa: E402
+import obj_resolve as OR        # noqa: E402
 import pp_gameplay as PG        # noqa: E402
 import pp_pickup as PK          # noqa: E402
 import pp_sample as PP          # noqa: E402
@@ -254,6 +255,11 @@ def build(seed=3, size=72, water=None, players=0, water_mode="normal"):
               f"(requested {players})")
     town_of_zone = {}
 
+    # MAP-level mine economy: every basic resource covered somewhere, gold rationed to the
+    # town count (zones are visited in sorted-zid order — deterministic)
+    ledger = {"missing": set(PG.BASIC_MINE_RES), "towns": len(player_zids), "gold": 0}
+    gstats = PG.mine_gameplay()
+
     models = {}
     objs = []
     targets = []                                     # G2: tiles that must stay reachable
@@ -295,7 +301,8 @@ def build(seed=3, size=72, water=None, players=0, water_mode="normal"):
         # L3 gameplay first: rigid objects at spread nodes (corpus densities, ontology pools)
         gobjs, occupied, gblocked, approaches = PG.place_zone(ts, zones, zid, terrain,
                                                               seed=seed, coastal=coastal,
-                                                              force_town=zid in player_zids)
+                                                              force_town=zid in player_zids,
+                                                              ledger=ledger)
         objs.extend(gobjs)
         ngame += len(gobjs)
         if zid in player_zids:
@@ -312,17 +319,24 @@ def build(seed=3, size=72, water=None, players=0, water_mode="normal"):
         seedt = min(ts, key=lambda t: (t[0] - int(round(cx))) ** 2
                     + (t[1] - int(round(cy))) ** 2)
         prot = PP.protected_web(ts, zones, zid, edist, seedt,
-                                extra_nodes=approaches, avoid=gblocked)
+                                extra_nodes=approaches, avoid=gblocked,
+                                open_frac=gstats[terrain].get("border_open_frac", 0.5))
 
-        # L2 vegetation: gameplay cells + approaches admit no vegetation at all
+        # L2 vegetation: gameplay cells + approaches admit no vegetation at all; the
+        # annulus around MINE footprints ATTRACTS vegetation (sawmills nestle in forest)
         if terrain not in models:
             models[terrain] = PP.build_model(terrain)
         model = models[terrain]
         if not model["cats"]:
             continue
         forbid = frozenset(occupied) | frozenset(approaches)
+        mine_cells = {(cx, cy) for o in gobjs if o.get("purpose") == "MINE"
+                      for cx, cy, blk in OR.mask_cells(o["mask"], o["x"], o["y"]) if blk}
+        attract = frozenset(t for t in ts if t not in forbid and any(
+            max(abs(t[0] - mx), abs(t[1] - my)) <= 3 for mx, my in mine_cells)) \
+            if mine_cells else frozenset()
         zobjs, blocked, _ = PP.sample_zone(ts, zones, zid, model, seed=seed,
-                                           prot=prot, forbid=forbid)
+                                           prot=prot, forbid=forbid, attract=attract)
         objs.extend(zobjs)
 
         # L4 pickups over the finished open field (resources, artifacts, monster guards);
@@ -359,9 +373,14 @@ def build(seed=3, size=72, water=None, players=0, water_mode="normal"):
 
     # G2 map-level gate: every approach/pickup reachable across zones, or carve vegetation
     objs, ncarved = g2_repair(size, grid, objs, targets)
+    if ledger["missing"]:
+        print(f"  WARNING: mine coverage incomplete — missing {sorted(ledger['missing'])} "
+              f"(map too small / too few mine slots)")
     veg_n = sum(1 for o in objs if not o.get("purpose"))
     info = (f"pp-map s{seed} {W}x{H}: {nz} zones, {len(objs) - veg_n} gameplay+pickups "
-            f"({len(drop)} dup guards removed), {veg_n} vegetation objects"
+            f"({len(drop)} dup guards removed), {veg_n} vegetation objects, "
+            f"mines all-basics={'yes' if not ledger['missing'] else 'NO'} "
+            f"gold={ledger['gold']}/{max(0, ledger['towns'] - 1)} towns={ledger['towns']}"
             + (f" (G2 repair carved {ncarved} veg)" if ncarved else " (G2 clean)"))
     # player towns in zone-rank order; top up from surplus neutral towns if a forced
     # placement failed (rare: no legal anchor in the zone)

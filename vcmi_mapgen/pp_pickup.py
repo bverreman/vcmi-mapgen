@@ -25,9 +25,12 @@ import ontology as ON           # noqa: E402
 import pp_gameplay as PG        # noqa: E402
 import zone_field as ZF         # noqa: E402
 
-CAPS = {"RESOURCE_PILE": 16, "REWARD_PICKUP": 8, "GUARD": 9}
+CAPS = {"RESOURCE_PILE": 16, "REWARD_PICKUP": 8, "GUARD": 9}   # base floors; caps scale
 POCKET_DWEB = 3                 # a pocket starts this many open-BFS steps off the web
 POCKET_OPEN = 12                # ... and is at most this open in its 5x5 window (a nook)
+SCATTER_ART_SHARE = 0.15        # unguarded scatter: mostly LOOT (chests/campfires); the
+                                # tiered random artifacts live behind cache guards instead
+LOOT_FLOOR_AREA = 300           # a real zone always yields a couple of unguarded loots
 
 
 def _web_dist(open_set, prot):
@@ -45,12 +48,15 @@ def _web_dist(open_set, prot):
     return d
 
 
-def _pick(pool, purpose, st_t, rng, allow_random=True):
+def _pick(pool, purpose, st_t, rng, allow_random=True, art_share=0.45):
     """Identity for a pickup. The H3 convention (user-mandated): favour the editor's RANDOM
-    classes — random resource, tiered random artifacts — over fixed ones."""
+    classes — random resource, tiered random artifacts — over fixed ones. `art_share` is
+    the random-artifact probability for REWARD_PICKUP: high for guarded caches, low for
+    unguarded scatter (which draws the fixed LOOT pool — treasure chests, campfires —
+    weighted by the corpus mix, where the chest dominates)."""
     if allow_random and purpose == "RESOURCE_PILE" and rng.random() < 0.6:
         return ON.identity_of(PG.RND_RES)
-    if allow_random and purpose == "REWARD_PICKUP" and rng.random() < 0.45:
+    if allow_random and purpose == "REWARD_PICKUP" and rng.random() < art_share:
         anim = rng.choices([a for a, w, v in PG.RND_ART],
                            weights=[w for a, w, v in PG.RND_ART], k=1)[0]
         return ON.identity_of(anim)
@@ -84,9 +90,13 @@ def place_pickups(ts, zones, zid, terrain, open_set, prot, seed=1):
         n = int(x) + (1 if rng.random() < x - int(x) else 0)
         return min(n, cap)
 
-    n_res = stoch(dens["RESOURCE_PILE"] * area, CAPS["RESOURCE_PILE"])
-    n_art = stoch(dens["REWARD_PICKUP"] * area, CAPS["REWARD_PICKUP"])
-    n_mon = stoch(dens["GUARD"] * area, CAPS["GUARD"])
+    n_res = stoch(dens["RESOURCE_PILE"] * area, PG.scaled_cap(CAPS["RESOURCE_PILE"],
+                                                              dens["RESOURCE_PILE"] * area))
+    n_art = stoch(dens["REWARD_PICKUP"] * area, PG.scaled_cap(CAPS["REWARD_PICKUP"],
+                                                              dens["REWARD_PICKUP"] * area))
+    n_mon = stoch(dens["GUARD"] * area, PG.scaled_cap(CAPS["GUARD"], dens["GUARD"] * area))
+    if area >= LOOT_FLOOR_AREA:                      # a real zone always holds some loot
+        n_art = max(n_art, 2)
     if not (n_res or n_art or n_mon):
         return []
 
@@ -94,7 +104,9 @@ def place_pickups(ts, zones, zid, terrain, open_set, prot, seed=1):
     reach = set(dweb)                                # reachable open tiles only
     op = PG.openness(open_set)
     ed = ZF.edge_dist(ts)
-    gd = PG.gate_dist(ts, ZF._zone_gates(ts, zones, zid))
+    bands = ZF._zone_gate_bands(ts, zones, zid,
+                                open_frac=st.get("border_open_frac", 0.5))
+    gd = PG.gate_dist(ts, set().union(*(b for _r, b in bands)) if bands else set())
 
     pool_res = ON.gameplay_pool(terrain, "RESOURCE_PILE")
     pool_art = ON.gameplay_pool(terrain, "REWARD_PICKUP")
@@ -102,8 +114,8 @@ def place_pickups(ts, zones, zid, terrain, open_set, prot, seed=1):
 
     objs, used = [], set()
 
-    def put(purpose, pool, x, y, ident=None):
-        ident = ident or _pick(pool, purpose, st, rng)
+    def put(purpose, pool, x, y, ident=None, art_share=0.45):
+        ident = ident or _pick(pool, purpose, st, rng, art_share=art_share)
         if ident is None:
             return False
         cells = _legal(ident, x, y, reach, used)
@@ -154,6 +166,8 @@ def place_pickups(ts, zones, zid, terrain, open_set, prot, seed=1):
                 n_mon -= 1
 
     # ---- unguarded scatter (intensity-weighted, near routes) ------------------------------
+    # rewards here are LOOT (treasure chests, campfires — the corpus mix), not artifacts:
+    # the tiered random artifacts sit behind the cache guards above
     def scatter(purpose, pool, n, min_sep, allow_web, off_web=False):
         if n <= 0:
             return
@@ -170,7 +184,7 @@ def place_pickups(ts, zones, zid, terrain, open_set, prot, seed=1):
                 continue
             ident = (PG.rnd_monster(rng.choices((1, 2, 3, 4), (30, 30, 25, 15))[0])
                      if purpose == "GUARD" else None)     # roamers are weak-mid random monsters
-            if put(purpose, pool, t[0], t[1], ident=ident):
+            if put(purpose, pool, t[0], t[1], ident=ident, art_share=SCATTER_ART_SHARE):
                 placed.append(t)
 
     scatter("RESOURCE_PILE", pool_res, n_res, min_sep=3, allow_web=True)

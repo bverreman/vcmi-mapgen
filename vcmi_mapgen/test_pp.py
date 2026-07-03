@@ -301,6 +301,153 @@ def test_playability_overlay():
         "each player town must be owned by its player"
 
 
+def test_zone_gate_bands_wide_and_protected():
+    """Zone gates are corpus-wide BANDS of the contact front, and the protected web keeps
+    the whole band vegetation-free — borders must never collapse to a 1-tile corridor."""
+    import zone_field as ZF
+    # two 12x10 zones side by side: the contact front is the full 10-tile column
+    ts1 = {(x, y) for x in range(12) for y in range(10)}
+    ts2 = {(x, y) for x in range(12, 24) for y in range(10)}
+    zones = {1: {"tiles_set": sorted(ts1), "centroid": (5.5, 4.5), "area": 120,
+                 "terrain_type": 2},
+             2: {"tiles_set": sorted(ts2), "centroid": (17.5, 4.5), "area": 120,
+                 "terrain_type": 3}}
+    bands = ZF._zone_gate_bands(ts1, zones, 1, open_frac=0.5)
+    fronts = [(rep, band) for rep, band in bands if all(t[0] == 11 for t in band)]
+    assert fronts, "zone 1 must have a band on its contact front with zone 2"
+    rep, band = fronts[0]
+    assert len(band) >= 5, f"open_frac=0.5 of a 10-tile front is 5 tiles, got {len(band)}"
+    assert rep in band and all(t in ts1 for t in band)
+    # a tiny open_frac still keeps the minimum width
+    bands_min = ZF._zone_gate_bands(ts1, zones, 1, open_frac=0.01)
+    _rep, band_min = [(r, b) for r, b in bands_min if all(t[0] == 11 for t in b)][0]
+    assert len(band_min) >= 3, "bands never collapse below min_w"
+    # determinism
+    assert ZF._zone_gate_bands(ts1, zones, 1, open_frac=0.5) == bands
+
+
+@needs_stats
+def test_protected_web_covers_gate_bands():
+    import pp_sample as PP
+    import zone_field as ZF
+    ts1 = {(x, y) for x in range(14) for y in range(12)}
+    ts2 = {(x, y) for x in range(14, 28) for y in range(12)}
+    zones = {1: {"tiles_set": sorted(ts1), "centroid": (6.5, 5.5), "area": 168,
+                 "terrain_type": 2},
+             2: {"tiles_set": sorted(ts2), "centroid": (20.5, 5.5), "area": 168,
+                 "terrain_type": 3}}
+    edist = ZF.edge_dist(ts1)
+    prot = PP.protected_web(ts1, zones, 1, edist, (6, 5), open_frac=0.5)
+    for rep, band in ZF._zone_gate_bands(ts1, zones, 1, open_frac=0.5):
+        assert band <= prot, "every gate-band tile must be protected from vegetation"
+
+
+@needs_stats
+def test_town_zone_gets_wood_and_ore_next_to_town():
+    """A zone with a town ALWAYS holds a sawmill + ore pit, anchored near the town."""
+    import pp_gameplay as PG
+    if not os.path.exists(PG.STATS_PATH):
+        pytest.skip("gameplay stats not mined")
+    ts = {(x, y) for x in range(30) for y in range(24)}
+    zones = {1: {"tiles_set": sorted(ts), "centroid": (14.5, 11.5), "area": len(ts),
+                 "terrain_type": 2}}
+    for seed in (1, 4, 9):
+        objs, *_ = PG.place_zone(ts, zones, 1, "grass", seed=seed, force_town=True)
+        towns = [o for o in objs if o["purpose"] == "TOWN"]
+        assert towns, f"seed {seed}: forced town missing"
+        subs = {o["subtype"] for o in objs if o["purpose"] == "MINE"}
+        assert {"sawmill", "orePit"} <= subs, f"seed {seed}: economy pair missing ({subs})"
+        t = towns[0]
+        for m in (o for o in objs if o["purpose"] == "MINE"
+                  and o["subtype"] in ("sawmill", "orePit")):
+            d = max(abs(m["x"] - t["x"]), abs(m["y"] - t["y"]))
+            assert d <= 12, f"seed {seed}: {m['subtype']} is {d} tiles from the town"
+
+
+@needs_stats
+def test_mine_ledger_covers_basics_and_rations_gold():
+    """The map-level ledger drives zones to cover all six basic resources and blocks gold
+    mines until the map holds several towns."""
+    import pp_gameplay as PG
+    if not os.path.exists(PG.STATS_PATH):
+        pytest.skip("gameplay stats not mined")
+    ts = {(x, y) for x in range(40) for y in range(30)}
+    zones = {1: {"tiles_set": sorted(ts), "centroid": (19.5, 14.5), "area": len(ts),
+                 "terrain_type": 2}}
+    # gold is rationed to towns - 1 (a zone may roll a neutral town of its own, which
+    # legitimately raises the quota — the INVARIANT is what must hold)
+    for seed in range(1, 8):
+        ledger = {"missing": set(PG.BASIC_MINE_RES), "towns": 1, "gold": 0}
+        objs, *_ = PG.place_zone(ts, zones, 1, "grass", seed=seed, ledger=ledger)
+        n_gold = sum(1 for o in objs
+                     if o["purpose"] == "MINE" and o["subtype"] == "goldMine")
+        assert n_gold == ledger["gold"] <= max(0, ledger["towns"] - 1), \
+            f"seed {seed}: gold {n_gold} exceeds quota (towns={ledger['towns']})"
+    # missing basics are drawn FIRST: a fresh ledger shrinks by every mine the zone placed
+    ledger = {"missing": set(PG.BASIC_MINE_RES), "towns": 1, "gold": 0}
+    objs, *_ = PG.place_zone(ts, zones, 1, "grass", seed=3, ledger=ledger)
+    n_mines = sum(1 for o in objs if o["purpose"] == "MINE")
+    assert len(ledger["missing"]) <= max(0, len(PG.BASIC_MINE_RES) - n_mines), \
+        "every placed mine must come from the missing set while it is non-empty"
+
+
+@needs_stats
+def test_banks_placed_on_land_and_legal():
+    """Creature banks (utopias, conservatories, crypts...) place on land like visitables:
+    full footprint in-zone, approach standable, no extra approach guard."""
+    import pp_gameplay as PG
+    if not os.path.exists(PG.STATS_PATH):
+        pytest.skip("gameplay stats not mined")
+    ts = {(x, y) for x in range(45) for y in range(40)}
+    zones = {1: {"tiles_set": sorted(ts), "centroid": (22.0, 19.5), "area": len(ts),
+                 "terrain_type": 2}}
+    banks = []
+    for seed in range(1, 12):
+        objs, occupied, blocked, approaches = PG.place_zone(ts, zones, 1, "grass",
+                                                            seed=seed)
+        banks += [o for o in objs if o["purpose"] == "BANK"]
+    assert banks, "a 1800-tile grass zone must produce banks across a dozen seeds"
+    for b in banks:
+        allc, blk, approach = PG._cells({"mask": b["template"]["mask"]}, b["x"], b["y"])
+        assert approach is not None and all(c in ts for c in allc)
+
+
+@needs_stats
+def test_scatter_rewards_are_mostly_loot():
+    """Unguarded reward scatter favours the fixed LOOT pool (treasure chests dominate the
+    corpus mix) over random artifacts, and a real zone always yields some loot."""
+    import pp_gameplay as PG
+    import pp_pickup as PK
+    if not os.path.exists(PG.STATS_PATH):
+        pytest.skip("gameplay stats not mined")
+    ts = {(x, y) for x in range(30) for y in range(24)}
+    zones = {1: {"tiles_set": sorted(ts), "centroid": (14.5, 11.5), "area": len(ts),
+                 "terrain_type": 2}}
+    prot = {(x, 12) for x in range(30)} | {(15, y) for y in range(24)}
+    rewards = []
+    for seed in range(1, 10):
+        objs = PK.place_pickups(ts, zones, 1, "grass", set(ts), prot, seed=seed)
+        rewards += [o for o in objs if o["purpose"] == "REWARD_PICKUP"]
+    assert rewards, "a 720-tile zone (>= LOOT_FLOOR_AREA) must yield reward pickups"
+    loot = [o for o in rewards if "random" not in str(o["type"]).lower()]
+    assert any(o["type"] == "treasureChest" for o in loot), \
+        "treasure chests must appear as unguarded loot"
+    assert len(loot) >= len(rewards) * 0.5, \
+        f"scatter must be mostly fixed loot, got {len(loot)}/{len(rewards)}"
+
+
+@needs_stats
+def test_audit_variety_green():
+    """Every corpus (purpose, animation) on land must be reachable through the generator
+    (identity via the ontology, placement via a pool) — the acceptance check for corpus
+    visitable variety."""
+    import pp_gameplay as PG
+    if not os.path.exists(PG.STATS_PATH):
+        pytest.skip("gameplay stats not mined")
+    gaps = PG.audit_variety()
+    assert gaps == [], f"variety gaps: {gaps}"
+
+
 def test_macro_generate_deterministic_and_coarse():
     import macro_topo as MT
     g1 = MT.generate(48, 48, seed=1)

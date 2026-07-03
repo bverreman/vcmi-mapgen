@@ -97,17 +97,22 @@ def build_model(terrain):
             "target": st["veg_blocked_frac"], "runs": st["runs"]}
 
 
-def protected_web(ts, zones, zid, edist, seedt, spacing=SPACING, extra_nodes=(), avoid=frozenset()):
-    """The PROTECTED walkable set: spanning backbone over farthest-point nodes + rim gates
-    (constructive global connectivity, reusing zone_field's helpers — spec §5).
+def protected_web(ts, zones, zid, edist, seedt, spacing=SPACING, extra_nodes=(),
+                  avoid=frozenset(), open_frac=0.5):
+    """The PROTECTED walkable set: spanning backbone over farthest-point nodes + rim gate
+    BANDS (constructive global connectivity, reusing zone_field's helpers — spec §5).
 
-    `extra_nodes` are mandatory destinations (gameplay approach tiles — every placed object
-    stays reachable); `avoid` tiles (gameplay footprints) are impassable, so corridors route
-    AROUND towns/mines instead of through them."""
+    Gates are corpus-wide bands of the zone-contact front (`open_frac` = the mined fraction
+    of corpus zone-border tiles left passable): the whole band is protected, so vegetation
+    can never wall a border down to a 1-tile corridor — generated borders stay as open as
+    real corpus borders. `extra_nodes` are mandatory destinations (gameplay approach tiles —
+    every placed object stays reachable); `avoid` tiles (gameplay footprints) are
+    impassable, so corridors route AROUND towns/mines instead of through them."""
     ts_free = ts - set(avoid)
     if seedt not in ts_free:
         seedt = min(ts_free, key=lambda t: (t[0] - seedt[0]) ** 2 + (t[1] - seedt[1]) ** 2)
-    gates = ZF._zone_gates(ts, zones, zid)
+    gate_bands = ZF._zone_gate_bands(ts, zones, zid, open_frac=open_frac)
+    gates = [r for r, _b in gate_bands]
     interior = [t for t in ts_free if edist.get(t, 0) >= 2] or list(ts_free)
     nodes = ZF._farthest_points(ts_free, seedt, spacing, cand=interior)
     for g in list(gates) + [n for n in extra_nodes if n in ts_free]:
@@ -128,15 +133,23 @@ def protected_web(ts, zones, zid, edist, seedt, spacing=SPACING, extra_nodes=(),
         prot.update(path)
         connected.append(best_r)
         remaining.remove(best_r)
+    for _r, band in gate_bands:                      # the whole passage stays open
+        prot.update(t for t in band if t in ts_free)
     return prot - set(avoid)
 
 
+ATTRACT = 0.7                   # log-intensity bonus on `attract` tiles (mine surroundings)
+
+
 def sample_zone(ts, zones, zid, model, seed=1, steps_per_tile=STEPS_PER_TILE, prot=None,
-                forbid=frozenset()):
+                forbid=frozenset(), attract=frozenset()):
     """Birth/death MH over decoration configurations in one zone. Returns
     (objects, blocked_set, prot) with objects = [{x, y, l, template:{animation, mask}}].
     `forbid` tiles (gameplay footprints + approach tiles) admit NO vegetation at all —
-    neither an anchor nor any footprint cell (decor must not bury gameplay, per the repo rule)."""
+    neither an anchor nor any footprint cell (decor must not bury gameplay, per the repo rule).
+    `attract` tiles carry a +ATTRACT log-intensity bonus — used for the annulus around MINE
+    footprints so sawmills nestle in forest and gem ponds in growth (approaches and the
+    protected web stay hard zeros, so attraction never costs reachability)."""
     import numpy as np
     import random
     A = len(model["cats"])
@@ -192,6 +205,11 @@ def sample_zone(ts, zones, zid, model, seed=1, steps_per_tile=STEPS_PER_TILE, pr
         G = (G - v.mean()) / max(v.std(), 1e-6)
         M = np.exp(sigma * G - 0.5 * sigma * sigma)
 
+    att = np.zeros((H, W))                           # mine-surround attraction log-bonus
+    for (x, y) in attract:
+        if 0 <= x - x0 < W and 0 <= y - y0 < H:
+            att[y - y0, x - x0] = ATTRACT
+
     # padded per-category anchor-count grid (padding = no bounds checks on the window)
     C = np.zeros((A, H + 2 * RINT, W + 2 * RINT), dtype=np.int16)
     blkcnt = np.zeros((H, W), dtype=np.int32)        # blocking multiplicity per tile
@@ -246,7 +264,7 @@ def sample_zone(ts, zones, zid, model, seed=1, steps_per_tile=STEPS_PER_TILE, pr
             cells = blocked_cells(c, ii, x, y)
             if cells is None:
                 continue
-            lam_star = (math.exp(alpha + alpha_c[c] + energy(c, x, y))
+            lam_star = (math.exp(alpha + alpha_c[c] + att[y - y0, x - x0] + energy(c, x, y))
                         * L[c, eb[y - y0, x - x0]] * M[y - y0, x - x0])
             acc = lam_star * Nt / ((len(objs) + 1) * qc[c])
             if rng.random() < acc:
@@ -263,7 +281,8 @@ def sample_zone(ts, zones, zid, model, seed=1, steps_per_tile=STEPS_PER_TILE, pr
                 continue
             j = rng.randrange(n)
             x, y, c, ii = objs[j]
-            lam_star = (math.exp(alpha + alpha_c[c] + energy(c, x, y, self_present=True))
+            lam_star = (math.exp(alpha + alpha_c[c] + att[y - y0, x - x0]
+                                 + energy(c, x, y, self_present=True))
                         * L[c, eb[y - y0, x - x0]] * M[y - y0, x - x0])
             acc = (n * qc[c]) / max(lam_star * Nt, 1e-300)
             if rng.random() < acc:

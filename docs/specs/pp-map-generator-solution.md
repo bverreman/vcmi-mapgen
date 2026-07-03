@@ -1,15 +1,19 @@
 # The PP map generator — full solution reference
 
-**Status:** implemented and working end-to-end (2026-07).
+**Status:** implemented and working end-to-end (2026-07); v5 change set applied 2026-07-03.
 **Scope:** this document describes the complete marked-point-process ("pp") map generator —
 every layer, every constant, and the reasoning behind each design decision. The companion
 design/roadmap spec is [marked-point-process-generation.md](marked-point-process-generation.md);
-this file is the *as-built* reference.
+this file is the *as-built* reference. The v5 change set (gate bands, map-level mine
+economy, area-scaled counts, land banks, loot scatter, variety audit) is recorded in
+detail — what changed, how, and the measured results — in
+[pp-generator-v5-changes.md](pp-generator-v5-changes.md).
 
 **One-command demo:**
 
 ```bash
 uv run python -m vcmi_mapgen.pp_map --seed 7 --size 72 --vmap --players 4 --teams 2v2
+uv run python -m vcmi_mapgen.pp_map --seed 7 --size 144 --vmap --players 4 --teams 2v2
 uv run python -m vcmi_mapgen.pp_map --seed 40 --batch 9 --players 2 --install   # 9 maps → editor
 uv run python -m vcmi_mapgen.zone_engine generate --layout pp --seed 7          # same pipeline
 ```
@@ -35,7 +39,7 @@ A playable Heroes 3 / VCMI map from a single integer seed:
 - **outputs**: an editor-quality PNG render (real 32 px H3 sprites) and an editor-valid
   `.vmap` (optionally installed into the VCMI editor's Maps folder).
 
-Everything is deterministic in the seed and verified by 29 tests (`uv run pytest`).
+Everything is deterministic in the seed and verified by 36 tests (`uv run pytest`).
 
 ---
 
@@ -51,10 +55,12 @@ Everything is deterministic in the seed and verified by 29 tests (`uv run pytest
 
 2. **Fit models where the corpus has signal; use explicit rules where it doesn't.**
    Placement intensities and vegetation interactions are *fitted* (counting estimators —
-   closed-form, no optimizer, deterministic). But e.g. "monsters guard narrow corridors"
+   closed-form, no optimizer, deterministic). But e.g. "monsters guard zone passages"
    is a *rule*: the corpus gate-distance histogram for guards is nearly flat because corpus
-   zone "gates" are wide terrain borders, not the narrow corridors our generator produces.
-   Fitting would have silently ignored the convention; a rule implements it directly.
+   zone "gates" are wide terrain borders. Since v5 the generator reproduces exactly that
+   topology — gates are corpus-wide open BANDS of the contact front (§7.1), not 1-tile
+   corridors — and the passage-guard convention stays a rule asserted at each band's
+   centre.
 
 3. **Hard guarantees are constructed, not hoped for.**
    Reachability is guaranteed by construction (a protected walkable web that vegetation
@@ -80,7 +86,7 @@ Everything is deterministic in the seed and verified by 29 tests (`uv run pytest
                                                         │
               ┌──────────────── corpus mining (cached in data/pp/) ────────────────┐
               │  macro_stats.json      veg_<terrain>.json      gameplay_stats.json │
-              │  (macro_topo.mine)     (pp_stats.mine)         (pp_gameplay v4)    │
+              │  (macro_topo.mine)     (pp_stats.mine)         (pp_gameplay v5)    │
               └────────────────────────────────────────────────────────────────────┘
                                                         │
  seed ──▶ L0  macro_topo.generate      zones, water mask, textured borders
@@ -90,7 +96,7 @@ Everything is deterministic in the seed and verified by 29 tests (`uv run pytest
              │
           per land zone:
  L3          pp_gameplay.place_zone    towns/mines/dwellings/visitables + guards + shipyard
-             pp_sample.protected_web   walkable backbone + gates + every approach tile
+             pp_sample.protected_web   walkable backbone + gate BANDS + every approach tile
  L2          pp_sample.sample_zone     Gibbs marked point process vegetation
  L4          pp_pickup.place_pickups   resources/artifacts/caches/roaming guards
           per water body:
@@ -114,7 +120,7 @@ Everything is deterministic in the seed and verified by 29 tests (`uv run pytest
 | `pp_gameplay.py` | L3 gameplay stats mining + placement + guards + shipyards |
 | `pp_pickup.py` | L4 pickups, guarded caches, water-body population |
 | `pp_map.py` | orchestration, G2 gate, export, playability overlay, CLI |
-| `test_pp.py` | 13 tests: legality, determinism, G2, export, playability, selection |
+| `test_pp.py` | 20 tests: legality, determinism, G2, export, playability, selection, gate bands, mine economy, banks, loot, variety audit |
 
 Shared infrastructure (pre-existing, reused): `zone_engine.py` (autotiling, segmentation,
 `generate --layout pp` CLI), `zone_field.py` (`edge_dist`, `_zone_gates`,
@@ -179,9 +185,13 @@ mining, §6.3).
 One pass over the corpus, per land terrain (zones ≥ `MIN_AREA_STATS=60`):
 
 - per-purpose **counts** and **animation frequencies** (density and mix);
+- **border open fraction** (v5): the share of a zone's contact-front tiles (tiles
+  4-touching another zone) not covered by any blocking footprint — measured ≈ 0.39–0.54
+  per terrain. This is the statistic that sizes the generated **gate bands** (§7.1);
 - per-purpose **covariate histograms** — counts by:
   - edge-distance bin (`EB=6`, BFS distance to the zone rim),
-  - gate-distance bin (`GB=4`, `min(d//3, 3)` from the zone's gates),
+  - gate-distance bin (`GB=4`, `min(d//3, 3)` — since v5 measured from the **full contact
+    front**, matching the generator's wide bands),
   - openness bin (`OB=4`, `min(n//7, 3)` where n = open tiles in the 5×5 window of the
     veg-only open field) — used for pickups only;
 - **tiles per bin** (the exposure normalizers — without them the histogram just reflects
@@ -193,8 +203,8 @@ One pass over the corpus, per land terrain (zones ≥ `MIN_AREA_STATS=60`):
 - a **water pass** (see §11): purpose densities over raw water tiles per map, because
   water zones don't exist in segmentation.
 
-The stats file is versioned (`STATS_VERSION=4`); a version mismatch triggers a re-mine.
-**Why a version field:** the mining schema evolved four times; silent reuse of a stale
+The stats file is versioned (`STATS_VERSION=5`); a version mismatch triggers a re-mine.
+**Why a version field:** the mining schema evolved five times; silent reuse of a stale
 cache produced confusing "missing key" failures until versioning made staleness explicit.
 
 ### 6.2 The intensity fit (where objects *go*)
@@ -218,12 +228,17 @@ around each failed candidate. Sampling (not argmax) keeps variety across seeds.
 
 ### 6.3 Counts
 
-Per purpose: `stoch(density × area, cap)` — stochastic rounding of the corpus expectation
-with soft caps (`TOWN 1, MINE 8, DWELLING 6, VISIT 12`) that only guard against
-pathological zones. A town additionally requires `area ≥ TOWN_MIN_AREA=150` (unless
-forced — §13). **Why stochastic rounding:** deterministic rounding would give every
-300-tile grass zone the identical object count; the Bernoulli fraction keeps the corpus
-mean while varying per zone/seed.
+Per purpose: `stoch(density × area, scaled_cap)` — stochastic rounding of the corpus
+expectation with **area-scaled** soft caps: `scaled_cap(base, x) = max(base,
+ceil(1.5 · x))` with bases `TOWN 1, MINE 8, DWELLING 6, VISIT 12, BANK 4`. The corpus
+expectation `density × area` is the real driver; the cap only stops outliers.
+**Why area-scaled (v5):** the old fixed caps clamped every large zone to the same ~27
+objects — a 5,000-tile zone on a 144×144 map got no more than a 600-tile one, leaving big
+maps visibly empty. A town additionally requires `area ≥ TOWN_MIN_AREA=150` (unless
+forced — §13), and a zone **with a town always gets `n_mine ≥ 2`** (its economy pair,
+§6.5). **Why stochastic rounding:** deterministic rounding would give every 300-tile
+grass zone the identical object count; the Bernoulli fraction keeps the corpus mean while
+varying per zone/seed.
 
 ### 6.4 Identity selection — the RANDOM-class convention
 
@@ -256,13 +271,44 @@ noticed they *never* appeared. Damping + no-repeat gives them a real chance whil
 common objects common. `VISIT_PURPOSES` covers STAT_PERMANENT, SPELL_SKILL, BONUS_TEMP,
 MANA and INFO (witch huts, observatories, huts of the magi).
 
+**Creature banks on land (v5).** `BANK` (Dragon Utopia, the seven creature banks, Crypt,
+Pyramid — 1,285 land occurrences in the corpus) is placed like a visitable with its own
+corpus density (~1–3 per 1000 tiles per terrain) and intensity fit, identities from
+`gameplay_pool(terrain, "BANK")` with the same damping. Banks get **no approach guard** —
+the bank IS the fight. Before v5 `BANK` was only reachable on water (shipwrecks), so
+utopias/conservatories/crypts never appeared on generated land.
+
+**Variety audit.** `python -m vcmi_mapgen.pp_gameplay --audit` (and the matching test)
+verifies every corpus (purpose, animation) on land resolves through the ontology and is
+reachable through a generator pool — whitelisting TRANSPORT (relational) and GUARD
+(random monsters by design), and mapping the fort-less town sprite variants to their
+canonical `..x0` ontology towns. The audit is green.
+
 ### 6.5 The mine economy
 
 A zone with ≥ 2 mines is guaranteed a **sawmill + ore pit** first (the H3 economy
-convention), then further mines are drawn over **distinct** resource types without
-replacement, weighted by corpus frequency. **Why distinct:** corpus zones essentially
-never hold three sawmills; without the constraint frequency weighting produced exactly
-that.
+convention); a zone with a **town** always has ≥ 2 mines, and its sawmill + ore pit are
+anchored by an exhaustive nearest-first scan **around the town** (typically Chebyshev
+4–7) — every start economy is next to its town. Further mines are drawn over **distinct**
+resource types without replacement, weighted by corpus frequency. **Why distinct:**
+corpus zones essentially never hold three sawmills; without the constraint frequency
+weighting produced exactly that.
+
+**Map-level coverage (v5).** `pp_map.build` threads a shared `ledger` through the zones
+(sorted-zid order, deterministic): while any of the six basic resources (wood, ore,
+mercury, sulfur, crystal, gems — `BASIC_MINE_RES`) is missing map-wide, zones draw their
+next mine type from the **missing** set first — so every map covers all six minerals.
+**Gold is the deliberate exception**: a gold mine may only be drawn while
+`gold_placed < towns − 1` (player towns pre-counted, neutral towns added as zones roll
+them) — gold mines pay off only on multi-town maps. Both abandoned-mine variants are
+excluded from the rotation. The build log prints `mines all-basics=yes gold=G/quota`.
+
+**Mines sit in vegetation.** Mines are placed before vegetation (L3 before L2), so
+instead of moving mines to the greenery, the vegetation is attracted to the mines: the
+Gibbs sampler applies a `+ATTRACT=0.7` log-intensity bonus in a Chebyshev-3 annulus
+around every MINE footprint (`attract` tiles; approaches and the protected web stay hard
+zeros). Sawmills end up nestled in forest, gem ponds in growth — the H3 look — without
+any reachability cost.
 
 ### 6.6 Hard placement rules
 
@@ -287,13 +333,13 @@ passable-visitable `['A']` masks, purpose `GUARD` — which the G2 gate treats a
   25 % chance). **Why on the approach:** in H3 you must fight the guard to flag the mine;
   the approach tile is exactly that chokepoint, and being a removable GUARD it never
   breaks reachability.
-- **Gate guards**: each zone gate (`zone_field._zone_gates` returns one representative
-  tile per neighbouring zone — precisely the narrow corridor) is guarded with
+- **Gate guards**: each zone gate **band** (§7.1) is guarded at its centre tile with
   probability 0.65, level `min(7, 1 + area//250 (+1 with 40 % chance))` — bigger, richer
-  zones defend harder. **Why a rule, not a fit:** measured per-tile guard rates by
-  corpus gate distance are flat (9.9/13.4/12.2/11.6 per 1000 tiles) because corpus zone
-  borders are wide; the "guard the corridor" convention only exists relative to *our*
-  generated topology, so it is asserted directly.
+  zones defend harder. One guard per passage, standing in the open border like real maps
+  (a single monster cannot cork a corpus-wide band, and being a removable GUARD it never
+  breaks reachability). **Why a rule, not a fit:** measured per-tile guard rates by
+  corpus gate distance are flat (9.9/13.4/12.2/11.6 per 1000 tiles) — corpus borders are
+  wide and guards stand *near* them, not in choke points; the rule asserts exactly that.
 - **Corridor dedupe** (in `pp_map.build`): both zones flanking one corridor may guard the
   same passage; any two GUARDs within Chebyshev 2 keep only the stronger
   (`randomMonsterLevelN` compares lexically for N=1..7). Removed 16–19 duplicates per
@@ -314,17 +360,36 @@ game graph.
 
 ## 7. The protected web (`pp_sample.protected_web`)
 
+### 7.1 Gate bands — corpus-wide zone borders (v5)
+
+Corpus zone "gates" are **wide terrain borders**, not corridors. The generator used to
+collapse each border to a single representative tile (`zone_field._zone_gates`) and let
+vegetation wall the rest — producing 1-tile passages the corpus never has.
+
+`zone_field._zone_gate_bands(ts, zones, zid, open_frac)` returns, per neighbouring zone,
+`(rep, band)`: the representative tile plus a **band** of the full contact front around
+it — `max(3, round(open_frac × front_len))` tiles, where `open_frac` is the corpus
+**border open fraction** mined per terrain (≈ 0.39–0.54; §6.1). The whole band is added
+to the protected set, so vegetation may never seal it: generated borders measure ≈ 0.6–0.7
+open (the band is a guaranteed floor; the Gibbs process leaves extra front open on its
+own). Isolated pockets still get the synthesized antipodal pair. Gate-distance covariates
+(mining and generation alike) measure from the full front/band, keeping the fitted
+intensities consistent with the new topology.
+
+### 7.2 The web
+
 The constructive reachability skeleton, built **after** gameplay and **before**
 vegetation:
 
 - nodes = farthest-point samples over the zone interior (spacing `ZF.SPACING`) + every
-  zone gate + **every gameplay approach tile** (`extra_nodes`);
+  gate-band representative + **every gameplay approach tile** (`extra_nodes`);
 - edges = geodesic paths connecting each remaining node to the nearest connected node
   (a spanning tree — no cycles needed for the guarantee);
+- every gate-band tile is protected (the wide border stays open);
 - gameplay footprints (`avoid`) are impassable, so corridors route *around* towns.
 
 The resulting tile set `prot` is a **hard zero** for the vegetation sampler: no blocking
-cell may cover it. Combined with gates on both sides of every border, this makes every
+cell may cover it. Combined with bands on both sides of every border, this makes every
 gameplay object reachable from every neighbouring zone *by construction*.
 **Why farthest-point nodes:** uniform spacing covers the zone with minimal corridors,
 leaving maximal freedom to the vegetation process.
@@ -386,8 +451,9 @@ approach tiles). Everything else is the process's freedom.
 Runs over the **finished** open field (`zone − veg-blocked − gameplay − approaches`), so
 it sees the actual pockets and corridors the vegetation created.
 
-- **Counts** from the same v4 stats (`stoch(dens × area)`, caps RESOURCE 16 / REWARD 8 /
-  GUARD 9).
+- **Counts** from the same stats (`stoch(dens × area)`, area-scaled caps with base
+  floors RESOURCE 16 / REWARD 8 / GUARD 9 — §6.3); zones ≥ `LOOT_FLOOR_AREA=300` always
+  yield ≥ 2 reward pickups.
 - **Guarded caches in pockets.** Corpus guardedness (≈ 0.54 of piles, 0.59 of pickups)
   decides how many pickups are cache-bound. Pocket candidates are open tiles with
   web-distance `dweb ≥ POCKET_DWEB=3` and openness ≤ `POCKET_OPEN=12` (a genuine nook),
@@ -400,6 +466,11 @@ it sees the actual pockets and corridors the vegetation created.
 - **Unguarded scatter** near routes: intensity-weighted (edge + gate + openness
   covariates) draws with minimum separations (resources 3, rewards 5) — resources string
   along roadsides like in real maps because that is where the corpus puts them.
+  **Scatter rewards are LOOT (v5):** the random-artifact share drops to
+  `SCATTER_ART_SHARE=0.15` for unguarded draws, so scatter comes from the fixed
+  REWARD_PICKUP pool weighted by the corpus mix — which the **treasure chest** dominates
+  (9,071 of ~14.5k corpus reward pickups), with **campfires**, scholars and the rest
+  behind it. Tiered random artifacts live behind cache guards where they belong.
 - **Roaming guards**: off-web only (never on the protected corridors), separation 7,
   levels 1–4 weighted (30/30/25/15).
 
@@ -569,7 +640,7 @@ of 9 gives three visibly different map archetypes, three seeds each.
 
 ---
 
-## 17. Testing (`test_pp.py`, 13 tests; full suite 29)
+## 17. Testing (`test_pp.py`, 20 tests; full suite 36)
 
 | test | guards |
 |---|---|
@@ -585,6 +656,12 @@ of 9 gives three visibly different map archetypes, three seeds each.
 | playability overlay | exact N slots, mainTown wiring, teams, **town object owners**, standardWin only |
 | team parsing | ffa / NvN / explicit list / mismatch error |
 | macro determinism + big-zone share | L0 |
+| gate bands wide + deterministic, protected web covers bands | §7.1 — borders never collapse to 1-tile corridors |
+| town zone holds sawmill + ore pit near the town | §6.5 start economy |
+| mine ledger covers basics, gold ≤ towns − 1 | §6.5 map-level economy |
+| banks placed on land, legal footprints | §6.4 BANK placement |
+| scatter rewards mostly fixed loot (chests present) | §9 loot policy |
+| variety audit green | §6.4 corpus variety reachable |
 
 Renderer reliability (10 tests) and mapeval (6) round out the suite. LOD-dependent tests
 skip cleanly on machines without the H3 sprite files.
@@ -630,6 +707,22 @@ skip cleanly on machines without the H3 sprite files.
     prototypes, the GAN/patch-quilt vegetation stack and the zone-graph planner were
     deleted; `markov_terrain` (border texture), `zone_skeleton` (zone_field dependency),
     `render`, and `mapeval` (the planned M5 yardstick) were deliberately kept.
+17. **Gate bands replace 1-tile corridors** (v5, 2026-07) — corpus zone gates are wide
+    terrain borders; the generator now protects a corpus-open-fraction band of every
+    contact front (§7.1). Gate guards stand at band centres; gate-distance covariates
+    re-mined from full fronts (STATS_VERSION 5).
+18. **Area-scaled caps** (v5) — fixed per-zone caps left 144×144 maps mostly empty; the
+    corpus expectation `density × area` now drives counts, caps only stop outliers (§6.3).
+19. **BANK placed on land** (v5) — utopias/creature banks/crypts existed only on water;
+    now corpus-density land placement, no approach guard (§6.4).
+20. **Map-level mine economy** (v5) — a shared ledger guarantees all six basic resources
+    map-wide, rations gold to towns − 1, and anchors every town's sawmill + ore pit next
+    to the town; vegetation is attracted to mine surroundings (§6.5).
+21. **Scatter rewards are loot** (v5) — unguarded scatter draws chests/campfires (corpus
+    mix), random artifacts drop to a 15 % share outside caches (§9).
+22. **Variety audit** (v5) — `pp_gameplay --audit` proves every corpus (purpose, anim) is
+    generator-reachable; found and closed the BANK gap, documented the TRANSPORT/GUARD
+    exclusions and the fort-less town sprite variants (§6.4).
 
 ---
 
