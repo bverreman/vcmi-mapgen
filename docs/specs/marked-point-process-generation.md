@@ -2,7 +2,9 @@
 
 **Status:** Design specification — supersedes the lattice-MRF object model of
 `zone-field-mrf-generation.md` (whose field survives here as a *covariate surface*, not as
-the generative model).
+the generative model). The **as-built reference** documenting the implemented solution in
+full detail (every layer, constant and decision) is
+[pp-map-generator-solution.md](pp-map-generator-solution.md).
 **Applies to:** `vcmi_mapgen/` generation pipeline (`markov_terrain.py`, `mapgraph.py`,
 `zone_field.py`, `veg_*.py`, `zone_engine.py`).
 **Constraints honored:** `ontology.py` is the single source of truth for object identity /
