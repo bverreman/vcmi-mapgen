@@ -369,7 +369,11 @@ def place_zone(ts, zones, zid, terrain, seed=1, coastal=frozenset(), force_town=
 
     wanted = []                                       # (purpose, ident), placement order
     if n_town:
-        ident = (ON.identity_of(RND_TOWN) if rng.random() < RANDOM_SHARE
+        # PLAYER start towns are ALWAYS randomTown: VCMI resolves an owned random town to
+        # the faction the player picked in the lobby (CGTownInstance::randomizeFaction) —
+        # a concrete start town would silently override the player's choice. Neutral
+        # towns keep the corpus-conventional random/fixed split.
+        ident = (ON.identity_of(RND_TOWN) if force_town or rng.random() < RANDOM_SHARE
                  else pick(ON.gameplay_pool(terrain, "TOWN"), "TOWN"))
         if ident:
             wanted.append(("TOWN", ident))
@@ -378,8 +382,22 @@ def place_zone(ts, zones, zid, terrain, seed=1, coastal=frozenset(), force_town=
     # sawmills (corpus zones rarely duplicate a mine type). With a map `ledger`, globally
     # MISSING basic resources are drawn first (all six minerals covered map-wide) and gold
     # is rationed to towns - 1 (gold mines pay off only on multi-town maps).
-    mines = ON.mines_by_resource(terrain)
     mine_w = st["anim_w"].get("MINE", {})
+
+    def _mine_variants(ids):
+        """Terrain-faithful sprite variants: mine DEFs carry a baked-in terrain apron
+        (avmgogr0 grass vs avmgold0 dirt), so keep only the variants mapmakers actually
+        use on THIS terrain (>= 20% of the top variant's corpus weight — drops the rare
+        cross-terrain leakage that put dirt-apron mines on grass)."""
+        ws = {i["animation"].lower(): mine_w.get(i["animation"].lower(), 0) for i in ids}
+        top = max(ws.values(), default=0)
+        if top > 0:
+            keep = [i for i in ids if ws[i["animation"].lower()] >= 0.2 * top]
+            return keep or ids
+        return ids
+
+    mines = {res: _mine_variants(ids)
+             for res, ids in ON.mines_by_resource(terrain).items()}
     mine_idents, used_res = [], set()
     if n_mine >= 2:
         for res in ("sawmill", "orePit"):
@@ -450,10 +468,16 @@ def place_zone(ts, zones, zid, terrain, seed=1, coastal=frozenset(), force_town=
     near = set()                                     # occupied inflated by GAP (separation zone)
 
     def emit(purpose, ident, x, y):
-        objs.append({"x": x, "y": y, "l": 0, "purpose": purpose,
-                     "type": ident.get("type"), "subtype": ident.get("subtype"),
-                     "animation": ident["animation"], "mask": ident["mask"],
-                     "template": {"animation": ident["animation"], "mask": ident["mask"]}})
+        o = {"x": x, "y": y, "l": 0, "purpose": purpose,
+             "type": ident.get("type"), "subtype": ident.get("subtype"),
+             "animation": ident["animation"], "mask": ident["mask"],
+             "template": {"animation": ident["animation"], "mask": ident["mask"]}}
+        if purpose == "GUARD":       # absent => VCMI 'compliant' => every creature joins free
+            o["options"] = {"character": "hostile"}
+        elif purpose == "TOWN":      # H3 convention: towns open with a fort, a tavern and
+            o["options"] = {"buildings": {"allOf": [    # the level 1+2 creature dwellings
+                "core:fort", "core:tavern", "core:dwellingLvl1", "core:dwellingLvl2"]}}
+        objs.append(o)
 
     def settle(purpose, ident, fit, node):
         allc, blk, approach = fit
@@ -544,6 +568,17 @@ def place_zone(ts, zones, zid, terrain, seed=1, coastal=frozenset(), force_town=
         lvl = min(7, 1 + area // 250 + (1 if rng.random() < 0.4 else 0))
         emit("GUARD", rnd_monster(lvl), rep[0], rep[1])
         occupied.add(rep)
+
+    # tie the zone's RANDOM dwellings to its town: VCMI's `sameAsTown` link makes the
+    # dwelling resolve to the town's (lobby-picked) faction at game start, so the creatures
+    # around a random town are its own. Instance names are minted only at export, so the
+    # marker carries the town's coordinates; `faithful.to_vmap` swaps in the instanceName.
+    town = next((o for o in objs if o["purpose"] == "TOWN"), None)
+    if town is not None:
+        for o in objs:
+            if str(o.get("type", "")).startswith("randomDwelling"):
+                o.setdefault("options", {})["sameAsTown"] = \
+                    [town["x"], town["y"], town.get("l", 0)]
 
     return objs, occupied, blocked, approaches
 

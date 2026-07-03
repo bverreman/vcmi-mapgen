@@ -122,10 +122,13 @@ def place_pickups(ts, zones, zid, terrain, open_set, prot, seed=1):
         if cells is None:
             return False
         used.update(cells)
-        objs.append({"x": x, "y": y, "l": 0, "purpose": purpose,
-                     "type": ident.get("type"), "subtype": ident.get("subtype"),
-                     "animation": ident["animation"], "mask": ident["mask"],
-                     "template": {"animation": ident["animation"], "mask": ident["mask"]}})
+        o = {"x": x, "y": y, "l": 0, "purpose": purpose,
+             "type": ident.get("type"), "subtype": ident.get("subtype"),
+             "animation": ident["animation"], "mask": ident["mask"],
+             "template": {"animation": ident["animation"], "mask": ident["mask"]}}
+        if purpose == "GUARD":       # absent => VCMI 'compliant' => every creature joins free
+            o["options"] = {"character": "hostile"}
+        objs.append(o)
         return True
 
     # ---- guarded caches in pockets: guard STRENGTH tracks the cache VALUE -----------------
@@ -226,10 +229,12 @@ def place_water(ts, zones, zid, seed=1):
             if cells is None:
                 continue
             used.update(cells)
-            objs.append({"x": t[0], "y": t[1], "l": 0, "purpose": p,
-                         "type": ident.get("type"), "subtype": ident.get("subtype"),
-                         "animation": ident["animation"], "mask": ident["mask"],
-                         "template": {"animation": ident["animation"],
-                                      "mask": ident["mask"]}})
+            o = {"x": t[0], "y": t[1], "l": 0, "purpose": p,
+                 "type": ident.get("type"), "subtype": ident.get("subtype"),
+                 "animation": ident["animation"], "mask": ident["mask"],
+                 "template": {"animation": ident["animation"], "mask": ident["mask"]}}
+            if p == "GUARD":
+                o["options"] = {"character": "hostile"}
+            objs.append(o)
             placed.append(t)
     return objs

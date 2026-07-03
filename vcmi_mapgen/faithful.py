@@ -7,6 +7,7 @@ import json, re, glob, sys, os
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import vmapwrite
+import ontology
 
 TCODE = {
     0: "dt",
@@ -49,6 +50,39 @@ def visitable_from(mask):
     return ["+++", "+-+", "+++"]
 
 
+def vcmi_mask(mask):
+    """Translate an engine-internal mask to VCMI's template charset for .vmap export.
+
+    Our masks use 'X' for a blocked ENTRANCE cell (entered from below). VCMI's
+    ObjectTemplate parser only knows ' 0VBHAT' and logs "Unrecognized char X in template
+    mask", dropping the cell to FREE — which made every mine/town silently unvisitable
+    in-game (no VISITABLE cell survived). VCMI's 'A' = VISIBLE|BLOCKED|VISITABLE is the
+    exact semantic of our 'X' (and of our walk-on 'A' — monsters/pickups are
+    blocked-visitable in H3), so both map onto it."""
+    return [row.replace("X", "A") for row in mask]
+
+
+def _trim_v(mask):
+    """The mask minus its all-'V' border rows/columns — the footprint core two masks must
+    share to be the same object shape."""
+    rows = [i for i, r in enumerate(mask) if set(r) - {"V"}]
+    cols = [c for c in range(len(mask[0])) if any(row[c] != "V" for row in mask)]
+    if not rows or not cols:
+        return ["V"]
+    return [mask[i][min(cols):max(cols) + 1] for i in range(min(rows), max(rows) + 1)]
+
+
+def export_mask(o):
+    """The template mask written to the .vmap: the ontology's sprite-extent mask
+    (`vmap_mask_of` — VCMI draws an object only on mask-covered tiles, so the bbox-trimmed
+    internal mask truncates tall sprites in-game) when its footprint core agrees with the
+    instance mask; otherwise the instance mask translated to VCMI's charset (the editor
+    table and a map instance legitimately disagree for a handful of corpus dwellings)."""
+    inst = vcmi_mask(o["mask"])
+    vm = ontology.vmap_mask_of(o["animation"])
+    return vm if vm and _trim_v(vm) == _trim_v(inst) else inst
+
+
 def to_vmap(fm, out_path, name=None):
     """faithful map dict -> editor-valid .vmap via the proven writer."""
     levels = [[[tile_string(c) for c in row] for row in lvl] for lvl in fm["terrain"]]
@@ -58,21 +92,38 @@ def to_vmap(fm, out_path, name=None):
         if not o.get("type"):
             continue
         n += 1
-        tmpl = {"animation": o["animation"], "editorAnimation": "", "mask": o["mask"]}
-        vf = visitable_from(o["mask"])
+        tmpl = {"animation": o["animation"], "editorAnimation": "",
+                "mask": export_mask(o)}
+        vf = visitable_from(o["mask"])                # semantics from the INTERNAL mask
         if vf:
             tmpl["visitableFrom"] = vf
-        objs.append(
-            {
-                "instanceName": f"{o['type']}_{n}",
-                "l": o["l"],
-                "type": o["type"],
-                "subtype": o["subtype"],
-                "template": tmpl,
-                "x": o["x"],
-                "y": o["y"],
-            }
-        )
+        vo = {
+            "instanceName": f"{o['type']}_{n}",
+            "l": o["l"],
+            "type": o["type"],
+            "subtype": o["subtype"],
+            "template": tmpl,
+            "x": o["x"],
+            "y": o["y"],
+        }
+        if o.get("options"):                          # e.g. monster character, town fort
+            vo["options"] = dict(o["options"])
+        objs.append(vo)
+    # Resolve dwelling->town faction links: the generator marks `sameAsTown` with the
+    # town's [x, y, l] (instance names are minted only here); VCMI wants the town's
+    # instanceName. A marker whose town vanished is dropped (dwelling stays any-faction).
+    town_names = {(vo["x"], vo["y"], vo["l"]): vo["instanceName"]
+                  for vo in objs if vo["type"] in ("town", "randomTown")}
+    for vo in objs:
+        tag = (vo.get("options") or {}).get("sameAsTown")
+        if isinstance(tag, list):
+            name = town_names.get(tuple(tag))
+            if name:
+                vo["options"]["sameAsTown"] = name
+            else:
+                del vo["options"]["sameAsTown"]
+                if not vo["options"]:
+                    del vo["options"]
     header, _, _, _ = vmapwrite.read_raw(
         glob.glob("/home/gabriel/.var/app/eu.vcmi.VCMI/data/vcmi/Maps/RandomMaps/*.vmap")[0]
     )

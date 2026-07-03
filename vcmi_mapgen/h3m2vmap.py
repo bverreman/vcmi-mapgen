@@ -44,11 +44,15 @@ def build_mask(block_mask, visit_mask):
     # 6 rows x 8 cols. block bit 1=passable/0=blocked; visit bit 1=visitable. A cell carries TWO
     # independent bits -> four states: 'B' blocked, 'V' passable, 'A' passable+visitable (stand on),
     # 'X' blocked+visitable (a building's action tile -- visited from an adjacent tile).
+    # The mask is anchored bottom-right: bit b of row byte r is the tile at column b counted
+    # from the RIGHT edge (VCMI: usedTiles[5-i][7-j]). Reading bit (7-c) into column c mirrors
+    # every asymmetric footprint horizontally (the v5.2 sawmill-entrance bug) — bit c is the
+    # correct read for a left-to-right row. Kept in sync with ontology._decode_mask.
     grid = [["V"] * 8 for _ in range(6)]
     for r in range(6):
         for c in range(8):
-            blocked = not (block_mask[r] >> (7 - c)) & 1
-            visit = (visit_mask[r] >> (7 - c)) & 1
+            blocked = not (block_mask[r] >> c) & 1
+            visit = (visit_mask[r] >> c) & 1
             grid[r][c] = ("X" if blocked else "A") if visit else ("B" if blocked else "V")
     # In H3 EVERY visitable tile is also flagged blocked, so a lone pickup (resource/chest/monster)
     # looks identical to a building's gate. Distinguish by the solid BODY: only an object that has

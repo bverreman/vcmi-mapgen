@@ -172,7 +172,21 @@ def apply_playability(vmap_path, player_towns, teams):
                               "x": t["x"] - 2, "y": t["y"] - 2}
             pl["canPlay"] = "PlayerOrAI"
             pl["team"] = int(teams[i])
-            pl.pop("allowedFactions", None)          # randomTown start: any faction
+            if t.get("type") == "town":
+                # concrete start town (spare-neutral top-up): the lobby must not offer
+                # factions the map cannot honour — restrict to the authored one, exactly
+                # like VCMI's own RMG maps do
+                pl["allowedFactions"] = {"anyOf": [f"core:{t['subtype']}"]}
+                pl.pop("randomFaction", None)
+            else:
+                # randomTown start: any faction; VCMI resolves the OWNED random town to
+                # the lobby pick (CGTownInstance::randomizeFaction). PlayerInfo::defaultCastle()
+                # only returns RANDOM when isFactionRandom is set — an absent/permissive
+                # allowedFactions alone still defaults the lobby dropdown to the first
+                # faction (Castle) sorted by id. Field name from MapFormatJson.cpp's
+                # serializePlayerInfo: handler.serializeBool("randomFaction", ...).
+                pl.pop("allowedFactions", None)
+                pl["randomFaction"] = True
             for vo in vobjs:                         # ownership lives on the town object
                 if (vo["x"] == t["x"] and vo["y"] == t["y"]
                         and vo.get("l", 0) == t.get("l", 0)
@@ -332,9 +346,11 @@ def build(seed=3, size=72, water=None, players=0, water_mode="normal"):
         forbid = frozenset(occupied) | frozenset(approaches)
         mine_cells = {(cx, cy) for o in gobjs if o.get("purpose") == "MINE"
                       for cx, cy, blk in OR.mask_cells(o["mask"], o["x"], o["y"]) if blk}
-        attract = frozenset(t for t in ts if t not in forbid and any(
-            max(abs(t[0] - mx), abs(t[1] - my)) <= 3 for mx, my in mine_cells)) \
-            if mine_cells else frozenset()
+        attract = frozenset(
+            t for t in ts if t not in forbid
+            and 2 <= min(max(abs(t[0] - mx), abs(t[1] - my)) for mx, my in mine_cells) <= 3
+        ) if mine_cells else frozenset()             # annulus 2..3: greenery frames the
+        # mine without sprite canopies overhanging its visual
         zobjs, blocked, _ = PP.sample_zone(ts, zones, zid, model, seed=seed,
                                            prot=prot, forbid=forbid, attract=attract)
         objs.extend(zobjs)

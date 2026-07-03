@@ -244,6 +244,211 @@ alongside). Changes:
 | `test_pp.py` | 7 new tests (gate bands ×2, town economy pair, mine ledger, land banks, loot scatter, audit green) — suite 29 → 36 |
 | `docs/specs/pp-map-generator-solution.md` | updated in place: §2, §6.1, §6.3–6.5, §6.7, §7 (new 7.1), §9, §17, decision log 17–22 |
 
+## Post-playtest fixes (v5.1, 2026-07-03 — first real VCMI 1.7.4 game session)
+
+The user played `ppmap_s7` (144×144) in VCMI and reported: mines not visitable, dirt
+patches half-obstructing mine visuals, and "selected Castle in the lobby, ended up with
+Rampart". All three were diagnosed against VCMI's logs and source and fixed:
+
+### 1. Mines (and towns) unvisitable — invalid mask char `X` in the .vmap
+
+**Evidence:** `VCMI_Client_log.txt`: hundreds of
+`ERROR ... Unrecognized char X in template mask`. VCMI's
+`ObjectTemplate.cpp` mask parser accepts only ` 0VBHAT` (`A` = VISIBLE|BLOCKED|VISITABLE);
+unknown chars fall through to FREE — so our `X` entrance cells (internal notation:
+blocked, entered from below) vanished and mines/towns had **no visitable cell** in-game.
+The editor never caught it because `visitableFrom` was present and the editor does not
+validate mask chars.
+
+**Fix:** `faithful.vcmi_mask` — masks are translated at export (`X` → `A`), keeping
+`visitableFrom` derived from the internal mask. This is in the shared writer, so the
+corpus-replay path (whose faithful masks also carry `X`) is fixed too.
+Guard: `test_vmap_export_roundtrip` now asserts every exported mask row ⊆ ` 0VBHAT` and
+that an `A` cell survives.
+
+### 2. Dirt patches on mines — wrong-terrain sprite variants
+
+Mine DEFs carry a baked-in terrain apron (`avmgogr0` grass gold mine vs `avmgold0`
+dirt); the ontology pools list every variant objects.txt allows per terrain, and the
+`+0.3` weight floor let corpus-alien variants (e.g. `avmgerf0`, rough gem pond, corpus
+weight 2-of-203 on grass) land on grass with a dirt patch around them.
+
+**Fix:** `_mine_variants` in `place_zone` — per resource, keep only variants with corpus
+weight ≥ 20 % of that resource's top variant on this terrain (fallback: all, when the
+corpus is silent). Verified on the regenerated map: snow zones draw `..sn0`, rough
+`..rf0/..ro0`, lava `..lv0`, dirt `..dr0`, grass the grass-native sprites.
+Guard: `test_mine_sprites_match_terrain`. Related cosmetic tweak: the vegetation
+attraction annulus around mines is now Chebyshev 2..3 (was ≤ 3), so canopies frame the
+mine instead of overhanging its sprite.
+
+### 3. Lobby faction pick ignored — concrete start towns
+
+Red's start town had rolled the **concrete** 70/30 split (`type: town`, subtype rampart)
+while the header left `allowedFactions` unrestricted — the lobby offered Castle, the map
+delivered the authored Rampart. VCMI's `CGTownInstance::randomizeFaction` (1.7.4) shows
+the correct contract: an **owned `randomTown` resolves to the owner's lobby-picked
+faction** (`getIthPlayersSettings(owner).castle`); a concrete town keeps its authored
+faction regardless of the lobby.
+
+**Fix, both sides of the contract:**
+- `place_zone`: forced (player) towns are now ALWAYS `randomTown` — the lobby pick is
+  honoured; neutral towns keep the corpus-conventional 70/30 split.
+- `apply_playability`: if a player's start town is nonetheless concrete (the
+  spare-neutral-town top-up fallback), the slot's `allowedFactions` is restricted to
+  `{"anyOf": ["core:<subtype>"]}` — exactly what VCMI's own RMG maps do — so the lobby
+  can never offer a faction the map won't honour.
+Guards: `test_forced_town_sits_on_zone_centroid` (start town is `randomTown`),
+`test_playability_overlay` (concrete towns restrict `allowedFactions`).
+
+Suite after fixes: **37 tests passing**. `ppmap_s7.vmap` regenerated and reinstalled;
+verified in the installed file: 0 invalid mask rows, 4 owned `randomTown` starts with
+free faction pick, terrain-matched mine variants. **Note:** other maps installed in
+`Maps/pp-gen/` before this fix (the Jul 2 batches) still carry the `X`-mask defect —
+regenerate anything you intend to play.
+
+## Playtest round 2 fixes (v5.2, 2026-07-03, `ppmap_s100`)
+
+Second game session, four new defects — all four diagnosed and FIXED. The ground
+truth throughout is a real VCMI-RMG map on the same install
+(`Maps/RandomMaps/20260530T161910_8XM8.vmap` — relaxed JSON, strip `//` comments before
+parsing) diffed object-by-object against our export.
+
+### 4. Sawmill visit tile one tile off — ALL asymmetric masks are horizontally mirrored
+
+**Evidence:** RMG sawmill template mask is `["VVVVV","VVVBB","VBBAB"]` — entrance `A`
+one tile left of the bottom-right anchor. Ours is `["BBVV","BABB"]` — entrance two
+left, and row 0 is the mirror image (`BBVV` vs the real `VVBB`).
+
+**Root cause:** `ontology._decode_mask` (source of every `LEAF_META` mask) and its
+corpus twin `h3m2vmap.build_mask` reverse the 6×8 objects.txt grid **rows only**; the
+H3 mask convention is anchored bottom-right and needs a full **180° rotation** (rows AND
+columns). The correct rotation already exists in `_decode_mask_grid` /
+`full_mask_of` (editor-overlay path), whose docstring explicitly warns that the
+placement decoder leaves asymmetric footprints "horizontally MIRRORED vs the art: …
+a sawmill's visit tile lands on the wrong side". The two decoders were validated
+against each other (1240/1245), so the whole engine is *self-consistently mirrored*:
+corpus masks, ontology masks, placement legality, guard-approach checks, the G2
+reachability gate, and the exported .vmap all share the flip — which is why
+`rebuild --identity --verify` never caught it.
+
+**Blast radius:** 276/1304 ontology masks are asymmetric, **148 of them visitable** —
+every asymmetric mine/dwelling/visit building has its in-game entrance on the wrong
+side. Not merely cosmetic: G2 validates the *mirrored* entrance, so the real entrance
+tile can legally end up buried under vegetation.
+
+**Fix (shipped):** `_decode_mask` now rotates 180° like `_decode_mask_grid`
+(`grid = [row[::-1] for row in grid[::-1]]`); `h3m2vmap.build_mask` reads bit `c`
+instead of bit `7-c` into column `c`; `LEAF_META` regenerated (`ontology --regen`);
+`maps_json/` re-extracted (159/159 maps, 0 unresolved) so corpus and ontology stay
+bit-for-bit in sync — corpus sawmill mask is now `["VVBB","BBXB"]` (entrance one left
+of anchor, matching the art). `rebuild --identity --verify` re-verified:
+`IDENTITY OK: 2027/2027`. Placement, guard-approach and G2 all consume ontology
+accessors, so they self-corrected.
+
+### 5. Truncated sprites — masks trimmed below the sprite's tile extent
+
+**Evidence:** the RMG sawmill mask is 3×5 *including an all-`V` top row* (sprite is
+160×96 px = 5×3 tiles); ours is trimmed to the 2×4 blocked bounding box. VCMI derives
+an object's drawing coverage from the vmap mask dimensions, so tiles outside our
+trimmed mask never draw the sprite — tops of tall objects get cut off in-game.
+
+**Fix (shipped):** `--regen` now bakes a sprite-extent export mask into `LEAF_META` as
+`"vmask"` (973/1304 entries — only stored when it differs from the plain X→A
+translation of the footprint): the bottom-right window of the full 6×8 sprite-aligned
+grid (`_decode_mask_grid`), sized `ceil(DEF_w/32) × ceil(DEF_h/32)` from the DEF header
+in the LOD (`_def_tile_dims`), `'.'`→`V`, `X`→`A` (`_derive_vmask`). New accessor
+`ontology.vmap_mask_of(animation)`; `faithful.export_mask` uses it whenever its
+footprint core agrees with the instance mask (`_trim_v` guard — the handful of corpus
+dwellings where editor table and instance disagree keep their instance mask). Export
+never reads the LOD. Verified: our exported sawmill/town masks are now character-
+identical to VCMI's own RMG output.
+
+### 6. Every wandering creature joins — monsters exported without `character`
+
+**Evidence:** our monster objects carry no `options` block; when `character` is absent
+VCMI defaults to compliant (always joins free). RMG ground truth writes
+`options: {character: "hostile", amount: N}` on every monster.
+
+**Fix (shipped):** every GUARD emitted by `pp_gameplay.emit` and both `pp_pickup`
+placement sites now carries `options: {"character": "hostile"}`;
+`faithful.to_vmap` passes per-object `options` through to the .vmap (new passthrough —
+`apply_playability`'s owner injection merges on top via `setdefault`).
+
+### 7. Towns start without a fort
+
+**Evidence:** our towns export no `buildings`/`hasFort` → VCMI spawns a village, while
+the sprite we pick (`avcranx0`) is the *fort* variant — state and art disagree. RMG
+player towns carry `buildings: {allOf: ["core:fort"]}` (a fortless neutral instead
+gets explicit `hasFort: false` *and* the village sprite).
+
+**Fix (shipped):** every TOWN emitted by `pp_gameplay.emit` (player and neutral) now
+carries `options: {"buildings": {"allOf": ["core:fort"]}}`, exported via the same
+options passthrough.
+
+Suite after v5.2: **38 tests passing** (new `test_vmap_export_game_contracts` pins the
+un-mirrored sawmill footprint, RMG-identical sawmill/town export masks, guard
+`character=hostile` and town fort through the .vmap round trip). `--audit` stays green;
+`IDENTITY OK: 2027/2027`. **Note:** every .vmap exported before v5.2 carries mirrored,
+bbox-trimmed masks — regenerate anything you intend to play.
+
+### 8. Town starting kit + faction-linked random dwellings (v5.2.1)
+
+Two follow-up requests after the v5.2 session:
+
+- **Starting buildings**: towns now open with the H3-conventional kit — the `TOWN`
+  options became `buildings: {allOf: ["core:fort", "core:tavern", "core:dwellingLvl1",
+  "core:dwellingLvl2"]}` (identifiers verified against VCMI's
+  `config/factions/castle.json`).
+- **Random dwellings follow the nearby town's faction**: VCMI's random-dwelling
+  randomization info (`CGDwelling::serializeJsonOptions`, 1.7.4) accepts
+  `options.sameAsTown = <town instanceName>` — the dwelling then resolves to that
+  town's faction at game start (including a random town's lobby pick). `place_zone`
+  marks every `randomDwelling*` in a town-holding zone with the town's `[x, y, l]`
+  (instance names don't exist before export); `faithful.to_vmap` resolves the marker
+  to the town's minted `instanceName` (and drops it if the town vanished, leaving the
+  dwelling any-faction). Concrete (corpus-identity) dwellings and dwellings in
+  town-less zones are untouched. `test_vmap_export_game_contracts` extended to pin
+  both through the .vmap round trip.
+
+### 9. Lobby always offered Castle instead of "random" (v5.2.2)
+
+**Report:** in the VCMI lobby, every player's town showed as locked to Castle
+instead of "random", even though every start town is a `randomTown` object.
+
+**Root cause (VCMI 1.7.4 source, `CMapHeader.h`/`.cpp`, `MapFormatJson.cpp`):**
+`PlayerInfo::defaultCastle()` only returns `FactionID::RANDOM` when its
+`isFactionRandom` flag is set:
+
+```cpp
+FactionID PlayerInfo::defaultCastle() const
+{
+    if(isFactionRandom)
+        return FactionID::RANDOM;
+    assert(!allowedFactions.empty());
+    if(!allowedFactions.empty())
+        return *allowedFactions.begin();
+    return FactionID::RANDOM;
+}
+```
+
+`isFactionRandom` round-trips through the JSON key `"randomFaction"`
+(`handler.serializeBool("randomFaction", info.isFactionRandom)`). Our
+`apply_playability` only ever *cleared* `allowedFactions` for a randomTown
+start, never set `randomFaction`. Critically, `serializeAllowedFactions`
+defaults an *absent* `allowedFactions` key to **ALL factions** on load, not
+none — so `isFactionRandom` stayed false and `*allowedFactions.begin()`
+resolved to the lowest `FactionID` by sort order, i.e. Castle, for every
+player, every time.
+
+**Fix (shipped):** `pp_map.apply_playability` now sets
+`pl["randomFaction"] = True` on every randomTown-start slot (alongside
+clearing `allowedFactions`), and `pl.pop("randomFaction", None)` on
+concrete-town slots for symmetry. New test
+`test_playability_overlay_random_town_shows_random_in_lobby` pins
+`randomFaction is True` + `allowedFactions` absent for a randomTown start.
+Verified against a regenerated+installed `ppmap_s101.vmap`: all four
+playable slots now carry `randomFaction: true` with no `allowedFactions` key.
+
 ## Determinism
 
 All new draws go through the existing per-zone RNG streams; the ledger mutates only
