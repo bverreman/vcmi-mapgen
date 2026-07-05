@@ -117,9 +117,9 @@ def to_vmap(fm, out_path, name=None):
     for vo in objs:
         tag = (vo.get("options") or {}).get("sameAsTown")
         if isinstance(tag, list):
-            name = town_names.get(tuple(tag))
-            if name:
-                vo["options"]["sameAsTown"] = name
+            town_name = town_names.get(tuple(tag))
+            if town_name:
+                vo["options"]["sameAsTown"] = town_name
             else:
                 del vo["options"]["sameAsTown"]
                 if not vo["options"]:

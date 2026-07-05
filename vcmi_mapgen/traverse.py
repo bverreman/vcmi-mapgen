@@ -25,12 +25,13 @@ NB8 = [(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)]
 
 
 def _mask_cells(x, y, mask):
-    # anchor (x,y) = bottom-right tile; H3 reads masks right-to-left so col 0 is the rightmost
-    # (anchor) tile -> tx = x - c. Matches obj_resolve.mask_cells (see its note on the column flip).
+    # anchor (x,y) = bottom-right tile; mask rows are stored left-to-right (sprite-aligned) so
+    # col 0 is the leftmost tile -> tx = x - (ww-1-c). Matches obj_resolve.mask_cells.
     h = len(mask)
     for r, row in enumerate(mask):
+        w = len(row)
         for c, ch in enumerate(row):
-            yield (x - c, y - (h - 1 - r), ch)
+            yield (x - (w - 1 - c), y - (h - 1 - r), ch)
 
 
 def _dims(fm):

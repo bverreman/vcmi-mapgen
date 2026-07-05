@@ -23,6 +23,7 @@ import zone_skeleton as SK      # noqa: E402
 R = 8          # cap on run-length feature
 EBINS = 6      # edge-distance bins (0..4, 5+)
 NB4 = [(1, 0), (-1, 0), (0, 1), (0, -1)]
+NB8 = [(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)]
 NUM_SWEEPS = 5  # Gibbs sweeps after the autoregressive seed pass
 EDGE_W = 0.50  # strength of the rim-block bias (P(open) reduced by this at the very edge)
 EDGE_R = 2     # tiles over which the rim-block bias ramps to zero (forest-belt thickness; THIN belt --
@@ -336,6 +337,68 @@ def _zone_gate_bands(ts, zones, zid, open_frac=0.5, min_w=3):
                                      if max(abs(t[0] - g[0]), abs(t[1] - g[1])) <= min_w // 2)
                     out.append((g, band | {g}))
     return out
+
+
+POCKET_MAX_DIM = 16              # user's own definition: "a pocket is a zone of 16x16 or
+                                 # less with only one entrance neck" — see find_pockets()
+POCKET_MAX_TILES = 16           # tightened 2026-07-04: 16x16(=256) let pockets swallow most
+                                 # of a small zone's reach, including whole zone-boundary
+                                 # fronts; capping total tiles at 16 keeps a pocket a nook
+
+
+def _bounded_fill(reach, exclude, start, max_dim, max_tiles):
+    """BFS from `start` over `reach - {exclude}`. Returns the component as a frozenset if
+    it stays within `max_tiles` cells and a `max_dim` x `max_dim` bounding box; returns
+    None the moment it would exceed either bound — i.e. it leaked into the wider map
+    rather than being sealed off, so it is NOT a pocket.
+
+    8-connected (NB8): H3 heroes move diagonally, so a candidate neck that only blocks
+    orthogonal movement is not a real single-entrance enclosure -- the hero just cuts the
+    corner and the guard sits in the open next to nothing. Using NB4 here previously made
+    ~66% of raw candidates false positives (a diagonal path around the "neck" reconnected
+    to the wider map every time)."""
+    comp = {start}
+    minx = maxx = start[0]
+    miny = maxy = start[1]
+    q = collections.deque([start])
+    while q:
+        x, y = q.popleft()
+        for dx, dy in NB8:
+            m = (x + dx, y + dy)
+            if m == exclude or m in comp or m not in reach:
+                continue
+            comp.add(m)
+            minx, maxx = min(minx, m[0]), max(maxx, m[0])
+            miny, maxy = min(miny, m[1]), max(maxy, m[1])
+            if len(comp) > max_tiles or maxx - minx >= max_dim or maxy - miny >= max_dim:
+                return None
+            q.append(m)
+    return frozenset(comp)
+
+
+def find_pockets(reach, max_dim=POCKET_MAX_DIM, max_tiles=POCKET_MAX_TILES):
+    """Genuine geometric pocket detection (user's own definition, verbatim: "a pocket is a
+    zone of 16x16 or less with only one entrance neck. The edge of the map count as
+    blocking"). Tiles absent from `reach` — vegetation, other zones, or the true map edge
+    — are all blocking alike, so no special-casing of the edge is needed: the flood fill
+    below simply can't step onto them.
+
+    For every reachable tile `t`, probe each open neighbour with `t` itself removed: if
+    that neighbour's connected component (over the rest of `reach`) stays within the size
+    bound, it never found a way around `t` — `t` is the pocket's one and only entrance
+    neck, exactly as the user described testing it ("flood fill both side of the tile and
+    check if it only touch it and blocking tiles"). Returns {mouth: frozenset(pocket_tiles)}
+    deduped so each distinct pocket keeps a single canonical mouth."""
+    seen = {}
+    for t in sorted(reach):
+        for dx, dy in NB8:
+            n0 = (t[0] + dx, t[1] + dy)
+            if n0 not in reach:
+                continue
+            comp = _bounded_fill(reach, t, n0, max_dim, max_tiles)
+            if comp is not None and comp not in seen:
+                seen[comp] = t
+    return {mouth: comp for comp, mouth in seen.items()}
 
 
 def _zone_gates(ts, zones, zid):

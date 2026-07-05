@@ -2284,12 +2284,13 @@ def _add_hard(hard, o, ts):
 def _mask_anchor_cells(mask, x, y):
     """Yield the (tx, ty) of the mask's 'A' (visitable-anchor) cells — the tile the hero stands
     on / that triggers the object — using the same bottom-right anchoring as ``OR.mask_cells``
-    (col 0 is the rightmost/anchor tile, `tx = x - c`; see OR.mask_cells's column-flip note)."""
+    (col 0 is the leftmost tile, `tx = x - (ww-1-c)`; see OR.mask_cells's docstring)."""
     hh = len(mask)
     for r, row in enumerate(mask):
+        ww = len(row)
         for c, ch in enumerate(row):
             if ch == "A":
-                yield x - c, y - (hh - 1 - r)
+                yield x - (ww - 1 - c), y - (hh - 1 - r)
 
 
 def _visit_tiles(o, ts):

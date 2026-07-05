@@ -86,20 +86,37 @@ def is_relational(obj: dict) -> bool:
 def mask_cells(mask: list[str], x: int, y: int):
     """Tiles a mask covers when anchored at (x, y).
 
-    Convention: anchor (x, y) is the BOTTOM-RIGHT tile of the footprint. H3 reads masks
-    bottom-to-top AND right-to-left; the LEAF_META/.h3m rows are already bottom-up, so column 0 is
-    the RIGHTMOST (anchor) tile -> `tx = x - c`. (The old `x - (ww-1-c)` mirrored the footprint
-    horizontally vs the sprite/VCMI -- it placed the sawmill's visit tile, pine trunks, etc. on the
-    wrong side; on the corpus that more than halves the objects whose visit tile lands on water or
-    another object.) 'B' = blocking, 'X' = blocking + visitable, 'A' = passable + visitable,
-    'V' = passable overlay, ' ' = empty. Yields (tx, ty, blocking_bool) per non-empty cell.
+    Convention: anchor (x, y) is the BOTTOM-RIGHT tile of the footprint. Mask rows are stored
+    LEFT-TO-RIGHT, sprite-aligned (matching `h3m2vmap.build_mask` and `ontology._decode_mask`),
+    so column 0 is the LEFTMOST tile and the anchor is the LAST column of each row ->
+    `tx = x - (ww - 1 - c)` where `ww = len(row)`. (Verified pixel-for-pixel against real sprite
+    art: a sawmill's ramp/visit tile and a pine clump's trunks land on the correct side only with
+    this formula -- the plain `x - c` mirrors every asymmetric footprint horizontally.)
+    'B' = blocking, 'X' = blocking + visitable, 'A' = passable + visitable, 'V' = passable
+    overlay, ' ' = empty. Yields (tx, ty, blocking_bool) per non-empty cell.
     """
     hh = len(mask)
     for r, row in enumerate(mask):
+        ww = len(row)
         for c, ch in enumerate(row):
             if ch == " ":
                 continue
-            yield x - c, y - (hh - 1 - r), (ch in ("B", "X"))
+            yield x - (ww - 1 - c), y - (hh - 1 - r), (ch in ("B", "X"))
+
+
+def mask_interactive_cells(mask: list[str], x: int, y: int):
+    """The subset of `mask_cells` a hero must actually step on to trigger this object --
+    visitable ('A') or blocking+visitable ('X') -- as opposed to pure passable overlay
+    ('V') or solid-but-inert ('B'). A guard's other footprint cells are cosmetic canopy;
+    only this cell needs to be free & reachable for the object to functionally gate a tile."""
+    hh = len(mask)
+    out = []
+    for r, row in enumerate(mask):
+        ww = len(row)
+        for c, ch in enumerate(row):
+            if ch in ("A", "X"):
+                out.append((x - (ww - 1 - c), y - (hh - 1 - r)))
+    return out
 
 
 # ---------------------------------------------------------------------------

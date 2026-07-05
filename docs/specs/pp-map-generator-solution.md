@@ -326,25 +326,31 @@ All guards are leveled random monsters (`rnd_monster(lvl)` → avwmon1..7), sing
 passable-visitable `['A']` masks, purpose `GUARD` — which the G2 gate treats as
 *removable* (a hero can fight through), so guards may legally sit **on** the walkable web.
 
-- **Mine guards**: placed **on the mine's approach tile** with probability =
-  corpus mine guardedness (≈ 0.64), level from resource rarity:
-  `MINE_GUARD_LVL = {sawmill 1, orePit 2, waterWheel/windmill/mysticalGarden 1,
-  alchemistLab/sulfurDune 3, gemPond/crystalCavern 4, goldMine 5, abandoned 4}` (+1 with
+- **Mine guards (v5.3 — always guarded, never bypassable)**: placed **on the mine's
+  approach tile unconditionally** (the corpus-probability roll was removed — a user
+  bug report found unguarded mines), level from resource rarity:
+  `MINE_GUARD_LVL = {sawmill/orePit/waterWheel/windmill/mysticalGarden 3,
+  alchemistLab/sulfurDune 4, gemPond/crystalCavern 5, goldMine 6, abandoned 5}` (+1 with
   25 % chance). **Why on the approach:** in H3 you must fight the guard to flag the mine;
   the approach tile is exactly that chokepoint, and being a removable GUARD it never
-  breaks reachability.
-- **Gate guards**: each zone gate **band** (§7.1) is guarded at its centre tile with
-  probability 0.65, level `min(7, 1 + area//250 (+1 with 40 % chance))` — bigger, richer
-  zones defend harder. One guard per passage, standing in the open border like real maps
-  (a single monster cannot cork a corpus-wide band, and being a removable GUARD it never
-  breaks reachability). **Why a rule, not a fit:** measured per-tile guard rates by
-  corpus gate distance are flat (9.9/13.4/12.2/11.6 per 1000 tiles) — corpus borders are
-  wide and guards stand *near* them, not in choke points; the rule asserts exactly that.
+  breaks reachability. The other 4 of the 5 `visitableFrom` approach-grid tiles (the
+  ones the guard does NOT sit on) are each sealed with a single-cell blocking decoration
+  (`seal_cell`, purpose `MINE_SEAL`, from `ontology.decor_pool(terrain, blocking=True,
+  max_cells=1)`) — otherwise a hero could walk around the guard from the side, which a
+  user playtest caught.
+- **Gate guards**: each zone gate **band** (§7.1) is guarded at its **narrowest**
+  (openness-minimal) tile — not the band centroid, which is usually the widest, most
+  open part of the front — with probability 0.65, level `min(7, 1 + area//250 (+1 with
+  40 % chance))` — bigger, richer zones defend harder. One guard per passage (a single
+  monster cannot cork a corpus-wide band, and being a removable GUARD it never breaks
+  reachability). **Why a rule, not a fit:** measured per-tile guard rates by corpus gate
+  distance are flat (9.9/13.4/12.2/11.6 per 1000 tiles) — corpus borders are wide; the
+  rule instead asserts guards gate the true chokepoint within that wide border.
 - **Corridor dedupe** (in `pp_map.build`): both zones flanking one corridor may guard the
   same passage; any two GUARDs within Chebyshev 2 keep only the stronger
   (`randomMonsterLevelN` compares lexically for N=1..7). Removed 16–19 duplicates per
   72×72 map.
-- **Cache guards and roaming guards**: §10.
+- **Cache guards and roaming guards**: §9.
 
 ### 6.8 Shipyards
 
@@ -454,14 +460,23 @@ it sees the actual pockets and corridors the vegetation created.
 - **Counts** from the same stats (`stoch(dens × area)`, area-scaled caps with base
   floors RESOURCE 16 / REWARD 8 / GUARD 9 — §6.3); zones ≥ `LOOT_FLOOR_AREA=300` always
   yield ≥ 2 reward pickups.
-- **Guarded caches in pockets.** Corpus guardedness (≈ 0.54 of piles, 0.59 of pickups)
-  decides how many pickups are cache-bound. Pocket candidates are open tiles with
-  web-distance `dweb ≥ POCKET_DWEB=3` and openness ≤ `POCKET_OPEN=12` (a genuine nook),
-  sorted deepest-first, with used pockets suppressed within Chebyshev 6. The cache is
-  1–3 resources + possibly a tiered random artifact within Chebyshev 2 of the pocket
-  center; the **guard sits on the pocket's mouth** — the reachable spot nearest the web —
-  so the reward is behind the fight. **Guard level tracks cache value**: value = 2 per
-  resource + 3/5/8 per treasure/minor/major artifact;
+- **Guarded caches in genuine pockets (v5.3 — fixed from a user bug report that
+  resource pockets were "underutilized" with resources placed mostly in the open).**
+  `guard_frac` floors were raised to **0.6** minimum for RESOURCE_PILE/REWARD_PICKUP, so
+  most of the guarded budget now actually lands in pockets rather than open scatter.
+  Pocket candidates are no longer picked by a soft openness proxy — a "nook" measured by
+  openness alone was routinely just a sparse-but-open area, not a real bottleneck.
+  Instead `zone_skeleton.distance_transform(reach)` computes true Chebyshev clearance
+  from the zone's open set, and a pocket's mouth must have `distance_transform <=
+  POCKET_DT=2` (a genuine 1–2 tile neck, matching `skeleton()`'s own chokepoint
+  convention), still requiring web-distance `dweb ≥ POCKET_DWEB=3`; candidates sort
+  deepest-first with used pockets suppressed within Chebyshev 6. The cache is 1–3
+  resources + possibly a tiered random artifact within Chebyshev 2 of the pocket center;
+  the **guard sits on the pocket's mouth** — the reachable spot nearest the web — so the
+  reward is behind the fight. Cache-origin pickups are tagged `o["cache"]=True`
+  (informational only; the vmap exporter ignores unknown keys) so tests and tooling can
+  separate guarded-pocket loot from unguarded scatter. **Guard level tracks cache
+  value**: value = 2 per resource + 3/5/8 per treasure/minor/major artifact;
   `lvl = 1 + (v≥4) + (v≥7) + (v≥10) + (v≥13)` (+1 with 25 % chance).
 - **Unguarded scatter** near routes: intensity-weighted (edge + gate + openness
   covariates) draws with minimum separations (resources 3, rewards 5) — resources string
@@ -503,8 +518,8 @@ Boats + shipyards + whirlpools make the water **navigable**, answering the revie
 
 | guard | level source |
 |---|---|
-| mine approach | resource rarity (`MINE_GUARD_LVL`, sawmill 1 → goldMine 5) |
-| zone gate | zone size: `1 + area//250` (+1 @ 40 %) |
+| mine approach | resource rarity (`MINE_GUARD_LVL`, always-on floor: common 3 → goldMine 6) |
+| zone gate (narrowest band tile) | zone size: `1 + area//250` (+1 @ 40 %) |
 | cache mouth | cache value: resources + artifact tier |
 | roaming | 1–4, weighted low |
 | sea | 2–5, weighted low |

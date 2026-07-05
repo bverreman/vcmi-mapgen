@@ -449,6 +449,91 @@ concrete-town slots for symmetry. New test
 Verified against a regenerated+installed `ppmap_s101.vmap`: all four
 playable slots now carry `randomFaction: true` with no `allowedFactions` key.
 
+## Playtest round 3 fixes (v5.3, 2026-07-03 — monster placement)
+
+Fourth defect report, one message, four sub-bugs, all diagnosed and FIXED in
+`pp_gameplay.py` / `pp_pickup.py`:
+
+> 1. Mines are unguarded, they should be guarded by monster level 3 or 4.
+> 2. Sawmill/mine guard does not sit in front of the visitable tile.
+> 3. Monster should sit between narrow pass between zones or guarding a treasure in a
+>    pocket. Right now they mostly sit in the open.
+> 4. Resource pocket guarded by monster is underutilized, resources are all placed
+>    within the open. A resource pocket is detectable by an enclosed area with a
+>    1-tile bottleneck.
+
+### 7. Mines must always carry a level-3+ guard (`pp_gameplay.py`)
+
+**Root cause:** mine guards were rolled with `rng.random() < guard_frac` — a
+corpus-mined probability, so a real fraction of mines placed with no guard at all, and
+`MINE_GUARD_LVL` bottomed out at level 1.
+
+**Fix:** the guard roll is gone — every mine settles a guard on its approach tile,
+unconditionally. `MINE_GUARD_LVL` floors raised to the reported 3/4 minimum: common
+mines (`sawmill`/`orePit`/`waterWheel`/`windmill`/`mysticalGarden`) → 3,
+`alchemistLab`/`sulfurDune` → 4, `gemPond`/`crystalCavern`/`abandoned` → 5, `goldMine` →
+6 (plus the existing `+1` roll at 25%).
+
+### 8. Guard must gate the ONLY approach, not one of five (`pp_gameplay.py`)
+
+**Root cause:** `faithful.visitable_from` gives a blocked building 5 legal approach
+tiles (W/E/SW/S/SE of the entrance); the guard only ever sat on the south tile
+(`_cells`'s `approach`), so a hero could walk in from the other four sides for free.
+
+**Fix:** new `seal_cell(ident, x, y)` helper (mirrors `settle`'s occupied/blocked/GAP
+bookkeeping, but registers no approach). After a mine settles, its other four
+approach-grid tiles are each sealed with a single-cell blocking decoration drawn from
+`ontology.decor_pool(terrain, blocking=True, max_cells=1)` — terrain-native (rocks,
+river deltas, log piles…), so it reads as scenery, not an obvious wall. Tiles already
+covered by the mine's own footprint are skipped. Emitted with purpose `"MINE_SEAL"`
+(not `"DECORATION"`) so it stays distinguishable in tests from ordinary rigid
+gameplay — it is deliberately GAP-adjacent to the mine and has no approach of its own.
+`test_gameplay_layer_legal_and_deterministic` excludes `MINE_SEAL` from the
+rigid approach/GAP-separation checks (like it already does for `GUARD`) and instead
+asserts each seal is a single blocking cell in-zone.
+
+**Verified** against a regenerated+installed `ppmap_s101.vmap`: all 20 mines carry a
+guard exactly on `PG._cells(ident, x, y)`'s approach tile (levels 3–5), and the other
+approach-grid tiles are occupied by single-cell (`mask == ["B"]`) blocking objects
+except where they coincide with the mine's own footprint.
+
+### 9. Gate-band guards sit at the band's narrowest tile, not its centroid (`pp_gameplay.py`)
+
+**Root cause:** the corridor guard for each `_zone_gate_bands` neighbour pair was
+placed at the band's representative tile `rep` — the geometric middle of the whole
+contact front, which is frequently the widest, most open part of it, not a chokepoint.
+
+**Fix:** `openness(ts)` (already used elsewhere for nook detection) is computed once
+per zone and the loop now picks `min(cands, key=lambda t: (gate_op[t], dist_to_rep,
+t))` — the locally narrowest reachable tile in the band, falling back to distance from
+`rep` only to break ties.
+
+### 10. Resource pockets were underutilized — replace the openness proxy with a real
+### bottleneck test (`pp_pickup.py`)
+
+**Root cause:** pocket acceptance used `op <= POCKET_OPEN` (a 5×5-window openness
+count) as a stand-in for "enclosed area with a bottleneck". That proxy both rejects
+genuine pockets whose interior room is fairly open and accepts non-pockets that just
+happen to sit in a locally sparse patch — and the corpus `guard_frac` floor routed only
+a minority of resources/artifacts into pockets at all, so most sat in the open exactly
+as reported.
+
+**Fix:** pocket detection now uses `zone_skeleton.distance_transform(reach)` — the
+codebase's own Chebyshev-clearance BFS (already used by `skeleton()`'s `width <= 2`
+chokepoint convention) — and a cluster is only accepted as a pocket if its best mouth
+tile has `dt <= POCKET_DT` (2), i.e. a genuine 1–2 tile neck, not merely low density.
+`guard_frac` floors for `RESOURCE_PILE`/`REWARD_PICKUP` raised to a 0.6 minimum. Cache
+pickups are tagged `o["cache"] = True` (informational only, ignored by the vmap
+exporter) so tests can separate "guarded pocket loot" from "unguarded scatter loot" —
+`test_scatter_rewards_are_mostly_loot` now measures the LOOT-pool-dominance claim
+against the unguarded-scatter subset only, since guarded pockets are deliberately
+tiered random artifacts by design.
+
+**Verified** against `ppmap_s101.vmap`: 22 of 49 non-mine guards sit adjacent
+(Chebyshev ≤ 2) to one or more resource/artifact piles, guard level scaling with
+accumulated cache value (level 5 next to gold/crystal, level 3–4 next to a single
+common resource).
+
 ## Determinism
 
 All new draws go through the existing per-zone RNG streams; the ledger mutates only

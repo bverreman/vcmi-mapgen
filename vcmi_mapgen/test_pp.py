@@ -90,12 +90,18 @@ def test_gameplay_layer_legal_and_deterministic():
     assert o1 == o2, "gameplay placement must be seed-deterministic"
     objs, occupied, blocked, approaches = o1
     assert objs, "a 720-tile grass zone should hold gameplay"
-    # GUARD monsters deliberately sit ON approaches/gates — the rigid rules below apply to
-    # the buildings; guards only need to be in-zone, single-tile, passable-visitable
-    core = [o for o in objs if o["purpose"] != "GUARD"]
+    # GUARD monsters deliberately sit ON approaches/gates, and MINE_SEAL decorations
+    # deliberately sit GAP-adjacent to the mine they seal off (no approach of their own) —
+    # the rigid rules below apply to the buildings only.
+    core = [o for o in objs if o["purpose"] not in ("GUARD", "MINE_SEAL")]
     for g in (o for o in objs if o["purpose"] == "GUARD"):
-        assert (g["x"], g["y"]) in ts and g["template"]["mask"] == ["A"]
+        # monster masks are V-padded to the sprite's tile extent (ground truth from
+        # Maps/RandomMaps: every creature mask is ['VV', 'VA']), not a bare single cell.
+        assert (g["x"], g["y"]) in ts and g["template"]["mask"] == ["VV", "VA"]
         assert g["type"].startswith("randomMonster"), "guards are random monsters"
+    for s in (o for o in objs if o["purpose"] == "MINE_SEAL"):
+        assert (s["x"], s["y"]) in ts and s["template"]["mask"] == ["B"], \
+            "a mine seal is a single blocking cell"
     # rigid rules: footprints in-zone, no overlap, approach tile free and in-zone
     seen = set()
     for o in core:
@@ -270,8 +276,10 @@ def test_vmap_export_game_contracts():
     import pp_map as PM
     import zone_engine as ZE
     # orientation: internal footprint un-mirrored, export mask == the mask VCMI's own RMG
-    # writes for the same sawmill sprite (ground truth from Maps/RandomMaps)
-    assert ON.mask_of("avmsawg0") == ["VVBB", "BBXB"]
+    # writes for the same sawmill sprite (ground truth from Maps/RandomMaps). mask_of is
+    # windowed identically to vmap_mask_of (same V-padding) so a guard's approach tile always
+    # lands on the tile VCMI actually reads as visitable; only the X/A entrance glyph differs.
+    assert ON.mask_of("avmsawg0") == ["VVVVV", "VVVBB", "VBBXB"]
     assert ON.vmap_mask_of("avmsawg0") == ["VVVVV", "VVVBB", "VBBAB"]
     assert ON.vmap_mask_of("avcranx0") == ["VVVVVV", "VVVVVV", "VVVVVV",
                                            "VVBBBV", "VBBBBB", "VBBABB"]
@@ -359,6 +367,7 @@ def test_playability_overlay():
     wired = sorted((pl["mainTown"]["x"], pl["mainTown"]["y"]) for pl in playable.values())
     assert wired == [(6, 6), (16, 16)], "each player wired to its designated town (-2 offset)"
     assert sorted(pl["team"] for pl in playable.values()) == [0, 1]
+    assert "teams" not in h, "no repeated team id (FFA/singletons) -> no top-level grouping"
     # these test towns are CONCRETE, so the lobby must be locked to the authored faction
     # (a randomTown start would instead clear allowedFactions — free lobby pick)
     for pl in playable.values():
@@ -368,6 +377,37 @@ def test_playability_overlay():
     for pid, pl in h["players"].items():
         if isinstance(pl, dict) and pid not in playable:
             assert pl.get("canPlay") == "false" and pl.get("mainTown") is None
+
+
+def test_playability_overlay_alliance_grouping():
+    """apply_playability: a real 2v2 alliance (repeated team ids) must populate the
+    top-level header["teams"] grouping — this is what VCMI's map-select screen actually
+    reads to show alliances; the per-player "team" int alone is not enough (bug reported
+    2026-07-05: '2v2' teams weren't shown when the map was selected in VCMI)."""
+    import glob
+    import json
+    import zipfile
+    if not glob.glob("/home/gabriel/.var/app/eu.vcmi.VCMI/data/vcmi/Maps/RandomMaps/*.vmap"):
+        pytest.skip("VCMI template .vmap not available")
+    import ontology as ON
+    import pp_map as PM
+    import zone_engine as ZE
+    grid = [[2] * 24 for _ in range(24)]
+    cells = ZE.tile_terrain(grid, 24, 24)
+    town = ON.gameplay_pool("grass", "TOWN")[0]
+
+    def mk(x, y):
+        return {"x": x, "y": y, "l": 0, "purpose": "TOWN", "type": town["type"],
+                "subtype": town["subtype"], "animation": town["animation"],
+                "mask": town["mask"],
+                "template": {"animation": town["animation"], "mask": town["mask"]}}
+    towns = [mk(8, 8), mk(18, 18), mk(8, 18), mk(18, 8)]
+    out = os.path.join(os.path.dirname(PS.PP_DIR), "..", "out", "vmap",
+                       "test_pp_play_2v2.vmap")
+    p = PM.export_vmap(cells, towns, os.path.abspath(out), name="test")
+    PM.apply_playability(p, towns, teams=[0, 0, 1, 1])
+    h = json.loads(zipfile.ZipFile(p).read("header.json").decode())
+    assert sorted(sorted(g) for g in h["teams"]) == [["blue", "green"], ["orange", "red"]]
 
 
 def test_playability_overlay_random_town_shows_random_in_lobby():
@@ -534,11 +574,14 @@ def test_scatter_rewards_are_mostly_loot():
         objs = PK.place_pickups(ts, zones, 1, "grass", set(ts), prot, seed=seed)
         rewards += [o for o in objs if o["purpose"] == "REWARD_PICKUP"]
     assert rewards, "a 720-tile zone (>= LOOT_FLOOR_AREA) must yield reward pickups"
-    loot = [o for o in rewards if "random" not in str(o["type"]).lower()]
+    # guarded-pocket rewards are deliberately tiered random artifacts (bug-report fix: those
+    # pockets were underutilized); the LOOT-pool claim applies to the unguarded scatter only
+    scatter_rewards = [o for o in rewards if not o.get("cache")]
+    loot = [o for o in scatter_rewards if "random" not in str(o["type"]).lower()]
     assert any(o["type"] == "treasureChest" for o in loot), \
         "treasure chests must appear as unguarded loot"
-    assert len(loot) >= len(rewards) * 0.5, \
-        f"scatter must be mostly fixed loot, got {len(loot)}/{len(rewards)}"
+    assert len(loot) >= len(scatter_rewards) * 0.5, \
+        f"scatter must be mostly fixed loot, got {len(loot)}/{len(scatter_rewards)}"
 
 
 @needs_stats
