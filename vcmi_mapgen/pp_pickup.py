@@ -33,6 +33,13 @@ CAPS = {"RESOURCE_PILE": 16, "REWARD_PICKUP": 8}   # base floors; caps scale (sc
 SCATTER_ART_SHARE = 0.15        # unguarded scatter: mostly LOOT (chests/campfires); the
                                 # tiered random artifacts live behind cache guards instead
 LOOT_FLOOR_AREA = 300           # a real zone always yields a couple of unguarded loots
+POCKET_MIN_SEP = 4              # Chebyshev distance between accepted cache guards, applied
+                                # to TINY (1-2 tile) pockets only: the ZoC-neck detector
+                                # legitimately flags every concave wall corner as a 1-tile
+                                # nook (locally identical to a flat-face recess), so without
+                                # thinning, a long wall run grows a guard at every kink.
+                                # Real (3+ tile) pockets stay deterministic — every one gets
+                                # its cache, per the module doctrine above.
 
 
 def _web_dist(open_set, prot):
@@ -92,26 +99,28 @@ def _pick(pool, purpose, st_t, rng, allow_random=True, art_share=0.45):
                                       for i in pool], k=1)[0]
 
 
-def _dedupe_pockets(pockets):
+def _dedupe_pockets(pockets, reach=frozenset()):
     """Collapse near-duplicate mouth candidates into one CANDIDATE LIST per genuine physical
-    nook. `ZF.find_pockets` returns one entry per candidate MOUTH tile, but a neck wider than
-    one tile makes several neighbouring tiles each independently qualify as "the" mouth of the
-    same nook -- and in H3 a guard already threatens every adjacent tile (stepping next to a
-    wandering monster forces combat), so one guard placed at a shared neck already gates every
-    mouth candidate touching it. Merge mouth+pocket tiles into 4-connected blobs (union-find
-    over shared tiles).
+    nook. `ZF.find_pockets` returns one entry per candidate MOUTH tile, but several nearby
+    tiles each independently qualify as "the" guard spot of the same nook (a ZoC-neck is 3x3,
+    so a flat-face nook alone yields ~4 candidates) -- and in H3 a guard already threatens
+    every adjacent tile (stepping next to a wandering monster forces combat), so one guard
+    placed at a shared neck already gates every mouth candidate touching it. Merge
+    mouth+pocket tiles into 4-connected blobs (union-find over shared tiles).
 
-    Returns a list of candidate lists (one list per nook), each sorted LARGEST pocket first,
-    outer list sorted largest-top-candidate first. The caller tries candidates within a blob
-    in order and falls back to the next one when the top pick's mouth tile is unusable --
-    e.g. it happens to coincide with an unrelated, already-placed object's approach cell.
-    Previously this function collapsed each blob down to a single (best) mouth, so a blob
-    whose ONLY candidate happened to be blocked lost its cache and guard entirely even though
-    6 other valid mouth candidates for the exact same physical nook existed (confirmed
-    2026-07-04: a real 11-tile pocket next to a gem mine had its best mouth land on the
-    mine's own visitableFrom approach cell -- already `used` -- and was skipped outright,
-    reproducing the user's "pockets you found were not filled" complaint even after pocket
-    DETECTION was fixed)."""
+    Returns a list of candidate lists (one list per nook), each sorted by `ZF.mouth_key`
+    over `reach` (in-neck first, then largest pocket, then orthogonal-front -- so the guard
+    lands at the pocket's natural opening, not a tile out in the open field), outer list
+    sorted best-top-candidate first. The caller tries candidates within a blob in order and
+    falls back to the next one when the top pick's mouth tile is unusable -- e.g. it happens
+    to coincide with an unrelated, already-placed object's approach cell. Previously this
+    function collapsed each blob down to a single (best) mouth, so a blob whose ONLY
+    candidate happened to be blocked lost its cache and guard entirely even though 6 other
+    valid mouth candidates for the exact same physical nook existed (confirmed 2026-07-04:
+    a real 11-tile pocket next to a gem mine had its best mouth land on the mine's own
+    visitableFrom approach cell -- already `used` -- and was skipped outright, reproducing
+    the user's "pockets you found were not filled" complaint even after pocket DETECTION
+    was fixed)."""
     items = list(pockets.items())
     owner = collections.defaultdict(list)
     for idx, (mouth, pocket) in enumerate(items):
@@ -134,8 +143,9 @@ def _dedupe_pockets(pockets):
     groups = collections.defaultdict(list)
     for idx, (mouth, pocket) in enumerate(items):
         groups[find(idx)].append((mouth, pocket))
-    blobs = [sorted(cands, key=lambda kv: (-len(kv[1]), kv[0])) for cands in groups.values()]
-    return sorted(blobs, key=lambda cands: (-len(cands[0][1]), cands[0][0]))
+    blobs = [sorted(cands, key=lambda kv: ZF.mouth_key(reach, kv[0], kv[1]))
+             for cands in groups.values()]
+    return sorted(blobs, key=lambda cands: ZF.mouth_key(reach, cands[0][0], cands[0][1]))
 
 
 def _legal(ident, x, y, open_set, used, bounds=None):
@@ -174,7 +184,12 @@ def _place_one(objs, used, reach, rng, st, purpose, pool, x, y,
         # genuine chokepoint the surroundings are mostly blocked/unreachable BY
         # DEFINITION, so requiring the whole footprint free (like _legal does) means the
         # guard can almost never actually land on the neck. Only the interactive cell has
-        # to be free & reachable; the rest may fall outside `reach` or overlap terrain.
+        # to be free & reachable; the rest may fall outside `reach`, overlap terrain, or
+        # overlap another object's cells -- V cells are pure non-blocking sprite extent,
+        # and the pocket the guard seals is BY DESIGN packed with caches up/left of the
+        # mouth. Rejecting on `used` overlap silently dropped the guard from 31 of 39
+        # earned pockets on a real 72x72 build (every nook north/west of its mouth),
+        # leaving the treasure free -- the exact opposite of the cache grammar.
         interactive = OR.mask_interactive_cells(ident["mask"], x, y)
         if not interactive or not all(c in reach and c not in used for c in interactive):
             return False
@@ -183,8 +198,6 @@ def _place_one(objs, used, reach, rng, st, purpose, pool, x, y,
             bw, bh = bounds
             if any(not (0 <= tx < bw and 0 <= ty < bh) for tx, ty in cells):
                 return False
-        if any(c in used for c in cells):
-            return False
     else:
         cells = _legal(ident, x, y, reach, used, bounds=bounds)
         if cells is None:
@@ -344,9 +357,10 @@ def place_pocket_caches(zone_records, seed=1, bounds=None):
     global_place = global_reach8 & global_open
 
     raw = ZF.find_pockets(global_true)
-    blobs = _dedupe_pockets(raw)
+    blobs = _dedupe_pockets(raw, global_true)
     guard_mask = PG.rnd_monster(1)["mask"]  # uniform across levels 1-7; used to pre-check fit
     objs = []
+    placed_mouths = []
 
     for candidates in blobs:
         # try candidate mouths for this SAME physical nook best-first; fall back instead of
@@ -366,6 +380,10 @@ def place_pocket_caches(zone_records, seed=1, bounds=None):
             mouth, pocket, zid = cand_mouth, cand_pocket, cand_zid
             break
         if mouth is None:
+            continue
+        # thin 1-2 tile nooklets that crowd an already-guarded cache (see POCKET_MIN_SEP)
+        if len(pocket) <= 2 and any(max(abs(mouth[0] - m[0]), abs(mouth[1] - m[1]))
+                                    < POCKET_MIN_SEP for m in placed_mouths):
             continue
         terrain = terrain_of[zid]
         st = PG.mine_gameplay()[terrain]
@@ -410,8 +428,9 @@ def place_pocket_caches(zone_records, seed=1, bounds=None):
         if val:
             lvl = 1 + (val >= 4) + (val >= 7) + (val >= 10) + (val >= 13)
             gident = PG.rnd_monster(lvl + (1 if rng.random() < 0.25 else 0))
-            _place_one(objs, used, global_place, rng, st, "GUARD", None,
-                      mouth[0], mouth[1], ident=gident, bounds=bounds)
+            if _place_one(objs, used, global_place, rng, st, "GUARD", None,
+                          mouth[0], mouth[1], ident=gident, bounds=bounds):
+                placed_mouths.append(mouth)
 
     return objs, len(blobs)
 

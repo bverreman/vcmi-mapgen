@@ -35,6 +35,7 @@ import zone_engine as ZE        # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STATS_PATH = os.path.join(ROOT, "data", "pp", "macro_stats.json")
+STATS_PATH_UNDERGROUND = os.path.join(ROOT, "data", "pp", "macro_stats_underground.json")
 WATER, ROCK = 8, 9
 MIN_ZONE_AREA = 40              # floor for sampled target areas
 JITTER = 1.4                    # growth-cost noise amplitude (0 = pure Voronoi-like fronts)
@@ -45,11 +46,18 @@ BAND = 2                        # boundary-texturing band half-width (tiles)
 # 1. corpus macro statistics
 # ---------------------------------------------------------------------------
 
-def mine_macro(force=False):
+def mine_macro(level=0, force=False):
+    """Corpus macro stats for terrain level `level` (0 = surface, 1 = underground). The
+    underground table is mined independently from `fm["terrain"][1]` of two-level corpus
+    maps — real underground zone areas/adjacency/barrier fraction are statistically distinct
+    from the surface (rock, not subterr, is the dominant barrier terrain there; see corpus
+    histograms in the design notes), so it is never derived from or blended with level-0 stats."""
     import obj_resolve as OR
-    if not force and os.path.exists(STATS_PATH):
-        return json.load(open(STATS_PATH))
-    areas, water_fracs = [], []
+    path = STATS_PATH if level == 0 else STATS_PATH_UNDERGROUND
+    if not force and os.path.exists(path):
+        return json.load(open(path))
+    barrier = WATER if level == 0 else ROCK
+    areas, barrier_fracs = [], []
     terr_share = collections.Counter()
     adj = collections.Counter()                      # "t1|t2" boundary-tile counts, t1 <= t2
     nzones = []
@@ -58,11 +66,13 @@ def mine_macro(force=False):
             fm = OR.load_faithful(nm)
         except Exception:
             continue
-        lvl = fm["terrain"][0]
+        if level >= len(fm["terrain"]):
+            continue
+        lvl = fm["terrain"][level]
         H = len(lvl); W = len(lvl[0]) if H else 0
         T = [[c["t"] for c in row] for row in lvl]
-        nw = sum(1 for row in T for t in row if t == WATER)
-        water_fracs.append(nw / max(W * H, 1))
+        nb = sum(1 for row in T for t in row if t == barrier)
+        barrier_fracs.append(nb / max(W * H, 1))
         zones, zl, _ = ZE._segment_level(lvl)
         big = 0
         for z in zones.values():
@@ -81,11 +91,11 @@ def mine_macro(force=False):
                         b = T[y + dy][x + dx]
                         if a != b and 0 <= a < 8 and 0 <= b < 8:
                             adj[f"{min(a, b)}|{max(a, b)}"] += 1
-    st = {"areas": sorted(areas), "water_fracs": sorted(water_fracs),
+    st = {"areas": sorted(areas), "barrier_fracs": sorted(barrier_fracs),
           "terr_share": {str(k): v for k, v in terr_share.items()},
           "adj": dict(adj), "nzones": nzones}
-    os.makedirs(os.path.dirname(STATS_PATH), exist_ok=True)
-    json.dump(st, open(STATS_PATH, "w"))
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    json.dump(st, open(path, "w"))
     return st
 
 
@@ -102,6 +112,96 @@ def _water_mask(W, H, frac, rng, cell=None):
     flat = sorted(v for row in noise for v in row)
     thr = flat[int(frac * (len(flat) - 1))]
     return [[noise[y][x] <= thr for x in range(W)] for y in range(H)]
+
+
+def _carve_corridor(land, a, b, W, H, rng, half_w=1, protect=None):
+    """Drunken walk from `a` toward `b`, marking a `half_w`-radius band as land — a tunnel,
+    not a straight line, so it reads as a cave passage rather than a ruler-drawn corridor.
+    Cells are also added to `protect` (if given): a thin corridor sits entirely inside the
+    boundary-texturing band on both sides, so without protection `_texture_boundaries`'s
+    Gibbs resampling — drawing from a rock-heavy corpus conditional — can erode the whole
+    tunnel back to rock, disconnecting caverns `_tunnel_mask` had genuinely joined."""
+    x, y = float(a[0]), float(a[1])
+    bx, by = b
+    for _ in range(8 * (abs(a[0] - bx) + abs(a[1] - by)) + 40):
+        ix, iy = int(round(x)), int(round(y))
+        for dy in range(-half_w, half_w + 1):
+            for dx in range(-half_w, half_w + 1):
+                nx, ny = ix + dx, iy + dy
+                if 0 <= nx < W and 0 <= ny < H:
+                    land[ny][nx] = True
+                    if protect is not None:
+                        protect.add((nx, ny))
+        if (ix, iy) == (bx, by):
+            break
+        ddx, ddy = bx - x, by - y
+        dist = max((ddx ** 2 + ddy ** 2) ** 0.5, 1e-6)
+        x += ddx / dist * 0.8 + rng.uniform(-0.6, 0.6)
+        y += ddy / dist * 0.8 + rng.uniform(-0.6, 0.6)
+        x = min(max(x, 1.0), W - 2.0)
+        y = min(max(y, 1.0), H - 2.0)
+
+
+def _tunnel_mask(W, H, land_frac, rng):
+    """Connected cavern+tunnel land mask for the underground level: a handful of organic
+    cavern blobs joined by random-walk corridors (a minimum-spanning-tree over cavern
+    centers, so every cavern is reachable on foot), rather than reusing the surface's
+    water-mask (noise thresholded at a quantile) which produces a scattered archipelago —
+    correct for open water, wrong for rock: rock is a WALL, not something a hero swims
+    across, so an underground level built the same way as a sea strands every cavern in
+    its own sealed pocket. This shape instead matches the user's description of real H3
+    undergrounds: tunnels leading to larger patches, not islands."""
+    budget = max(1, int(round(land_frac * W * H)))
+    n_caverns = max(3, min(8, budget // 90))
+    margin = 6
+    centers = []
+    tries = 0
+    mind2 = (0.6 * (W * H / n_caverns) ** 0.5) ** 2
+    while len(centers) < n_caverns and tries < n_caverns * 300:
+        p = (rng.randint(margin, W - margin - 1), rng.randint(margin, H - margin - 1))
+        tries += 1
+        if all((p[0] - q[0]) ** 2 + (p[1] - q[1]) ** 2 >= mind2 for q in centers):
+            centers.append(p)
+    while len(centers) < n_caverns:
+        centers.append((rng.randint(margin, W - margin - 1), rng.randint(margin, H - margin - 1)))
+
+    noise = ZE._value_noise(W, H, 5, rng)
+    land = [[False] * W for _ in range(H)]
+    protect = set()
+    avg_r = max(3.0, (budget / max(n_caverns, 1) / math.pi) ** 0.5 * 0.7)
+    for cx, cy in centers:
+        r = avg_r * rng.uniform(0.7, 1.4)
+        for y in range(max(0, cy - int(r) - 2), min(H, cy + int(r) + 3)):
+            for x in range(max(0, cx - int(r) - 2), min(W, cx + int(r) + 3)):
+                d = ((x - cx) ** 2 + (y - cy) ** 2) ** 0.5
+                wobble = r * (0.75 + 0.35 * noise[y][x])
+                if d <= wobble:
+                    land[y][x] = True
+
+    # MST over cavern centers (nearest-unconnected-first) + a few extra loop edges
+    connected = {0}
+    remaining = set(range(1, len(centers)))
+    edges = []
+    while remaining:
+        best = None
+        for i in connected:
+            for j in remaining:
+                dx = centers[i][0] - centers[j][0]
+                dy = centers[i][1] - centers[j][1]
+                d2 = dx * dx + dy * dy
+                if best is None or d2 < best[0]:
+                    best = (d2, i, j)
+        _, i, j = best
+        edges.append((i, j))
+        connected.add(j)
+        remaining.discard(j)
+    for _ in range(max(0, n_caverns // 4)):
+        i, j = rng.sample(range(len(centers)), 2)
+        if (i, j) not in edges and (j, i) not in edges:
+            edges.append((i, j))
+    for i, j in edges:
+        _carve_corridor(land, centers[i], centers[j], W, H, rng, protect=protect)
+    return land, protect
 
 
 def _sample_areas(st, budget, rng):
@@ -203,14 +303,19 @@ def _grow(W, H, land, seeds, caps, rng):
 # 4. boundary texturing (the Markov chain, clamped to the border band)
 # ---------------------------------------------------------------------------
 
-def _texture_boundaries(grid, rng, sweeps=3):
+def _texture_boundaries(grid, rng, sweeps=3, level=0, protect=frozenset()):
     """Isotropic Gibbs sweeps of the learned 4-neighbour terrain conditional, RESTRICTED to
     tiles within BAND (Chebyshev) of a terrain change; everything else is clamped, so the
-    interiors keep their planned terrain and only the borders gain corpus transition texture."""
+    interiors keep their planned terrain and only the borders gain corpus transition texture.
+    `level` selects which terrain level's corpus transitions to learn from (0 or 1);
+    `markov_terrain.learn`/`learn4` already filter to maps that have that level. `protect`
+    cells (e.g. underground tunnel corridors, which are thin enough to sit entirely inside
+    the band on both sides) are excluded from resampling so a rock-heavy corpus conditional
+    can't erode a load-bearing connection back into barrier."""
     import markov_terrain as MT
     H = len(grid); W = len(grid[0])
-    M4 = MT.learn4(0)
-    M = MT.learn(0)
+    M4 = MT.learn4(level)
+    M = MT.learn(level)
     band = [[False] * W for _ in range(H)]
     for y in range(H):
         for x in range(W):
@@ -221,7 +326,8 @@ def _texture_boundaries(grid, rng, sweeps=3):
                     for dx in range(-BAND, BAND + 1):
                         if 0 <= x + dx < W and 0 <= y + dy < H:
                             band[y + dy][x + dx] = True
-    tiles = [(x, y) for y in range(1, H - 1) for x in range(1, W - 1) if band[y][x]]
+    tiles = [(x, y) for y in range(1, H - 1) for x in range(1, W - 1)
+             if band[y][x] and (x, y) not in protect]
     for _ in range(sweeps):
         rng.shuffle(tiles)
         for (x, y) in tiles:
@@ -243,23 +349,39 @@ def _texture_boundaries(grid, rng, sweeps=3):
 # generate
 # ---------------------------------------------------------------------------
 
-def generate(W, H, seed=3, water=None, texture=True, water_mode="normal"):
-    """Macro terrain grid (H rows x W cols of terrain ids). `water` overrides the corpus-drawn
-    water fraction; `water_mode` picks the water STYLE: 'none' (pure land), 'normal'
-    (corpus-drawn seas/lakes), 'islands' (dominant water + finer noise -> archipelago).
+def generate(W, H, seed=3, water=None, texture=True, water_mode="normal", level=0,
+             protect_out=None):
+    """Macro terrain grid (H rows x W cols of terrain ids) for terrain level `level` (0 =
+    surface, 1 = underground). `water` overrides the corpus-drawn barrier fraction (water on
+    the surface, rock underground); `water_mode` picks the surface water STYLE: 'none' (pure
+    land), 'normal' (corpus-drawn seas/lakes), 'islands' (dominant water + finer noise ->
+    archipelago) — the underground level always carves its barrier (rock) at a corpus-drawn
+    fraction, but as a connected cavern+tunnel network (`_tunnel_mask`), not a water-style
+    archipelago: rock is a wall a hero cannot swim past, so undergrounds must stay walkable
+    between caverns the way real H3 maps do (tunnels leading to larger patches).
+    `protect_out`, if given a set, is updated in-place with the tunnel-corridor cells that
+    downstream steps (notably `zone_engine.tile_terrain`'s despeckle merge) must never
+    reassign to a barrier code, or a thin corridor can be eroded back into rock after
+    `generate()` already built it connected.
     Deterministic in `seed`."""
     rng = random.Random(seed)
-    st = mine_macro()
-    if water_mode == "none":
-        wf, cell = 0.0, None
-    elif water_mode == "islands":
-        wf = rng.uniform(0.45, 0.60) if water is None else water
-        cell = max(4, min(W, H) // 10)
+    st = mine_macro(level=level)
+    barrier = WATER if level == 0 else ROCK
+    protect = frozenset()
+    if level == 1:
+        rf = rng.choice(st["barrier_fracs"]) if water is None else water
+        land, protect = _tunnel_mask(W, H, 1.0 - rf, rng)
     else:
-        wf = rng.choice(st["water_fracs"]) if water is None else water
-        cell = None
-    wmask = _water_mask(W, H, wf, rng, cell)
-    land = [[not wmask[y][x] for x in range(W)] for y in range(H)]
+        if water_mode == "none":
+            wf, cell = 0.0, None
+        elif water_mode == "islands":
+            wf = rng.uniform(0.45, 0.60) if water is None else water
+            cell = max(4, min(W, H) // 10)
+        else:
+            wf = rng.choice(st["barrier_fracs"]) if water is None else water
+            cell = None
+        bmask = _water_mask(W, H, wf, rng, cell)
+        land = [[not bmask[y][x] for x in range(W)] for y in range(H)]
     budget = sum(1 for row in land for v in row if v)
 
     caps = _sample_areas(st, budget, rng)
@@ -279,10 +401,12 @@ def generate(W, H, seed=3, water=None, texture=True, water_mode="normal"):
     terrs = _assign_terrains(seeds, st, rng)
 
     label = _grow(W, H, land, seeds, caps, rng)
-    grid = [[WATER if not land[y][x] else terrs[label[y][x]] if label[y][x] >= 0 else terrs[0]
+    grid = [[barrier if not land[y][x] else terrs[label[y][x]] if label[y][x] >= 0 else terrs[0]
              for x in range(W)] for y in range(H)]
     if texture:
-        _texture_boundaries(grid, rng)
+        _texture_boundaries(grid, rng, level=level, protect=protect)
+    if protect_out is not None:
+        protect_out |= protect
     return grid
 
 
@@ -301,15 +425,17 @@ def main():
     ap.add_argument("--seed", type=int, default=3)
     ap.add_argument("--size", type=int, default=72)
     ap.add_argument("--water", type=float, default=None)
+    ap.add_argument("--level", type=int, default=0, help="0=surface, 1=underground")
     ap.add_argument("--regen-stats", action="store_true")
     args = ap.parse_args()
     if args.regen_stats:
-        mine_macro(force=True)
-    st = mine_macro()
-    print(f"macro stats: {len(st['areas'])} corpus zones, "
+        mine_macro(level=args.level, force=True)
+    st = mine_macro(level=args.level)
+    barrier_name = "water" if args.level == 0 else "rock"
+    print(f"macro stats (level {args.level}): {len(st['areas'])} corpus zones, "
           f"median area {st['areas'][len(st['areas']) // 2]}, "
-          f"median water frac {st['water_fracs'][len(st['water_fracs']) // 2]:.2f}")
-    grid = generate(args.size, args.size, seed=args.seed, water=args.water)
+          f"median {barrier_name} frac {st['barrier_fracs'][len(st['barrier_fracs']) // 2]:.2f}")
+    grid = generate(args.size, args.size, seed=args.seed, water=args.water, level=args.level)
     print("generated:", report(grid))
     import render as RND
     lvl = [[{"t": t, "river": False, "road": False} for t in row] for row in grid]

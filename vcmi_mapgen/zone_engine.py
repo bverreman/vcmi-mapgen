@@ -1387,9 +1387,12 @@ MIN_TERRAIN_PATCH = 4   # no terrain patch smaller than this — tiny speckles a
 #                         fragment the map into unplayable sliver-zones).
 
 
-def _despeckle_ids(ids, W, H, min_patch=MIN_TERRAIN_PATCH):
+def _despeckle_ids(ids, W, H, min_patch=MIN_TERRAIN_PATCH, protect=frozenset()):
     """Reassign every connected same-terrain patch smaller than ``min_patch`` tiles to the terrain
-    it borders most, iterating until no small patch remains (a merge can expose a new one)."""
+    it borders most, iterating until no small patch remains (a merge can expose a new one).
+    `protect` cells are never merged: a thin corridor (e.g. an underground tunnel) can flank
+    rock on both long sides, so a short same-id stretch along it would otherwise out-vote to
+    rock and sever a connection the generator built on purpose."""
     ids = [row[:] for row in ids]
     NB4 = ((1, 0), (-1, 0), (0, 1), (0, -1))
     for _ in range(24):
@@ -1415,7 +1418,7 @@ def _despeckle_ids(ids, W, H, min_patch=MIN_TERRAIN_PATCH):
                 cid += 1
         changed = False
         for tiles, t in comps:
-            if len(tiles) >= min_patch:
+            if len(tiles) >= min_patch or any(tp in protect for tp in tiles):
                 continue
             nbr = collections.Counter()
             for x, y in tiles:
@@ -1433,10 +1436,11 @@ def _despeckle_ids(ids, W, H, min_patch=MIN_TERRAIN_PATCH):
     return ids
 
 
-def tile_terrain(id_grid, W, H):
+def tile_terrain(id_grid, W, H, protect=frozenset()):
     """Terrain-id grid -> faithful cell grid with corpus-correct transition views. Tiny terrain
-    speckles (< MIN_TERRAIN_PATCH tiles) are first merged into their dominant neighbour."""
-    id_grid = _despeckle_ids(id_grid, W, H)
+    speckles (< MIN_TERRAIN_PATCH tiles) are first merged into their dominant neighbour;
+    `protect` cells are exempt (see `_despeckle_ids`)."""
+    id_grid = _despeckle_ids(id_grid, W, H, protect=protect)
     tiler = _learn_terrain_tiler()
     return [[_tile_cell(id_grid[y][x], _neigh8(id_grid, x, y, W, H, id_grid[y][x]), x, y, tiler)
              for x in range(W)] for y in range(H)]
@@ -4074,13 +4078,21 @@ def cmd_generate(args):
         import render_editor as RED
         players = getattr(args, "players", 2)
         wmode = getattr(args, "water_mode", None) or ("none" if args.no_water else "normal")
-        cells, surf, objs, info, ptowns = pp_map.build(seed=args.seed, size=args.size,
-                                                       players=players, water_mode=wmode)
+        subterrain = getattr(args, "subterrain", False)
+        levels, surfs, objs, info, ptowns = pp_map.build(seed=args.seed, size=args.size,
+                                                         players=players, water_mode=wmode,
+                                                         subterrain=subterrain)
         print(info)
         png = os.path.join(ROOT, "out", "render", "pp", f"ppmap_s{args.seed}.png")
         os.makedirs(os.path.dirname(png), exist_ok=True)
-        RED.render_map(surf, objs, title="").save(png)
-        vmap = pp_map.export_vmap(cells, objs,
+        objs0 = [o for o in objs if o.get("l", 0) == 0]
+        RED.render_map(surfs[0], objs0, title="").save(png)
+        if subterrain:
+            png1 = os.path.join(ROOT, "out", "render", "pp", f"ppmap_s{args.seed}_L1.png")
+            objs1 = [dict(o, l=0) for o in objs if o.get("l", 0) == 1]
+            RED.render_map(surfs[1], objs1, title="").save(png1)
+            print(f"  {png1}")
+        vmap = pp_map.export_vmap(levels, objs,
                                   os.path.join(ROOT, "out", "vmap", f"ppmap_s{args.seed}.vmap"),
                                   name=f"pp-map s{args.seed}")
         if ptowns:
@@ -4235,6 +4247,9 @@ def main():
                     help="[pp layout] team matrix: 'ffa', '2v2'-style, or explicit '0,0,1,1'")
     pg.add_argument("--water-mode", choices=["none", "normal", "islands"], default=None,
                     dest="water_mode", help="[pp layout] water style")
+    pg.add_argument("--subterrain", action="store_true",
+                    help="[pp layout] add a second, underground level connected to the "
+                         "surface by Subterranean Gate pairs")
     pg.set_defaults(func=cmd_generate)
 
     args = ap.parse_args()

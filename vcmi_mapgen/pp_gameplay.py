@@ -29,7 +29,10 @@ import zone_field as ZF  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STATS_PATH = os.path.join(ROOT, "data", "pp", "gameplay_stats.json")
+STATS_PATH_UNDERGROUND = os.path.join(ROOT, "data", "pp", "gameplay_stats_underground.json")
 STATS_VERSION = 5  # v5: border open fraction + full-front gate distances
+GATE_STATS_PATH = os.path.join(ROOT, "data", "pp", "gate_stats.json")
+GATE_STATS_VERSION = 1
 MIN_AREA_STATS = 60
 TOWN_MIN_AREA = 150  # a town needs a real zone
 VISIT_PURPOSES = ("STAT_PERMANENT", "SPELL_SKILL", "BONUS_TEMP", "MANA", "INFO")
@@ -55,6 +58,29 @@ CAPS = {"TOWN": 1, "MINE": 8, "DWELLING": 6, "VISIT": 12, "BANK": 4}
 # the six basic resource mines every map must cover (gold is the deliberate exception:
 # only worth placing when the map holds several towns)
 BASIC_MINE_RES = ("sawmill", "orePit", "alchemistLab", "sulfurDune", "crystalCavern", "gemPond")
+# every base-game learnable spell (config/spells/{adventure,other,offensive,timed}.json,
+# indices 0-69) — a town's Mage Guild picks its taught spells from this pool, so omitting
+# it (as opposed to leaving it empty) is what VCMI reads as "no spells available". Creature
+# abilities (config/spells/ability.json, indices 70-81: stoneGaze, poison, ...) are not
+# learnable spells and are excluded, matching real VCMI RMG output.
+CORE_SPELLS = [
+    "core:" + name
+    for name in (
+        "summonBoat", "scuttleBoat", "visions", "viewEarth", "disguise", "viewAir", "fly",
+        "waterWalk", "dimensionDoor", "townPortal",
+        "quicksand", "landMine", "forceField", "fireWall", "earthquake", "dispel", "cure",
+        "resurrection", "animateDead", "sacrifice", "teleport", "removeObstacle", "clone",
+        "fireElemental", "earthElemental", "waterElemental", "airElemental",
+        "magicArrow", "iceBolt", "lightningBolt", "implosion", "chainLightning", "frostRing",
+        "fireball", "inferno", "meteorShower", "deathRipple", "destroyUndead", "armageddon",
+        "titanBolt",
+        "shield", "airShield", "fireShield", "protectAir", "protectFire", "protectWater",
+        "protectEarth", "antiMagic", "magicMirror", "bless", "curse", "bloodlust",
+        "precision", "weakness", "stoneSkin", "disruptingRay", "prayer", "mirth", "sorrow",
+        "fortune", "misfortune", "haste", "slow", "slayer", "frenzy", "counterstrike",
+        "berserk", "hypnotize", "forgetfulness", "blind",
+    )
+]
 LAND = ("dirt", "sand", "grass", "snow", "swamp", "rough", "subterr", "lava")
 MINED_TERR = LAND + ("water",)
 EB, GB, OB = 6, 4, 4  # covariate bins: edge-dist, gate-dist, openness
@@ -140,8 +166,9 @@ def openness(open_set):
     return out
 
 
-def mine_gameplay(force=False):
-    """Corpus statistics for the FULL L3 intensity fit, per terrain:
+def mine_gameplay(level=0, force=False):
+    """Corpus statistics for the FULL L3 intensity fit, per terrain, for terrain level `level`
+    (0 = surface, 1 = underground):
 
     - per-purpose counts + animation frequencies (density and mix),
     - per-purpose covariate histograms — counts by edge-dist bin, gate-dist bin, and (for
@@ -151,10 +178,16 @@ def mine_gameplay(force=False):
     - guardedness: fraction of resource piles / pickups / MINES with a GUARD within
       Chebyshev 3,
     - a "water" entry: purpose densities inside water zones (flotsam, buoys, boats,
-      shipwrecks, whirlpools, sea guards).
+      shipwrecks, whirlpools, sea guards) — water can appear on either level.
+
+    The underground table (`level=1`) is mined independently from two-level corpus maps'
+    `fm["terrain"][1]`, exactly mirroring the surface mining below — never derived from or
+    blended with the level-0 table (real underground object density is statistically
+    distinct: smaller, sparser zones), matching `macro_topo.mine_macro`'s precedent.
     """
-    if not force and os.path.exists(STATS_PATH):
-        st = json.load(open(STATS_PATH))
+    path = STATS_PATH if level == 0 else STATS_PATH_UNDERGROUND
+    if not force and os.path.exists(path):
+        st = json.load(open(path))
         if st.get("_version") == STATS_VERSION:
             return st
     import ontology as _ON
@@ -180,16 +213,19 @@ def mine_gameplay(force=False):
             fm = OR.load_faithful(nm)
         except Exception:
             continue
-        zones, zl, _ = ZE._segment_level(fm["terrain"][0])
+        if level >= len(fm["terrain"]):
+            continue
+        zones, zl, _ = ZE._segment_level(fm["terrain"][level])
         guards = {
             (o["x"], o["y"])
             for o in fm["objects"]
-            if o.get("l", 0) == 0 and OR.purpose_of(o) == "GUARD"
+            if o.get("l", 0) == level and OR.purpose_of(o) == "GUARD"
         }
-        # water is a segmentation BARRIER (no zones) — mine it as raw tiles per map
+        # water is a segmentation BARRIER (no zones) — mine it as raw tiles per map (water
+        # can appear on either level: real underground corpus maps show water/lava pockets)
         wtiles = {
             (x, y)
-            for y, row in enumerate(fm["terrain"][0])
+            for y, row in enumerate(fm["terrain"][level])
             for x, c in enumerate(row)
             if c["t"] == 8
         }
@@ -197,7 +233,7 @@ def mine_gameplay(force=False):
             aw = acc["water"]
             aw["tiles"] += len(wtiles)
             for o in fm["objects"]:
-                if o.get("l", 0) != 0 or (o["x"], o["y"]) not in wtiles:
+                if o.get("l", 0) != level or (o["x"], o["y"]) not in wtiles:
                     continue
                 p = OR.purpose_of(o)
                 if p in ALL_PURPOSES:
@@ -219,7 +255,9 @@ def mine_gameplay(force=False):
             front_union = set().union(*fronts.values()) if fronts else set()
             gd = gate_dist(ts, front_union or ZF._zone_gates(ts, zones, zid))
             veg_blocked, all_blocked = set(), set()
-            zone_objs = [o for o in fm["objects"] if o.get("l", 0) == 0 and (o["x"], o["y"]) in ts]
+            zone_objs = [
+                o for o in fm["objects"] if o.get("l", 0) == level and (o["x"], o["y"]) in ts
+            ]
             for o in zone_objs:
                 is_decor = OR.purpose_of(o) == "DECORATION"
                 anim = (o.get("animation") or "").lower().removesuffix(".def")
@@ -274,8 +312,42 @@ def mine_gameplay(force=False):
                 for p in ("RESOURCE_PILE", "REWARD_PICKUP", "MINE")
             },
         }
-    os.makedirs(os.path.dirname(STATS_PATH), exist_ok=True)
-    json.dump(st, open(STATS_PATH, "w"))
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    json.dump(st, open(path, "w"))
+    return st
+
+
+def mine_gate_stats(force=False):
+    """Corpus SUBTERRANEAN_GATE frequency: gates per 1000 underground (non-rock) tiles,
+    averaged over two-level corpus maps — scales generated gate counts to map size, the same
+    density-driven approach as every other placed purpose (never a hand-picked constant)."""
+    if not force and os.path.exists(GATE_STATS_PATH):
+        st = json.load(open(GATE_STATS_PATH))
+        if st.get("_version") == GATE_STATS_VERSION:
+            return st
+    rates = []
+    for nm in OR.all_map_names():
+        try:
+            fm = OR.load_faithful(nm)
+        except Exception:
+            continue
+        if len(fm["terrain"]) < 2:
+            continue
+        ug = fm["terrain"][1]
+        ug_area = sum(1 for row in ug for c in row if c["t"] != 9)
+        if ug_area < MIN_AREA_STATS:
+            continue
+        n_gates = sum(
+            1
+            for o in fm["objects"]
+            if o.get("l", 0) == 0
+            and (o.get("animation") or "").lower().removesuffix(".def") == "avtcave"
+        )
+        rates.append(n_gates / ug_area * 1000)
+    per_1000 = sum(rates) / len(rates) if rates else 3.0
+    st = {"_version": GATE_STATS_VERSION, "per_1000_tiles": per_1000, "n_maps": len(rates)}
+    os.makedirs(os.path.dirname(GATE_STATS_PATH), exist_ok=True)
+    json.dump(st, open(GATE_STATS_PATH, "w"))
     return st
 
 
@@ -324,17 +396,22 @@ GAP = 2  # free tiles kept between any two gameplay footprints — gameplay
 # neighbours VEGETATION (which fills the gap), not other gameplay
 
 
-def _fits(ident, ax, ay, ts, occupied, near, reserved):
+def _fits(ident, ax, ay, ts, occupied, near, reserved, avoid=frozenset()):
     """Legality: whole footprint in-zone, at least GAP free tiles from every other gameplay
     footprint (`near` = existing cells inflated by GAP), no squatting on an earlier object's
-    approach tile (`reserved`), own approach tile in-zone and standable."""
+    approach tile (`reserved`), own approach tile in-zone and standable. `avoid` (the
+    underground tunnel/gate-connector protect set — empty on the surface) keeps gameplay
+    footprints off cells terrain generation already fought to keep walkable: those cells
+    are guarded from vegetation via `protected_web`, but gameplay placement runs BEFORE
+    that web is built, so without this check a town/mine/monster footprint could still
+    silently wall off a corridor that vegetation would otherwise have left alone."""
     allc, blk, approach = _cells(ident, ax, ay)
     if approach is None:
         return None
     for cell in allc:
-        if cell not in ts or cell in near or cell in reserved:
+        if cell not in ts or cell in near or cell in reserved or cell in avoid:
             return None
-    if approach not in ts or approach in occupied or approach in blk:
+    if approach not in ts or approach in occupied or approach in blk or approach in avoid:
         return None
     return allc, blk, approach
 
@@ -359,20 +436,21 @@ def _intensity_weights(ts, purpose, st_t, ed, gd, op=None):
     return w
 
 
-def _info_pool(terrain, has_water):
+def _info_pool(terrain, has_water, has_subterrain=False):
     """`ON.gameplay_pool(terrain, "INFO")`, minus cartographer subtypes the map can't back up:
-    cartographerSubterranean never fits (this generator has no underground level yet — revisit
-    once `--subterrain` exists) and cartographerWater is dropped on maps with no water at all."""
+    cartographerSubterranean is dropped unless the map actually has a second level, and
+    cartographerWater is dropped on maps with no water at all."""
     pool = ON.gameplay_pool(terrain, "INFO")
     return [
         i for i in pool
-        if i.get("subtype") != "cartographerSubterranean"
+        if (i.get("subtype") != "cartographerSubterranean" or has_subterrain)
         and (i.get("subtype") != "cartographerWater" or has_water)
     ]
 
 
 def place_zone(ts, zones, zid, terrain, seed=1, coastal=frozenset(), force_town=False, ledger=None,
-                has_water=False):
+                has_water=False, level=0, has_subterrain=False, avoid=frozenset(),
+                preoccupied=frozenset(), preblocked=frozenset(), preapproaches=()):
     """Gameplay objects for one zone. Returns (objs, occupied, blocked, approaches):
     `occupied` = every footprint cell (no vegetation there), `blocked` = the impassable
     subset (the walkable web must route around these; approach tiles are never in it).
@@ -396,10 +474,28 @@ def place_zone(ts, zones, zid, terrain, seed=1, coastal=frozenset(), force_town=
     makes mine types a MAP-level economy: {"missing": set of BASIC_MINE_RES not yet placed
     anywhere, "towns": towns expected+placed so far, "gold": gold mines placed so far}.
     Zones draw globally-missing resource types first, and a gold mine may only be drawn
-    while gold < towns - 1 (gold is worth placing only on multi-town maps)."""
+    while gold < towns - 1 (gold is worth placing only on multi-town maps).
+
+    `level` (0 = surface, 1 = underground) selects the level's own corpus stats table
+    (`mine_gameplay(level=level)`) — real underground density is mined separately, never
+    derived from the surface. Placed objects still carry `l=0`; `pp_map.build()` retags the
+    whole underground level's objects in one post-processing pass, so this function's
+    internal placement logic stays level-agnostic.
+
+    `avoid` (the underground tunnel/gate-connector protect set — empty on the surface) is
+    off-limits to every footprint AND approach tile placed here, so a town/mine/monster can
+    never wall off a corridor terrain generation already fought to keep connected.
+
+    `preoccupied`/`preblocked`/`preapproaches` seed this zone's occupied/blocked/approach
+    state with an object placed BEFORE this zone's own gameplay pass — namely a Subterranean
+    Gate (`pp_map.build()` runs `place_gates` right after segmentation, ahead of every zone's
+    density pass, so a gate claims its own small footprint first and everything downstream
+    — this function's own placements, then vegetation/scatter via the `occupied`/`approaches`
+    this function returns — treats it exactly like a pre-existing mine or town: avoided by
+    its footprint + the ordinary GAP buffer only, not a large separately-reserved clearing."""
     import random
 
-    st = mine_gameplay()[terrain]
+    st = mine_gameplay(level=level)[terrain]
     dens = {p: c / max(st["tiles"], 1) for p, c in st["counts"].items()}
     area = len(ts)
     rng = random.Random(seed ^ (zid * 40503) ^ 0x5EED)
@@ -534,7 +630,11 @@ def place_zone(ts, zones, zid, terrain, seed=1, coastal=frozenset(), force_town=
     vw = [st["counts"].get(p, 0) + 0.2 for p in VISIT_PURPOSES]
     for _ in range(n_visit):
         p = rng.choices(VISIT_PURPOSES, weights=vw, k=1)[0]
-        pool = _info_pool(terrain, has_water) if p == "INFO" else ON.gameplay_pool(terrain, p)
+        pool = (
+            _info_pool(terrain, has_water, has_subterrain)
+            if p == "INFO"
+            else ON.gameplay_pool(terrain, p)
+        )
         ident = pick(pool, p)
         if ident:
             wanted.append((p, ident))
@@ -552,8 +652,12 @@ def place_zone(ts, zones, zid, terrain, seed=1, coastal=frozenset(), force_town=
     tiles_sorted = sorted(ts)
     wcache = {}
 
-    objs, occupied, blocked, approaches = [], set(), set(), []
+    objs, occupied, blocked, approaches = [], set(preoccupied), set(preblocked), list(preapproaches)
     near = set()  # occupied inflated by GAP (separation zone)
+    for cx2, cy2 in preoccupied:
+        for gx in range(-GAP, GAP + 1):
+            for gy in range(-GAP, GAP + 1):
+                near.add((cx2 + gx, cy2 + gy))
 
     def emit(purpose, ident, x, y):
         o = {
@@ -578,7 +682,8 @@ def place_zone(ts, zones, zid, terrain, seed=1, coastal=frozenset(), force_town=
                         "core:dwellingLvl1",
                         "core:dwellingLvl2",
                     ]
-                }
+                },
+                "possibleSpells": CORE_SPELLS,  # mage guild teaches from the full pool
             }
         objs.append(o)
 
@@ -638,11 +743,12 @@ def place_zone(ts, zones, zid, terrain, seed=1, coastal=frozenset(), force_town=
             cands = rng.choices(tiles_sorted, weights=weights, k=80)
             spiral = _SPIRAL[:25]
         for node in cands:
-            fit = _fits(ident, node[0], node[1], ts, occupied, near, set(approaches))
+            fit = _fits(ident, node[0], node[1], ts, occupied, near, set(approaches), avoid=avoid)
             if fit is None:  # nudge: try a tight spiral at the sample
                 for dx, dy in spiral:
                     fit = _fits(
-                        ident, node[0] + dx, node[1] + dy, ts, occupied, near, set(approaches)
+                        ident, node[0] + dx, node[1] + dy, ts, occupied, near, set(approaches),
+                        avoid=avoid,
                     )
                     if fit:
                         node = (node[0] + dx, node[1] + dy)
@@ -679,7 +785,7 @@ def place_zone(ts, zones, zid, terrain, seed=1, coastal=frozenset(), force_town=
                             (ex - 1, ey + 1),
                             (ex + 1, ey + 1),
                         ):
-                            if (sx, sy) in ts and (sx, sy) not in occupied:
+                            if (sx, sy) in ts and (sx, sy) not in occupied and (sx, sy) not in avoid:
                                 seal_cell(rng.choice(seal_pool), sx, sy)
                 break
 
@@ -693,7 +799,7 @@ def place_zone(ts, zones, zid, terrain, seed=1, coastal=frozenset(), force_town=
         cand = sorted(coastal)
         rng.shuffle(cand)
         for c in cand[:150]:
-            fit = _fits(ident, c[0], c[1], ts, occupied, near, set(approaches))
+            fit = _fits(ident, c[0], c[1], ts, occupied, near, set(approaches), avoid=avoid)
             if fit:
                 settle("WATER_TRANSPORT", ident, fit, c)
                 break
@@ -702,11 +808,11 @@ def place_zone(ts, zones, zid, terrain, seed=1, coastal=frozenset(), force_town=
     # ZF._zone_gate_bands), so most crossings have no real bottleneck at all — guarding an
     # arbitrary "least open" tile inside a wide band never actually blocks anything (the hero
     # just walks around it through the rest of the band). A crossing only deserves a guard
-    # when it is a genuine chokepoint: `ZF.find_pockets(ts)` finds every tile that is the SOLE
-    # entrance neck of a bounded (<=16x16) pocket of this zone's own shape (user's own
-    # definition). A gate band tile that is ALSO one of those mouths sits inside a narrow
-    # niche that happens to open onto the neighbouring zone — that is worth guarding; a gate
-    # band tile that is not is just open ground, and stays unguarded.
+    # when it is a genuine chokepoint: `ZF.find_pockets(ts)` finds every tile from which one
+    # guard's zone of control seals a bounded (<=16-tile) pocket of this zone's own shape.
+    # A gate band tile that is ALSO one of those mouths sits inside a narrow niche that
+    # happens to open onto the neighbouring zone — that is worth guarding; a gate band tile
+    # that is not is just open ground, and stays unguarded.
     pocket_mouths = ZF.find_pockets(ts)
     for rep, band in sorted(gate_bands):
         cands = [t for t in band if t in ts and t not in occupied and t in pocket_mouths]
@@ -739,14 +845,95 @@ def place_zone(ts, zones, zid, terrain, seed=1, coastal=frozenset(), force_town=
     return objs, occupied, blocked, approaches
 
 
+GATE_ANIM = "avtcave"  # SUBTERRANEAN_GATE — single un-suffixed sprite variant
+
+
+def place_gates(ts0, ts1, occ0, occ1, appr0=frozenset(), appr1=frozenset(), seed=1):
+    """Subterranean Gate pairs: one `avtcave` object at the IDENTICAL (x, y) on both levels —
+    `traverse.py`'s `_gate_links` already pairs gates by exact-(x, y) match, so no other
+    linking is needed. Candidates are tiles walkable on BOTH levels (`ts0 & ts1`); footprint
+    legality (`_fits`, reused unchanged) is checked against the UNION of both levels' already-
+    placed gameplay footprints (`occ0`/`occ1`, GAP-inflated the same way `place_zone` does
+    internally) plus their existing approach tiles (`appr0`/`appr1`, so a gate can never
+    squat on a mine's or town's doorway), so a gate can never land on top of existing
+    objects on either side. Gate count is corpus-scaled (`mine_gate_stats`), clamped to a
+    sane range for typical map sizes. The underground-side approach — the harder, descending
+    direction — gets a random monster guard at the corpus zone-gate probability (0.65,
+    matching `place_zone`'s own gate-band convention); the surface side is left open.
+
+    Returns `(objs0, occ0, blk0, appr0), (objs1, occ1, blk1, appr1)` — the same 4-tuple shape
+    `place_zone` returns per level, so `pp_map.build()` folds gate placement into its existing
+    per-level object/occupied/blocked/approach aggregation with no special-casing."""
+    import random
+
+    rng = random.Random(seed ^ 0x6A7E)
+    objs0, objs1 = [], []
+    occ0n, occ1n = set(), set()
+    blk0n, blk1n = set(), set()
+    appr0n, appr1n = [], []
+    ts_both = ts0 & ts1
+    if not ts_both:
+        return (objs0, occ0n, blk0n, appr0n), (objs1, occ1n, blk1n, appr1n)
+    st = mine_gate_stats()
+    target = max(2, min(6, round(st["per_1000_tiles"] * len(ts1) / 1000)))
+    ident = ON.identity_of(GATE_ANIM)
+    cands = sorted(ts_both)
+    rng.shuffle(cands)
+    occupied = set(occ0) | set(occ1)
+    near = set()
+    for cx, cy in occupied:
+        for gx in range(-GAP, GAP + 1):
+            for gy in range(-GAP, GAP + 1):
+                near.add((cx + gx, cy + gy))
+    reserved = set(appr0) | set(appr1)
+    for c in cands:
+        if len(objs0) >= target:
+            break
+        fit = _fits(ident, c[0], c[1], ts_both, occupied, near, reserved)
+        if fit is None:
+            continue
+        allc, blk, approach = fit
+        occupied.update(allc)
+        for cx, cy in allc:
+            for gx in range(-GAP, GAP + 1):
+                for gy in range(-GAP, GAP + 1):
+                    near.add((cx + gx, cy + gy))
+        reserved.add(approach)
+        for lvl, objs, occn, blkn, apprn in (
+            (0, objs0, occ0n, blk0n, appr0n),
+            (1, objs1, occ1n, blk1n, appr1n),
+        ):
+            objs.append({
+                "x": c[0], "y": c[1], "l": lvl, "purpose": "TRANSPORT",
+                "type": ident.get("type"), "subtype": ident.get("subtype"),
+                "animation": ident["animation"], "mask": ident["mask"],
+                "template": {"animation": ident["animation"], "mask": ident["mask"]},
+            })
+            occn.update(allc)
+            blkn.update(blk)
+            apprn.append(approach)
+        if rng.random() < 0.65:  # guard only the underground (descending) approach
+            gident = rnd_monster(3)
+            objs1.append({
+                "x": approach[0], "y": approach[1], "l": 1, "purpose": "GUARD",
+                "type": gident.get("type"), "subtype": gident.get("subtype"),
+                "animation": gident["animation"], "mask": gident["mask"],
+                "template": {"animation": gident["animation"], "mask": gident["mask"]},
+                "options": {"character": "hostile"},
+            })
+            occ1n.add(approach)
+    return (objs0, occ0n, blk0n, appr0n), (objs1, occ1n, blk1n, appr1n)
+
+
 # purposes deliberately NOT reproduced by the generator (the audit's whitelist)
 AUDIT_EXCLUDED = {
     "TRANSPORT": "relational (monolith/portal pairing) — out of scope, spec §19",
     "GUARD": "guards are leveled RANDOM monsters by design, never corpus identities",
 }
-# corpus sprite VARIANTS of ontology objects: the fort-less 'village' town sprites are the
-# same gameplay object as the editor's forted '..x0' towns (fort state is a town option,
-# not a distinct visitable) — the audit treats them as reachable through their canonical
+# corpus sprite VARIANTS of ontology objects: same {type, subtype} gameplay object under a
+# different DEF filename (fort-less 'village' town sprites vs the editor's forted '..x0'
+# sprite; the corpus's "AVGnoll" gnoll-hut DEF vs the editor table's "avggnll0") — the audit
+# treats them as reachable through their canonical animation.
 TOWN_SPRITE_VARIANTS = {
     "avcrand0": "avcranx0",
     "avccast0": "avccasx0",
@@ -758,6 +945,7 @@ TOWN_SPRITE_VARIANTS = {
     "avcstro0": "avcstrx0",
     "avcftrt0": "avcftrx0",
     "avchfor0": "avchforx",
+    "avgnoll": "avggnll0",
 }
 # purposes the generator actually places on land (BANK included since the land-bank change)
 PLACED_PURPOSES = (
@@ -767,13 +955,15 @@ PLACED_PURPOSES = (
 ) - set(AUDIT_EXCLUDED)
 
 
-def audit_variety():
+def audit_variety(level=0):
     """Corpus-variety audit: every (purpose, animation) with a nonzero corpus count on land
     must (a) resolve through the ontology and (b) be reachable through a generator pool —
     i.e. its purpose is placed and the animation sits in `gameplay_pool` for at least one
     land terrain (or it is an editor RANDOM class, placed by convention). Returns a list of
-    gap dicts (empty = the generated maps can reach the corpus's full visitable variety)."""
-    st = mine_gameplay()
+    gap dicts (empty = the generated maps can reach the corpus's full visitable variety).
+    `level` selects which level's corpus stats table to audit (0 = surface, 1 = underground:
+    both must stay green since `--subterrain` places gameplay from the level-1 table too)."""
+    st = mine_gameplay(level=level)
     seen = {}  # (purpose, anim) -> total corpus count
     for terr in LAND:
         for p, anims in st[terr]["anim_w"].items():
@@ -828,21 +1018,28 @@ if __name__ == "__main__":
         "--audit",
         action="store_true",
         help="corpus-variety audit: report corpus objects the generator cannot "
-        "reproduce (empty output = full variety reachable)",
+        "reproduce (empty output = full variety reachable). Audits both terrain "
+        "levels (surface + underground) unless --level is given.",
     )
+    ap.add_argument("--level", type=int, default=None, help="0=surface, 1=underground")
     args = ap.parse_args()
-    st = mine_gameplay()
     if args.audit:
-        gaps = audit_variety()
-        for reason, note in AUDIT_EXCLUDED.items():
-            print(f"excluded {reason}: {note}")
-        if not gaps:
-            print("AUDIT OK: every corpus (purpose, animation) on land is reachable")
-        else:
-            print(f"AUDIT: {len(gaps)} gaps")
-            for g in gaps:
-                print(f"  {g['purpose']:<15} {g['anim']:<10} corpus n={g['count']:>5}  {g['why']}")
-        raise SystemExit(0 if not gaps else 1)
+        levels = [args.level] if args.level is not None else [0, 1]
+        bad = False
+        for lvl in levels:
+            gaps = audit_variety(level=lvl)
+            print(f"-- level {lvl} --")
+            for reason, note in AUDIT_EXCLUDED.items():
+                print(f"excluded {reason}: {note}")
+            if not gaps:
+                print("AUDIT OK: every corpus (purpose, animation) on land is reachable")
+            else:
+                bad = True
+                print(f"AUDIT: {len(gaps)} gaps")
+                for g in gaps:
+                    print(f"  {g['purpose']:<15} {g['anim']:<10} corpus n={g['count']:>5}  {g['why']}")
+        raise SystemExit(1 if bad else 0)
+    st = mine_gameplay(level=args.level or 0)
     for t in LAND:
         d = st[t]
         dens = {p: round(c / max(d["tiles"], 1) * 1000, 2) for p, c in d["counts"].items()}
