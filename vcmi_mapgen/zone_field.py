@@ -29,6 +29,10 @@ EDGE_W = 0.50  # strength of the rim-block bias (P(open) reduced by this at the 
 EDGE_R = 2     # tiles over which the rim-block bias ramps to zero (forest-belt thickness; THIN belt --
                # the freed blocked mass is relocated into the interior by the budget bisection)
 SPACING = 6    # farthest-point node spacing for the spanning backbone (bigger -> fewer, fatter corridors)
+ENTRANCE_W = 3       # entrance band width in front tiles per side (hero + guard fit through)
+LONG_FRONT = 20      # a zone-pair front at least this long earns a second entrance
+MAX_ENTRANCES = 2    # "a few" — hard cap on planned crossings per zone pair
+MIN_ENTRANCE_SEP = 12  # Chebyshev floor between two entrances of the same pair
 
 
 def edge_dist(ts):
@@ -336,6 +340,66 @@ def _zone_gate_bands(ts, zones, zid, open_frac=0.5, min_w=3):
                     band = frozenset(t for t in border
                                      if max(abs(t[0] - g[0]), abs(t[1] - g[1])) <= min_w // 2)
                     out.append((g, band | {g}))
+    return out
+
+
+def plan_entrances(zones, entrance_w=ENTRANCE_W, long_front=LONG_FRONT,
+                   max_entrances=MAX_ENTRANCES, min_sep=MIN_ENTRANCE_SEP):
+    """Map-level entrance plan: unlike `_zone_gate_bands` (per-zone, corpus-wide OPEN borders),
+    this keeps zones ISOLATED — each adjacent land-zone pair gets only 1..`max_entrances`
+    narrow aligned crossings and the rest of the border is left to the vegetation sampler's
+    border densification (pp_sample). Computed ONCE per level over ALL zones so both sides of
+    a pair agree on where the crossing is:
+
+      - entrance 1 sits at the front's centroid-nearest tile (the same rep math as
+        `_zone_gate_bands`), its far-side rep at the closest opposite-front tile;
+      - a 2nd entrance only when the front is at least `long_front` tiles AND its rep (the
+        front tile farthest from entrance 1) is >= `min_sep` Chebyshev away — long borders
+        read badly with a single hole, short ones must stay single-entry;
+      - each side's band = the `entrance_w` front tiles nearest its rep (protected from
+        vegetation, so the crossing is guaranteed at least that wide).
+
+    Returns {zid: [(rep, frozenset(band), other_zid), ...]} — the (rep, band) pairs are
+    drop-in for every `_zone_gate_bands` consumer. Pure geometry, rng-free, deterministic
+    (all argmin/argmax tie-break on the tile tuple)."""
+    owner = {}
+    for zz, z in zones.items():
+        for t in z["tiles_set"]:
+            owner[t] = zz
+    fronts = collections.defaultdict(set)            # ordered pair (a, b) -> a-side tiles
+    for t, zz in owner.items():
+        for dx, dy in NB4:
+            o = owner.get((t[0] + dx, t[1] + dy))
+            if o is not None and o != zz:
+                fronts[(zz, o)].add(t)
+
+    out = {zid: [] for zid in zones}
+    for (a, b) in sorted(fronts):
+        if a >= b:
+            continue                                 # each unordered pair planned once
+        Ta = sorted(fronts[(a, b)])
+        Tb = sorted(fronts.get((b, a), ()))
+        if not Ta or not Tb:
+            continue
+        mx = sum(t[0] for t in Ta) / len(Ta)
+        my = sum(t[1] for t in Ta) / len(Ta)
+        rep_a = min(Ta, key=lambda t: ((t[0] - mx) ** 2 + (t[1] - my) ** 2, t))
+        rep_b = min(Tb, key=lambda t: ((t[0] - rep_a[0]) ** 2 + (t[1] - rep_a[1]) ** 2, t))
+        reps = [(rep_a, rep_b)]
+        if len(Ta) >= long_front and max_entrances >= 2:
+            rep_a2 = max(Ta, key=lambda t: (max(abs(t[0] - rep_a[0]),
+                                                abs(t[1] - rep_a[1])), t))
+            if max(abs(rep_a2[0] - rep_a[0]), abs(rep_a2[1] - rep_a[1])) >= min_sep:
+                rep_b2 = min(Tb, key=lambda t: ((t[0] - rep_a2[0]) ** 2
+                                                + (t[1] - rep_a2[1]) ** 2, t))
+                reps.append((rep_a2, rep_b2))
+        for ra, rb in reps[:max_entrances]:
+            band_a = frozenset(sorted(
+                Ta, key=lambda t: (max(abs(t[0] - ra[0]), abs(t[1] - ra[1])), t))[:entrance_w])
+            band_b = frozenset(sorted(
+                Tb, key=lambda t: (max(abs(t[0] - rb[0]), abs(t[1] - rb[1])), t))[:entrance_w])
+            out[a].append((ra, band_a, b))
+            out[b].append((rb, band_b, a))
     return out
 
 

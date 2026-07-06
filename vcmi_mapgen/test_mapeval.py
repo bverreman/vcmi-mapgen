@@ -76,3 +76,32 @@ def test_value_gradient_sign():
     near = _fm([_obj("town", 24, 24, purpose="TOWN"),
                 _obj("treasureChest", 25, 25, purpose="REWARD_PICKUP")])
     assert ME.features(far)["value_gradient"] > ME.features(near)["value_gradient"]
+
+
+def test_traverse_monolith_network():
+    """Two-way monoliths of one subtype form a teleport network for the reachability
+    walk — a rock-severed area counts as reachable iff BOTH ends exist (this is how
+    pp_map rescues unreachable zones as guarded portal reward zones)."""
+    import traverse as TR
+
+    def wall_fm(objects):
+        fm = _fm(objects)
+        for y in range(48):                       # rock column severs east from west
+            fm["terrain"][0][y][24]["t"] = 9
+        return fm
+
+    town = _obj("town", 5, 5, purpose="TOWN")
+    mine = _obj("mine", 40, 40, purpose="MINE")   # sits east of the wall
+    near = _obj("monolithTwoWay", 10, 10, sub="monolith1")
+    far = _obj("monolithTwoWay", 40, 30, sub="monolith1")
+
+    linked = TR.traverse(wall_fm([town, mine, near, far]))
+    assert linked["unreachable_mines"] == [], "paired monoliths must bridge the wall"
+
+    lone = TR.traverse(wall_fm([town, mine, near]))
+    assert lone["unreachable_mines"] == [(40, 40, 0)], \
+        "a single monolith end must NOT teleport anywhere"
+
+    import mapeval as ME
+    assert ME.relational_complete(wall_fm([town, mine, near])) is False
+    assert ME.relational_complete(wall_fm([town, mine, near, far])) is True

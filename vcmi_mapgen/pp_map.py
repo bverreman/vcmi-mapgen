@@ -38,12 +38,15 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MIN_AREA = 25          # vegetate even smallish zones (the stats floor stays 60 in pp_stats)
 
 
-def g2_repair(size, grid, objs, targets):
+def g2_repair(size, grid, objs, targets, costly=frozenset()):
     """Map-level G2 validity gate + repair: every target tile (gameplay approach, pickup)
     must be reachable from every other across zone borders. Pickups/monsters count as
     passable (they are removable); vegetation is carvable; gameplay bodies and water/rock
     are not. Unreachable targets get a least-vegetation corridor carved to them (Dijkstra:
     open=1, veg-blocked=40) and the intersecting VEGETATION objects are deleted.
+    `costly` (the zone-border ridge) prices vegetation there at 400 instead of 40, so a
+    repair corridor prefers routing through a planned entrance over punching a fresh hole
+    through the isolation ridge (still carvable as a last resort — repair never fails).
     Returns (objs, removed_count)."""
     import heapq
     import obj_resolve as OR
@@ -101,7 +104,7 @@ def g2_repair(size, grid, objs, targets):
                     n = (u[0] + dx, u[1] + dy)
                     if n not in land or n in hard:
                         continue
-                    nd = d + (40.0 if n in cells else 1.0)
+                    nd = d + ((400.0 if n in costly else 40.0) if n in cells else 1.0)
                     if nd < dist.get(n, 1e18):
                         dist[n] = nd
                         prev[n] = u
@@ -119,7 +122,7 @@ def g2_repair(size, grid, objs, targets):
     return objs, len(removed)
 
 
-def fill_open_islands(size, grid, objs, targets, seed=1, boat_ok=True):
+def fill_open_islands(size, grid, objs, targets, seed=1, boat_ok=True, costly=frozenset()):
     """User-mandated: no empty, unreachable open ground. `g2_repair` above only guards
     NAMED targets (gameplay approaches, pickups) — ordinary open tiles that vegetation
     happened to wall off entirely are invisible to it, and `pp_pickup` deliberately never
@@ -141,6 +144,10 @@ def fill_open_islands(size, grid, objs, targets, seed=1, boat_ok=True):
     for the underground level so every non-mainland component gets repaired regardless of
     what it touches, forcing (uncapped) reconnection rather than the cheap-or-fill fallback
     whenever giving up would strand a real gameplay object.
+
+    `costly` (the zone-border ridge) prices vegetation there at 400 instead of 40 — a
+    reconnection corridor must route around the isolation ridge (through a planned
+    entrance), not through it; a pocket only reachable by breaching the ridge gets filled.
     Returns (objs, n_reconnected, n_filled)."""
     import heapq
     import random
@@ -207,7 +214,7 @@ def fill_open_islands(size, grid, objs, targets, seed=1, boat_ok=True):
                 n = (u[0] + dx, u[1] + dy)
                 if n not in land or n in hard:
                     continue
-                nd = d + (40.0 if n in cells else 1.0)
+                nd = d + ((400.0 if n in costly else 40.0) if n in cells else 1.0)
                 if nd < dist.get(n, 1e18):
                     dist[n] = nd
                     prev[n] = u
@@ -403,6 +410,127 @@ def select_player_zones(zones_by_level, players):
     return [(level, zid) for _a, level, zid, _c in chosen]
 
 
+def _rim8(zones):
+    """The 8-connected inter-zone rim: every tile with an 8-neighbour in another zone
+    (both sides of every border). Diagonal contact counts — corner-cutting is a legal
+    hero move in H3, so a diagonal-only touch leaks exactly like a shared edge."""
+    owner = {}
+    for zid, z in zones.items():
+        for t in z["tiles_set"]:
+            owner[t] = zid
+    return {t for t, zid in owner.items()
+            if any(owner.get((t[0] + dx, t[1] + dy), zid) != zid for dx, dy in ZF.NB8)}
+
+
+def seal_zone_borders(W, H, grid, zones, entrance_plan, objs, avoid, hard_avoid, seed, level):
+    """Residual border-leak seal. The border bias (`pp_sample` BORDER_W) densifies zone
+    fronts statistically, which is enough on compact probes but NOT on a real map: jagged
+    fronts, gameplay approach tiles near the border and repair carve-backs leave aligned
+    open pairs a hero can walk (or diagonal-step) through — measured 439 informal crossings
+    on a 144x144 build. This pass closes every remaining cross-zone 8-adjacent open pair
+    OUTSIDE the planned entrance bands with single corpus-weighted 1x1 blocking decorations
+    (byte-for-byte the `fill_open_islands` emission), greedily picking the tile that kills
+    the most remaining crossings. The cells land inside the already-dense ridge, so they
+    read as ordinary vegetation — the sampler stays the look, this is only the caulk.
+
+    `avoid` = tiles that must stay veg-free (protected web + tunnel corridors, gameplay
+    cells + approaches, scatter-used, entrance bands — accumulated by `_run_level`). A pair
+    whose BOTH sides are unsealable (a tunnel crossing the border, two facing web tiles)
+    must stay open — so it gets a hostile GUARD instead (skipping only `hard_avoid` tiles:
+    gameplay cells/approaches/pickups, where a second object cannot sit). One guard's zone
+    of control contests every crossing within Chebyshev 1, so a run of adjacent residual
+    crossings shares one guard. The map then has NO free informal crossing: every border
+    pass is sealed, a planned guarded entrance, or a guarded back path.
+    Returns (new_objs, sealed_cells, guard_tiles, n_unguarded_pairs)."""
+    import random
+
+    rng = random.Random(seed ^ 0x5EA1 ^ (level * 7919))
+    owner, tname = {}, {}
+    for zid, z in sorted(zones.items()):
+        terr = ZE.TNAME.get(z["terrain_type"])
+        if terr in (None, "water", "rock"):
+            continue
+        for t in z["tiles_set"]:
+            owner[t] = zid
+            tname[t] = terr
+    blocked = set()
+    for o in objs:
+        blocked.update(_blocking_cells(o))
+    land = {(x, y) for y in range(H) for x in range(W) if grid[y][x] < 8}
+    open_all = land - blocked
+    bands = set()
+    for ents in entrance_plan.values():
+        for _r, b, _o in ents:
+            bands |= set(b)
+
+    pairs = []
+    for t in sorted(open_all):
+        a = owner.get(t)
+        if a is None or t in bands:
+            continue
+        for dx, dy in ((1, 0), (0, 1), (1, 1), (1, -1)):    # each unordered pair once
+            n = (t[0] + dx, t[1] + dy)
+            if n not in open_all or n in bands:
+                continue
+            b = owner.get(n)
+            if b is not None and b != a:
+                pairs.append((t, n))
+
+    dead = set()                                     # no decor pool for its terrain
+
+    def sealable(t):
+        return t not in avoid and t not in dead and t in owner
+
+    new_objs, sealed = [], set()
+    while pairs:
+        cnt = collections.Counter()
+        for t, n in pairs:
+            if sealable(t):
+                cnt[t] += 1
+            if sealable(n):
+                cnt[n] += 1
+        if not cnt:
+            break                                    # everything left is unsealable
+        pick, _n = max(cnt.items(), key=lambda kv: (kv[1], kv[0]))
+        pool = ON.decor_pool(tname[pick], blocking=True, max_cells=1,
+                             exclude_types=ZE.EXCLUDE_DECOR_TYPES)
+        if not pool:
+            dead.add(pick)
+            continue
+        ident = rng.choice(pool)
+        new_objs.append({"x": pick[0], "y": pick[1], "l": 0,
+                         "type": ident.get("type"), "subtype": ident.get("subtype"),
+                         "animation": ident["animation"], "mask": ident["mask"],
+                         "template": {"animation": ident["animation"],
+                                      "mask": ident["mask"]}})
+        sealed.add(pick)
+        pairs = [p for p in pairs if pick not in p]
+
+    # what must stay open gets contested instead: one hostile guard covers every residual
+    # crossing within its Chebyshev-1 zone of control
+    guard_tiles = set()
+    unguarded = 0
+    for t, n in pairs:
+        if any(max(abs(g[0] - t[0]), abs(g[1] - t[1])) <= 1
+               or max(abs(g[0] - n[0]), abs(g[1] - n[1])) <= 1 for g in guard_tiles):
+            continue
+        cands = [c for c in sorted((t, n)) if c not in hard_avoid]
+        if not cands:
+            unguarded += 1
+            continue
+        g = cands[0]
+        gident = PG.rnd_monster(3 + (1 if rng.random() < 0.3 else 0))
+        new_objs.append({"x": g[0], "y": g[1], "l": 0, "purpose": "GUARD",
+                         "type": gident.get("type"), "subtype": gident.get("subtype"),
+                         "animation": gident["animation"], "mask": gident["mask"],
+                         "template": {"animation": gident["animation"],
+                                      "mask": gident["mask"]},
+                         "options": {"character": "hostile"},
+                         "seal": True})               # informational: dup-guard cleanup must
+        guard_tiles.add(g)                            # never drop it — it IS the border
+    return new_objs, sealed, guard_tiles, unguarded
+
+
 def _run_level(level, W, H, grid, zones, player_zids, ledger, gstats, seed, has_subterrain,
                gate_occ=frozenset(), gate_blk=frozenset(), gate_appr=(), tunnel_protect=frozenset()):
     """L3 gameplay + L2 vegetation + L4a scatter for ONE terrain level's already-segmented
@@ -430,6 +558,19 @@ def _run_level(level, W, H, grid, zones, player_zids, ledger, gstats, seed, has_
     nz = 0
     zone_records = []                                 # for the per-level pocket-cache pass
     town_of_zone = {}
+
+    # map-level isolation plan: 1-2 aligned narrow crossings per adjacent zone pair,
+    # computed ONCE over all zones so both sides agree where the entrances are. Everything
+    # downstream keys off it: gameplay keeps footprints off the bands and guards the reps,
+    # the protected web keeps only the bands vegetation-free (not the legacy wide corpus-open
+    # share of the front), and the vegetation sampler actively densifies the rest of the
+    # border (`border=` bias) so zones read as isolated regions with a few real entrances.
+    # `seal_zone_borders` below then closes whatever aligned holes the statistics left.
+    entrance_plan = ZF.plan_entrances(zones)
+    seal_avoid = set()                               # tiles the seal pass must leave veg-free
+    hard_avoid = set()                               # tiles that can't even host a guard
+    ridge = set()                                    # all rim tiles minus entrance bands
+    rim_all = _rim8(zones)                           # 8-connected inter-zone rim, both sides
 
     has_water = False
     if level == 0:
@@ -475,11 +616,13 @@ def _run_level(level, W, H, grid, zones, player_zids, ledger, gstats, seed, has_
         # `avoid` keeps every footprint/approach off the corridor protect set — gameplay
         # runs before `protected_web`, so without this a town/mine/monster could wall off
         # a tunnel that vegetation-forbidding alone could never have touched.
+        z_entr = entrance_plan.get(zid, [])
         gobjs, occupied, gblocked, approaches = PG.place_zone(
             ts, zones, zid, terrain, seed=seed, coastal=coastal,
             force_town=zid in player_zids, ledger=ledger, has_water=has_water,
             level=level, has_subterrain=has_subterrain, avoid=tunnel_protect & ts,
-            preoccupied=z_gate_occ, preblocked=z_gate_blk, preapproaches=z_gate_appr)
+            preoccupied=z_gate_occ, preblocked=z_gate_blk, preapproaches=z_gate_appr,
+            entrances=z_entr)
         objs.extend(gobjs)
         if zid in player_zids:
             t = next((o for o in gobjs if o.get("purpose") == "TOWN"), None)
@@ -494,9 +637,17 @@ def _run_level(level, W, H, grid, zones, player_zids, ledger, gstats, seed, has_
         cx, cy = z["centroid"]
         seedt = min(ts, key=lambda t: (t[0] - int(round(cx))) ** 2
                     + (t[1] - int(round(cy))) ** 2)
+        # the zone's 8-connected rim: every tile with an 8-neighbour in ANOTHER zone
+        # (diagonal corner-cutting is a legal hero move, so diagonal-only contact leaks
+        # like a front tile). The web routes off it, scatter skips it, the sampler's
+        # border bias targets it, and repair prices carving it at 400.
+        ent_bands = set().union(*(b for _r, b, _o in z_entr)) if z_entr else set()
+        rim8 = rim_all & ts
+        ridge |= rim8 - ent_bands
         prot = PP.protected_web(ts, zones, zid, edist, seedt,
                                 extra_nodes=approaches, avoid=gblocked,
-                                open_frac=gstats[terrain].get("border_open_frac", 0.5))
+                                open_frac=gstats[terrain].get("border_open_frac", 0.5),
+                                entrances=z_entr, keep_off=rim8)
         prot = prot | (tunnel_protect & ts)
 
         # L2 vegetation: gameplay cells + approaches admit no vegetation at all; the
@@ -514,8 +665,13 @@ def _run_level(level, W, H, grid, zones, player_zids, ledger, gstats, seed, has_
             and 2 <= min(max(abs(t[0] - mx), abs(t[1] - my)) for mx, my in mine_cells) <= 3
         ) if mine_cells else frozenset()             # annulus 2..3: greenery frames the
         # mine without sprite canopies overhanging its visual
+        # zone-isolation border belt: the whole 8-connected rim minus the planned entrance
+        # bands (those sit in `prot` as hard zeros) gets the +BORDER_W vegetation bias —
+        # both zones densify their own side, so the border reads as a ~2-thick ridge.
+        border = frozenset(rim8 - ent_bands - forbid)
         zobjs, blocked, _ = PP.sample_zone(ts, zones, zid, model, seed=seed,
-                                           prot=prot, forbid=forbid, attract=attract)
+                                           prot=prot, forbid=forbid, attract=attract,
+                                           border=border)
         objs.extend(zobjs)
 
         # L4a scatter over the finished open field (unguarded resources/artifacts along
@@ -529,11 +685,18 @@ def _run_level(level, W, H, grid, zones, player_zids, ledger, gstats, seed, has_
         # objects can't stack on them), this only drops tiles that are actually impassable.
         # Approach tiles and non-blocking occupied footprint cells ARE walkable in-game.
         passable = ts - blocked - gblocked
-        sobjs, sused, reach = PK.place_scatter(ts, zones, zid, terrain, open_set, prot, seed=seed,
-                                              bounds=(W, H))
+        # scatter loot never sits on the rim: a pickup there is a walkable, unsealable hole
+        sobjs, sused, reach = PK.place_scatter(ts, zones, zid, terrain,
+                                              open_set - (rim8 - ent_bands), prot, seed=seed,
+                                              bounds=(W, H), entrances=z_entr)
         objs.extend(sobjs)
         targets.extend(approaches)
         targets.extend((o["x"], o["y"]) for o in sobjs)
+        # every planned crossing must survive repair: its rep is a named G2 target, so
+        # `g2_repair` verifies the entrance stayed connected once the level is finalized
+        targets.extend(r for r, _b, _o in z_entr)
+        seal_avoid |= prot | forbid | sused | set(approaches)
+        hard_avoid |= set(occupied) | sused | set(approaches)
         nz += 1
         zone_records.append({"zid": zid, "terrain": terrain, "ts": ts_full,
                              "open_set": open_set, "passable": passable,
@@ -544,11 +707,41 @@ def _run_level(level, W, H, grid, zones, player_zids, ledger, gstats, seed, has_
               f"{model['target']:.2f}), scatter res={pk.get('RESOURCE_PILE', 0)} "
               f"art={pk.get('REWARD_PICKUP', 0)}")
 
-    return objs, targets, zone_records, town_of_zone, has_water, nz
+    # residual border-leak seal: close every cross-zone crossing the statistics left open,
+    # guard the ones that must stay open (needs ALL zones' vegetation down first)
+    sobjs_seal, sealed, guard_tiles, n_open = seal_zone_borders(
+        W, H, grid, zones, entrance_plan, objs, seal_avoid | set(tunnel_protect),
+        hard_avoid, seed, level)
+    objs.extend(sobjs_seal)
+    if sealed or guard_tiles or n_open:
+        print(f"  L{level} border seal: {len(sealed)} cells closed, "
+              f"{len(guard_tiles)} back-path guards"
+              + (f", {n_open} crossings left free (unguardable)" if n_open else ""))
+    for zr in zone_records:                          # keep pocket detection honest
+        zr["passable"] -= sealed
+        zr["open_set"] -= sealed | guard_tiles
+
+    return objs, targets, zone_records, town_of_zone, has_water, nz, frozenset(ridge)
 
 
 def _blocking_cells(o):
     return [(cx, cy) for cx, cy, blk in OR.mask_cells(o["mask"], o["x"], o["y"]) if blk]
+
+
+def _warn_sliver_zones(zones, level, protect=frozenset()):
+    """Dev-time guard on ZE._despeckle_ids' shape rule (a zone must be >4 tiles or a compact
+    2x2 square — anything narrower can't hold gameplay). The despeckle fixpoint loop caps at
+    24 iterations, so a pathological grid could in principle leak a sliver through; surface
+    it loudly instead of silently generating an unplayable zone. `protect` cells (tunnel
+    corridors) are exempt — despeckle deliberately never merges them."""
+    for zid, z in sorted(zones.items()):
+        if ZE.TNAME.get(z["terrain_type"]) in (None, "water", "rock"):
+            continue
+        if z["tiles_set"] & protect:
+            continue
+        if not ZE._keep_patch(list(z["tiles_set"])):
+            print(f"  WARNING: L{level} zone {zid} is a sliver ({z['area']} tiles) — "
+                  f"despeckle should have absorbed it")
 
 
 def _land_tiles(zones):
@@ -564,7 +757,8 @@ def _land_tiles(zones):
     return out
 
 
-def _repair_and_finish_level(level, size, grid, objs, targets, zone_records, seed, boat_ok=True):
+def _repair_and_finish_level(level, size, grid, objs, targets, zone_records, seed,
+                             boat_ok=True, ridge=frozenset(), seerhut_artifacts=None):
     """G2 map-level gate + island repair + guarded pocket caches + dup-guard cleanup for ONE
     already-fully-populated level (gates included). MUST run before pocket detection
     (user-mandated: "the pocket detection should run after the map is fully crafted" — a
@@ -574,13 +768,14 @@ def _repair_and_finish_level(level, size, grid, objs, targets, zone_records, see
     no boat mechanic to excuse a stranded-target component (see that function's docstring).
     Returns (objs, ncarved, nreconn, nfilled, n_pockets, ndrop)."""
     objs_before_g2 = list(objs)
-    objs, ncarved = g2_repair(size, grid, objs, targets)
+    objs, ncarved = g2_repair(size, grid, objs, targets, costly=ridge)
     removed_g2 = [o for o in objs_before_g2
                   if id(o) not in {id(x) for x in objs}]
 
     objs_before_fill = list(objs)
     ids_before_fill = {id(o) for o in objs_before_fill}
-    objs, nreconn, nfilled = fill_open_islands(size, grid, objs, targets, seed=seed, boat_ok=boat_ok)
+    objs, nreconn, nfilled = fill_open_islands(size, grid, objs, targets, seed=seed,
+                                               boat_ok=boat_ok, costly=ridge)
     ids_after_fill = {id(o) for o in objs}
     removed_fill = [o for o in objs_before_fill if id(o) not in ids_after_fill]
     added_fill = [o for o in objs if id(o) not in ids_before_fill]
@@ -602,6 +797,17 @@ def _repair_and_finish_level(level, size, grid, objs, targets, zone_records, see
             if zr is not None:
                 zr["passable"].discard((cx, cy))
                 zr["open_set"].discard((cx, cy))
+
+    # L4a' Seer Hut quests: one fixed named artifact + a seer hut whose mission gates on it
+    # (VCMI RMG convention — "add seer hut with quest to the map like the vcmi generator
+    # does"). Runs before pocket caches so its two footprints are already claimed in
+    # `zone_records` when pocket geometry is judged.
+    qobjs, n_quests = PK.place_seer_hut_quests(zone_records, seed=seed, bounds=(size, size),
+                                               used_artifacts=seerhut_artifacts)
+    objs.extend(qobjs)
+    targets.extend((o["x"], o["y"]) for o in qobjs)
+    if n_quests:
+        print(f"  L{level} seer hut quests: {n_quests}")
 
     # L4b guarded pocket caches: ONE global, zone-independent pass over this level's whole
     # reachable field now that every zone's terrain/vegetation/scatter AND the map-level
@@ -628,7 +834,9 @@ def _repair_and_finish_level(level, size, grid, objs, targets, zone_records, see
     ]
     protected = {
         ia for ia, oa in guards
-        if any(max(abs(oa["x"] - mx), abs(oa["y"] - my)) <= 1 for mx, my in mine_cells)
+        if oa.get("seal")                            # a border back-path guard IS the border:
+        # dropping it re-opens an unsealable crossing (see seal_zone_borders)
+        or any(max(abs(oa["x"] - mx), abs(oa["y"] - my)) <= 1 for mx, my in mine_cells)
     }
     for a in range(len(guards)):
         ia, oa = guards[a]
@@ -652,6 +860,242 @@ def _repair_and_finish_level(level, size, grid, objs, targets, zone_records, see
         objs = [o for i, o in enumerate(objs) if i not in drop]
 
     return objs, ncarved, nreconn, nfilled, n_pockets, len(drop)
+
+
+PORTAL_MIN_AREA = 12   # smallest unreachable zone worth a portal rescue (mapeval's zone
+#                        floor); smaller slivers keep the decoration-fill fate.
+MAX_PORTALS = 8        # cap on rescued zones per map
+PORTAL_ANIMS = ("avxmn2g0", "avxmn2o0", "avxmn2p0", "avxmn4b0")
+#                walk-on two-way monoliths (masks VV/VA, V/A — no blocking cells), subtypes
+#                monolith1..4. Both ends of a pair share the animation, hence the subtype;
+#                H3 networks ALL same-subtype ends, so a 5th+ portal reuses a subtype and
+#                simply joins that network — still fully reachable, still relationally
+#                complete (mapeval needs >=2 ends per subtype).
+
+
+def _terrain_reach(grids, gate_xy, start):
+    """BFS over LAND TERRAIN ONLY (objects deliberately ignored: an area merely sealed by
+    vegetation is g2-repairable and NOT a portal candidate — only water/rock enclosure is
+    truly unreachable), teleporting across subterranean-gate coordinates the way
+    `traverse._gate_links` pairs them. Returns the reached (x, y, level) set."""
+    lvl0, (sx, sy) = start
+    reached = set()
+    if grids.get(lvl0) is not None and grids[lvl0][sy][sx] < 8:
+        reached = {(sx, sy, lvl0)}
+    q = collections.deque(reached)
+    H = len(grids[lvl0])
+    W = len(grids[lvl0][0])
+    while q:
+        x, y, l = q.popleft()
+        if (x, y) in gate_xy:
+            for l2, g2 in grids.items():
+                if l2 != l and g2[y][x] < 8 and (x, y, l2) not in reached:
+                    reached.add((x, y, l2))
+                    q.append((x, y, l2))
+        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            nx, ny = x + dx, y + dy
+            if (0 <= nx < W and 0 <= ny < H and grids[l][ny][nx] < 8
+                    and (nx, ny, l) not in reached):
+                reached.add((nx, ny, l))
+                q.append((nx, ny, l))
+    return reached
+
+
+def rescue_unreachable_zones(size, grids, zones_by_level, objs_by_level, targets_by_level,
+                             zone_records_by_level, start, gate_xy, seed):
+    """Unreachable zones become SPECIAL REWARD zones behind a guarded portal (user-mandated:
+    a portal makes a zone special) instead of dead map area. For every land zone no walking
+    path from the start town can reach (terrain-level BFS — vegetation ignored, coastal L0
+    zones exempt as boat-reachable, same policy as g2), place a two-way monolith pair: the
+    FAR end inside the zone (nearest-to-centroid legal tile), the NEAR end in the closest
+    reachable zone on the same level (pushed toward that zone's outskirts — descending
+    distance-to-town, matching the corpus value-outward gradient) with a hostile guard
+    adjacent to it, then upgrade the zone's loot via `pp_pickup.place_reward_zone`.
+
+    Runs AFTER both levels' zone passes and BEFORE `_repair_and_finish_level`: the portal
+    approaches and rewards land in `targets`, so `fill_open_islands` sees the zone's open
+    component as target-holding and leaves it alone (previously it was blindly filled with
+    decoration), and `traverse`'s monolith-network links count it reachable. Mutates
+    `objs_by_level`/`targets_by_level`/zone records in place; returns the pair count."""
+    import random
+
+    reached = _terrain_reach(grids, gate_xy, start)
+    W = H = size
+
+    cands = []
+    for lvl in sorted(zones_by_level):
+        grid = grids[lvl]
+        for zid, z in sorted(zones_by_level[lvl].items()):
+            terrain = ZE.TNAME.get(z["terrain_type"])
+            if terrain in (None, "water", "rock") or z["area"] < PORTAL_MIN_AREA:
+                continue
+            ts = set(z["tiles_set"])
+            if any((x, y, lvl) in reached for (x, y) in ts):
+                continue
+            if lvl == 0 and any(
+                    0 <= x + dx < W and 0 <= y + dy < H and grid[y + dy][x + dx] == 8
+                    for (x, y) in ts for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1))):
+                continue                             # coastal: boat-reachable by design
+            cands.append((-z["area"], lvl, zid, terrain))
+    cands.sort()
+    if not cands:
+        return 0
+
+    # per-level placement state, built once from everything already on the map: gameplay
+    # footprints (whole cells, GAP-inflated exactly like place_zone/place_gates) plus
+    # vegetation blocking cells (a teleporter must not sit buried in a tree), plus the
+    # level's named targets as reserved doorways.
+    state = {}
+    for lvl, objs in objs_by_level.items():
+        game_cells, veg_blk = set(), set()
+        for o in objs:
+            cells = OR.mask_cells(o["mask"], o["x"], o["y"])
+            if o.get("purpose") is None:
+                veg_blk.update((cx, cy) for cx, cy, b in cells if b)
+            else:
+                game_cells.update((cx, cy) for cx, cy, _b in cells)
+        near = set(veg_blk)
+        for cx, cy in game_cells:
+            for gx in range(-PG.GAP, PG.GAP + 1):
+                for gy in range(-PG.GAP, PG.GAP + 1):
+                    near.add((cx + gx, cy + gy))
+        state[lvl] = {"occupied": game_cells | veg_blk, "near": near,
+                      "reserved": set(targets_by_level[lvl])}
+
+    zr_by = {lvl: {zr["zid"]: zr for zr in (zone_records_by_level.get(lvl) or ())}
+             for lvl in zones_by_level}
+    towns = {lvl: [(o["x"], o["y"]) for o in objs
+                   if o.get("purpose") == "TOWN"]
+             for lvl, objs in objs_by_level.items()}
+
+    def emit_end(lvl, ident, node, fit):
+        allc, blk, approach = fit
+        objs_by_level[lvl].append({
+            "x": node[0], "y": node[1], "l": lvl, "purpose": "TRANSPORT",
+            "type": ident.get("type"), "subtype": ident.get("subtype"),
+            "animation": ident["animation"], "mask": ident["mask"],
+            "template": {"animation": ident["animation"], "mask": ident["mask"]},
+        })
+        st = state[lvl]
+        st["occupied"].update(allc)
+        for cx, cy in allc:
+            for gx in range(-PG.GAP, PG.GAP + 1):
+                for gy in range(-PG.GAP, PG.GAP + 1):
+                    st["near"].add((cx + gx, cy + gy))
+        st["reserved"].add(approach)
+        targets_by_level[lvl].append(approach)
+        return approach
+
+    n_placed = 0
+    rescued = []
+    for _na, lvl, zid, terrain in cands:
+        if n_placed >= MAX_PORTALS:
+            print(f"  portals: cap {MAX_PORTALS} reached, "
+                  f"{len(cands) - n_placed} unreachable zone(s) left decoration-filled")
+            break
+        z = zones_by_level[lvl][zid]
+        ts = set(z["tiles_set"])
+        st = state[lvl]
+        ident = ON.identity_of(PORTAL_ANIMS[n_placed % len(PORTAL_ANIMS)])
+        cx, cy = z["centroid"]
+
+        far_fit = far_node = None
+        for t in sorted(ts, key=lambda t: ((t[0] - cx) ** 2 + (t[1] - cy) ** 2, t)):
+            fit = PG._fits(ident, t[0], t[1], ts, st["occupied"], st["near"], st["reserved"])
+            if fit:
+                far_fit, far_node = fit, t
+                break
+        if far_fit is None:
+            continue
+
+        hosts = []
+        for hzid, hz in sorted(zones_by_level[lvl].items()):
+            if hzid == zid or ZE.TNAME.get(hz["terrain_type"]) in (None, "water", "rock"):
+                continue
+            if hz["area"] < MIN_AREA:
+                continue
+            if not any((x, y, lvl) in reached for (x, y) in hz["tiles_set"]):
+                continue
+            hx, hy = hz["centroid"]
+            hosts.append(((hx - cx) ** 2 + (hy - cy) ** 2, -hz["area"], hzid))
+        hosts.sort()
+
+        def guard_spot(appr, own_cells, gident):
+            """First legal tile Chebyshev-1 from the near end's visitable cell (a monster's
+            zone of control covers all 8 neighbours, so stepping INTO the portal forces the
+            fight); None when the surroundings can't seat one."""
+            for dx, dy in ((0, 1), (1, 0), (0, -1), (-1, 0),
+                           (1, 1), (-1, 1), (1, -1), (-1, -1)):
+                g = (appr[0] + dx, appr[1] + dy)
+                if (not (0 <= g[0] < W and 0 <= g[1] < H) or grids[lvl][g[1]][g[0]] >= 8
+                        or g in st["occupied"] or g in own_cells or g in st["reserved"]):
+                    continue
+                if all(0 <= gx < W and 0 <= gy < H and grids[lvl][gy][gx] < 8
+                       and (gx, gy) not in st["occupied"] and (gx, gy) not in own_cells
+                       for gx, gy in OR.mask_interactive_cells(gident["mask"], g[0], g[1])):
+                    return g
+            return None
+
+        gident = PG.rnd_monster(min(7, 4 + len(ts) // 60))
+        near_fit = near_node = gtile = None
+        for _d, _ha, hzid in hosts[:3]:
+            hts = set(zones_by_level[lvl][hzid]["tiles_set"])
+            tl = towns[lvl]
+            if tl:                                    # outskirts: value sits outward
+                def key(t):
+                    return (-min((t[0] - tx) ** 2 + (t[1] - ty) ** 2 for tx, ty in tl), t)
+            else:
+                def key(t):
+                    return ((t[0] - cx) ** 2 + (t[1] - cy) ** 2, t)
+            for t in sorted(hts, key=key):
+                fit = PG._fits(ident, t[0], t[1], hts, st["occupied"], st["near"],
+                               st["reserved"])
+                if fit is None:
+                    continue
+                g = guard_spot(fit[2], set(fit[0]), gident)
+                if g is None:                         # a portal must be guardable — skip
+                    continue                          # candidates with no room for the guard
+                near_fit, near_node, gtile = fit, t, g
+                break
+            if near_fit:
+                break
+        if near_fit is None:
+            continue
+
+        far_appr = emit_end(lvl, ident, far_node, far_fit)
+        emit_end(lvl, ident, near_node, near_fit)
+        objs_by_level[lvl].append({
+            "x": gtile[0], "y": gtile[1], "l": lvl, "purpose": "GUARD",
+            "type": gident.get("type"), "subtype": gident.get("subtype"),
+            "animation": gident["animation"], "mask": gident["mask"],
+            "template": {"animation": gident["animation"], "mask": gident["mask"]},
+            "options": {"character": "hostile"},
+        })
+        st["occupied"].add(gtile)
+
+        # the reward upgrade: the portal makes the zone special
+        zr = zr_by[lvl].get(zid)
+        if zr is None:                                # zone skipped by the level pass (bare
+            free = set(ts) - st["occupied"]           # terrain): synth a minimal record
+            zr = {"zid": zid, "terrain": terrain, "ts": ts, "open_set": free,
+                  "passable": free, "reach": set(), "used": set()}
+        zr["used"].update(far_fit[0])                 # the monolith's own cells
+        robjs = PK.place_reward_zone(zr, far_appr, seed=seed, bounds=(W, H))
+        for o in robjs:
+            o["l"] = lvl
+        objs_by_level[lvl].extend(robjs)
+        targets_by_level[lvl].extend((o["x"], o["y"]) for o in robjs)
+        st["occupied"].update(
+            (cx2, cy2) for o in robjs
+            for cx2, cy2, _b in OR.mask_cells(o["mask"], o["x"], o["y"]))
+
+        n_placed += 1
+        rescued.append(f"L{lvl}z{zid}({len(ts)}t,{len(robjs)}obj)")
+
+    if n_placed:
+        print(f"  special reward zones: {n_placed} rescued via guarded portals "
+              f"[{', '.join(rescued)}]")
+    return n_placed
 
 
 def _gate_anchor_points(W, H, seed, n_sites=8, margin=8, pad=4):
@@ -771,6 +1215,7 @@ def build(seed=3, size=72, water=None, players=0, water_mode="normal", subterrai
     grid0 = [[c["t"] for c in row] for row in cells0]
     surf0 = [[FA.tile_string(c) for c in row] for row in cells0]
     zones0, _zl0, _ = ZE._segment_level(cells0)
+    _warn_sliver_zones(zones0, 0)
 
     zones_by_level = {0: zones0}
     gate_occ0 = gate_blk0 = gate_occ1 = gate_blk1 = frozenset()
@@ -781,6 +1226,7 @@ def build(seed=3, size=72, water=None, players=0, water_mode="normal", subterrai
         grid1 = [[c["t"] for c in row] for row in cells1]
         surf1 = [[FA.tile_string(c) for c in row] for row in cells1]
         zones1, _zl1, _ = ZE._segment_level(cells1)
+        _warn_sliver_zones(zones1, 1, protect=frozenset(tunnel_protect))
         zones_by_level[1] = zones1
 
         # Subterranean Gate pairs are placed FIRST, right after segmentation and before
@@ -792,8 +1238,12 @@ def build(seed=3, size=72, water=None, players=0, water_mode="normal", subterrai
         # carved disc being held bare.
         ts0 = _land_tiles(zones0)
         ts1 = _land_tiles(zones1)
+        # gates stay OFF both levels' inter-zone rims (passed through place_gates's
+        # `reserved` doorway sets): a gate footprint/approach pinned on a border would be a
+        # permanently-open, unsealable hole in the isolation ridge.
         (gobjs0_pre, gate_occ0, gate_blk0, gate_appr0), (gobjs1_pre, gate_occ1, gate_blk1, gate_appr1) = \
-            PG.place_gates(ts0, ts1, set(), set(), seed=seed)
+            PG.place_gates(ts0, ts1, set(), set(),
+                           appr0=_rim8(zones0), appr1=_rim8(zones1), seed=seed)
         print(f"  gates: {len(gobjs0_pre)} Subterranean Gate pair(s) placed")
 
     player_zids = select_player_zones(zones_by_level, players)
@@ -810,28 +1260,65 @@ def build(seed=3, size=72, water=None, players=0, water_mode="normal", subterrai
     ledger = {"missing": set(PG.BASIC_MINE_RES), "towns": len(player_zids), "gold": 0}
 
     gstats0 = PG.mine_gameplay(level=0)
-    objs0, targets0, zone_records0, town_of_zone0, has_water0, nz0 = _run_level(
+    objs0, targets0, zone_records0, town_of_zone0, has_water0, nz0, ridge0 = _run_level(
         0, W, H, grid0, zones0, zids_by_level[0], ledger, gstats0, seed, subterrain,
         gate_occ=gate_occ0, gate_blk=gate_blk0, gate_appr=gate_appr0)
     objs0.extend(gobjs0_pre)
 
     objs1 = targets1 = zone_records1 = town_of_zone1 = None
     nz1 = 0
+    ridge1 = frozenset()
     if subterrain:
         gstats1 = PG.mine_gameplay(level=1)
-        objs1, targets1, zone_records1, town_of_zone1, _has_water1, nz1 = _run_level(
+        objs1, targets1, zone_records1, town_of_zone1, _has_water1, nz1, ridge1 = _run_level(
             1, W, H, grid1, zones1, zids_by_level[1], ledger, gstats1, seed, subterrain,
             gate_occ=gate_occ1, gate_blk=gate_blk1, gate_appr=gate_appr1,
             tunnel_protect=frozenset(tunnel_protect))
         objs1.extend(gobjs1_pre)
 
+    # unreachable-zone rescue: guarded two-way monolith + special reward upgrade, BEFORE the
+    # repair pass so the rescued zones' targets stop `fill_open_islands` from burying them.
+    grids = {0: grid0}
+    objs_by_level = {0: objs0}
+    targets_by_level = {0: targets0}
+    zone_records_by_level = {0: zone_records0}
+    if subterrain:
+        grids[1] = grid1
+        objs_by_level[1] = objs1
+        targets_by_level[1] = targets1
+        zone_records_by_level[1] = zone_records1
+    gate_xy = {(o["x"], o["y"]) for o in gobjs0_pre}
+    start = None
+    for lvl, zid in player_zids:                      # seed = first player town's tile
+        t = (town_of_zone0 if lvl == 0 else town_of_zone1 or {}).get(zid)
+        if t is not None:
+            start = (lvl, (t["x"], t["y"]))
+            break
+    if start is None:                                 # no players: largest surface land zone
+        big = max((z for z in zones0.values()
+                   if ZE.TNAME.get(z["terrain_type"]) not in (None, "water", "rock")),
+                  key=lambda z: z["area"], default=None)
+        if big is not None:
+            bx, by = big["centroid"]
+            start = (0, min(big["tiles_set"],
+                            key=lambda t: ((t[0] - bx) ** 2 + (t[1] - by) ** 2, t)))
+    n_portals = 0
+    if start is not None:
+        n_portals = rescue_unreachable_zones(
+            size, grids, zones_by_level, objs_by_level, targets_by_level,
+            zone_records_by_level, start, gate_xy, seed)
+
     # G2 repair / island-fill / pocket caches / dup-guard cleanup run per level — each level
-    # is its own passability field.
+    # is its own passability field. A single `seerhut_artifacts` set is shared across both
+    # calls so a named quest artifact is never doubly placed on both levels of the same map.
+    seerhut_artifacts = set()
     objs0, ncarved0, nreconn0, nfilled0, npockets0, ndrop0 = _repair_and_finish_level(
-        0, size, grid0, objs0, targets0, zone_records0, seed)
+        0, size, grid0, objs0, targets0, zone_records0, seed, ridge=ridge0,
+        seerhut_artifacts=seerhut_artifacts)
     if subterrain:
         objs1, ncarved1, nreconn1, nfilled1, npockets1, ndrop1 = _repair_and_finish_level(
-            1, size, grid1, objs1, targets1, zone_records1, seed, boat_ok=False)
+            1, size, grid1, objs1, targets1, zone_records1, seed, boat_ok=False, ridge=ridge1,
+            seerhut_artifacts=seerhut_artifacts)
         # place_zone/pp_pickup/pp_sample always tag l=0 by default (level-agnostic helpers
         # called twice, not level-aware internally) — retag the whole underground level's
         # objects in this single post-pass. Gate objects already carry the right l (0/1)
@@ -857,6 +1344,7 @@ def build(seed=3, size=72, water=None, players=0, water_mode="normal", subterrai
             + (f" (G2 repair carved {ncarved} veg)" if ncarved else " (G2 clean)")
             + (f" (islands: {nreconn} reconnected, {nfilled} filled)"
                if (nreconn or nfilled) else "")
+            + (f" (portal reward zones: {n_portals})" if n_portals else "")
             + (f" (subterrain: L1 {nz1} zones, {npockets0 + npockets1} pockets)"
                if subterrain else f" (pockets: {npockets0})"))
 

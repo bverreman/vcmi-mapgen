@@ -93,15 +93,19 @@ def _start_seed(fm, blocked, W, H):
 
 
 def _gate_links(fm, grids):
-    """Subterranean gates come in pairs sharing (x, y) across levels; stepping onto
-    one teleports the hero to its partner. Returns trigger map: reaching any (x,y,l)
-    approach tile of a gate end enqueues the partner end's approach tiles (x,y,l')."""
-    by_xy = collections.defaultdict(list)
+    """Teleport networks. Subterranean gates come in pairs sharing (x, y) across levels;
+    two-way monoliths network ALL ends of the same subtype (H3 semantics — used by pp_map
+    to rescue otherwise-unreachable zones as guarded reward zones). Stepping onto any end
+    teleports the hero to the others. Returns trigger map: reaching any (x,y,l) approach
+    tile of an end enqueues every partner end's approach tiles (x,y,l')."""
+    by_key = collections.defaultdict(list)
     for o in fm["objects"]:
         if o["type"] == "subterraneanGate":
-            by_xy[(o["x"], o["y"])].append(o)
+            by_key[("sg", o["x"], o["y"])].append(o)
+        elif o["type"] == "monolithTwoWay":
+            by_key[("m2", o.get("subtype"))].append(o)
     trigger = collections.defaultdict(set)
-    for ends in by_xy.values():
+    for ends in by_key.values():
         appr = []
         for o in ends:
             l = o.get("l", 0)

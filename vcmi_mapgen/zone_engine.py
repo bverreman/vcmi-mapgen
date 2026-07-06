@@ -1382,14 +1382,30 @@ def _tile_cell(t, sig, x, y, tiler):
     return {"t": t, "view": view, "rt": 0, "rd": 0, "ot": 0, "od": 0, "m": mm}
 
 
-MIN_TERRAIN_PATCH = 4   # no terrain patch smaller than this — tiny speckles are merged into the
-#                         dominant neighbour, so terrain reads as coherent regions (and doesn't
-#                         fragment the map into unplayable sliver-zones).
+MIN_TERRAIN_PATCH = 4   # a patch (= future zone) must have more than this many tiles, EXCEPT a
+#                         compact 2x2 square which is still a fine zone; anything smaller or a
+#                         4-tile narrow shape (1x4 line, L/S/T tetromino) is merged into the
+#                         dominant LAND neighbour, so terrain reads as coherent regions (and
+#                         doesn't fragment the map into unplayable sliver-zones).
+
+
+def _keep_patch(tiles, min_patch=MIN_TERRAIN_PATCH):
+    """Shape-aware keep rule: more than ``min_patch`` tiles always stays; exactly ``min_patch``
+    stays only when compact (bounding box 2x2 — for 4 tiles that forces the full square, the
+    one 4-tile shape that isn't a narrow sliver); anything smaller is absorbed."""
+    if len(tiles) > min_patch:
+        return True
+    if len(tiles) == min_patch:
+        xs = [x for x, _ in tiles]
+        ys = [y for _, y in tiles]
+        return max(xs) - min(xs) == 1 and max(ys) - min(ys) == 1
+    return False
 
 
 def _despeckle_ids(ids, W, H, min_patch=MIN_TERRAIN_PATCH, protect=frozenset()):
-    """Reassign every connected same-terrain patch smaller than ``min_patch`` tiles to the terrain
-    it borders most, iterating until no small patch remains (a merge can expose a new one).
+    """Reassign every connected same-terrain patch failing ``_keep_patch`` to the LAND terrain
+    it borders most (water/rock only when no land borders it — a sliver enclosed by barriers
+    becomes barrier), iterating until no small patch remains (a merge can expose a new one).
     `protect` cells are never merged: a thin corridor (e.g. an underground tunnel) can flank
     rock on both long sides, so a short same-id stretch along it would otherwise out-vote to
     rock and sever a connection the generator built on purpose."""
@@ -1418,14 +1434,18 @@ def _despeckle_ids(ids, W, H, min_patch=MIN_TERRAIN_PATCH, protect=frozenset()):
                 cid += 1
         changed = False
         for tiles, t in comps:
-            if len(tiles) >= min_patch or any(tp in protect for tp in tiles):
+            if _keep_patch(tiles, min_patch) or any(tp in protect for tp in tiles):
                 continue
-            nbr = collections.Counter()
+            nbr_land = collections.Counter()
+            nbr_all = collections.Counter()
             for x, y in tiles:
                 for dx, dy in NB4:
                     nx, ny = x + dx, y + dy
                     if 0 <= nx < W and 0 <= ny < H and ids[ny][nx] != t:
-                        nbr[ids[ny][nx]] += 1
+                        nbr_all[ids[ny][nx]] += 1
+                        if ids[ny][nx] < TS.WATER:
+                            nbr_land[ids[ny][nx]] += 1
+            nbr = nbr_land or nbr_all
             if nbr:
                 newt = nbr.most_common(1)[0][0]
                 for x, y in tiles:

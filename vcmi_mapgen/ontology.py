@@ -276,6 +276,10 @@ TERRAIN_COUPLED = {
     "BUOY",
     "MERMAID",
     "DERELICT_SHIP",
+    "CARTOGRAPHER",
+    "REDWOOD_OBSERVATORY",
+    "SIGN",
+    "PILLAR_OF_FIRE",
 }
 
 
@@ -777,7 +781,15 @@ TAXONOMY = {
         },
         "INFO": {
             "CARTOGRAPHER": {
-                "land": ["avxmaps0", "avxmapu0", "avxmapw0"]
+                "dirt": ["avxmaps0"],
+                "grass": ["avxmaps0"],
+                "lava": ["avxmaps0"],
+                "rough": ["avxmaps0"],
+                "sand": ["avxmaps0"],
+                "snow": ["avxmaps0"],
+                "subterr": ["avxmapu0"],
+                "swamp": ["avxmaps0"],
+                "water": ["avxmapw0"]
             },
             "COVER_OF_DARKNESS": {
                 "land": ["avxcovr0"]
@@ -798,13 +810,26 @@ TAXONOMY = {
                 "water": ["avxbttl0"]
             },
             "PILLAR_OF_FIRE": {
-                "land": ["avxpllr0"]
+                "subterr": ["avxpllr0"]
             },
             "REDWOOD_OBSERVATORY": {
-                "land": ["avxreds0", "avxredw"]
+                "dirt": ["avxredw"],
+                "grass": ["avxredw"],
+                "lava": ["avxredw"],
+                "rough": ["avxredw"],
+                "sand": ["avxredw"],
+                "snow": ["avxreds0", "avxredw"],
+                "swamp": ["avxredw"]
             },
             "SIGN": {
-                "land": ["avxsndg0", "avxsnds0", "avxsnlv0", "avxsnsn0", "avxsnsw0"]
+                "dirt": ["avxsndg0"],
+                "grass": ["avxsndg0"],
+                "lava": ["avxsnlv0"],
+                "rough": ["avxsnds0"],
+                "sand": ["avxsnds0"],
+                "snow": ["avxsnsn0"],
+                "subterr": ["avxsndg0"],
+                "swamp": ["avxsnsw0"]
             }
         },
         "MANA": {

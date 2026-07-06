@@ -170,8 +170,102 @@ def _legal(ident, x, y, open_set, used, bounds=None):
     return None
 
 
+PANDORA_CREATURES = ("pikeman", "centaur", "gremlin", "imp", "skeleton",
+                    "troglodyte", "goblin", "gnoll", "peasant")  # vanilla tier-1 dwelling
+                    # creatures, one per RoE town plus the neutral peasant -- a modest
+                    # unguarded-scatter payload, not cache-treasure tier.
+
+_RW_TEXT = {"exactStrings": None, "localStrings": None, "message": None,
+           "numbers": None, "stringsTextID": None}
+_RW_LIMITER = {"allOf": [], "anyOf": [], "artifacts": [], "creatures": [], "dayOfWeek": 0,
+              "daysPassed": 0, "heroExperience": 0, "heroLevel": -1, "manaPercentage": 0,
+              "manaPoints": 0, "movePercentage": 0, "movePoints": 0, "noneOf": [],
+              "primary": [0, 0, 0, 0], "secondary": []}
+_RW_REWARD = {"creatures": [], "creaturesChange": [], "heroExperience": 0, "heroLevel": 0,
+             "manaDiff": 0, "manaOverflowFactor": 0, "manaPercentage": -1,
+             "moveOverflowFactor": 0, "movePercentage": -1, "movePoints": 0,
+             "primary": [0, 0, 0, 0], "resources": {}, "secondary": [],
+             "spellCast": {"level": 0}}
+
+
+def _pandora_reward(rng):
+    """A VCMI 'Rewardable' payload for a pandoraBox (schema captured verbatim from a real
+    VCMI-RMG .vmap: `options.rewardable.info[].reward` alongside a sibling all-null
+    `guardMessage`). Without this an unconfigured pandoraBox is legal but permanently
+    empty -- every field defaults to 0/-1/null, which is a no-op reward. Kept modest
+    (gold/experience/a small creature stack): this fires from the unguarded-scatter loot
+    pool, not a guarded cache."""
+    reward = dict(_RW_REWARD)
+    flavor = rng.choices(("gold", "experience", "creatures"), weights=(45, 30, 25), k=1)[0]
+    if flavor == "gold":
+        reward["resources"] = {"gold": rng.choice((500, 1000, 1500, 2000, 3000, 5000))}
+    elif flavor == "experience":
+        reward["heroExperience"] = rng.choice((1000, 1500, 2500, 5000, 7500, 10000))
+    else:
+        reward["creatures"] = [{"type": f"core:{rng.choice(PANDORA_CREATURES)}",
+                                "amount": rng.randint(3, 10)}]
+    return {
+        "guardMessage": dict(_RW_TEXT),
+        "rewardable": {
+            "info": [{"limiter": dict(_RW_LIMITER), "message": dict(_RW_TEXT),
+                     "reward": reward, "visitType": 1}],
+            "infoWindowType": 0,
+            "onSelect": dict(_RW_TEXT),
+            "resetParameters": {"period": 0},
+            "selectMode": "selectFirst",
+            "visitMode": "unlimited",
+        },
+    }
+
+
+def _seerhut_reward(rng):
+    """The seer hut's own `options.rewardable` payout, paid once its quest's artifact
+    condition is met -- same flavour draw as `_pandora_reward` but a tier up (VCMI's own
+    RMG seer-hut samples pay in the 5-figure XP / dozens-of-creatures range, well above
+    pandora's open-scatter tier: a seer hut costs the hero a whole side-quest, not a
+    five-second detour)."""
+    reward = dict(_RW_REWARD)
+    flavor = rng.choices(("gold", "experience", "creatures"), weights=(35, 40, 25), k=1)[0]
+    if flavor == "gold":
+        reward["resources"] = {"gold": rng.choice((3000, 5000, 7500, 10000, 15000))}
+    elif flavor == "experience":
+        reward["heroExperience"] = rng.choice((2500, 5000, 7500, 10000, 15000))
+    else:
+        reward["creatures"] = [{"type": f"core:{rng.choice(PANDORA_CREATURES)}",
+                                "amount": rng.randint(5, 20)}]
+    return reward
+
+
+def _seerhut_quest(rng, artifact_subtype):
+    """VCMI 'Quest' + 'Rewardable' payload for a seerHut (schema captured verbatim from two
+    real VCMI-RMG .vmap seerHut instances): a MISSION_ARTIFACT quest -- the hero must be
+    CARRYING one specific named artifact -- gated via `quest.limiter.artifacts`. The sibling
+    `rewardable.info[]` entry (paid out once the quest is satisfied) keeps the plain no-op
+    base limiter: the artifact CHECK lives only in `quest.limiter`, confirmed against both
+    reference instances, whose own `rewardable` limiter carries no `artifacts` restriction of
+    its own."""
+    quest_limiter = dict(_RW_LIMITER, artifacts=[f"core:{artifact_subtype}"])
+    return {
+        "quest": {
+            "completedText": dict(_RW_TEXT),
+            "firstVisitText": dict(_RW_TEXT),
+            "limiter": quest_limiter,
+            "nextVisitText": dict(_RW_TEXT),
+        },
+        "rewardable": {
+            "info": [{"limiter": dict(_RW_LIMITER), "message": dict(_RW_TEXT),
+                     "reward": _seerhut_reward(rng), "visitType": 1}],
+            "infoWindowType": 0,
+            "onSelect": dict(_RW_TEXT),
+            "resetParameters": {"period": 0},
+            "selectMode": "selectFirst",
+            "visitMode": "unlimited",
+        },
+    }
+
+
 def _place_one(objs, used, reach, rng, st, purpose, pool, x, y,
-               ident=None, art_share=0.45, cache=False, bounds=None):
+               ident=None, art_share=0.45, cache=False, bounds=None, options=None):
     """Shared placement primitive for both scatter and pocket caches: resolve an identity,
     check its footprint against `reach`/`used`, and if legal append the obj and claim its
     cells. Returns whether it landed."""
@@ -209,13 +303,18 @@ def _place_one(objs, used, reach, rng, st, purpose, pool, x, y,
          "template": {"animation": ident["animation"], "mask": ident["mask"]}}
     if purpose == "GUARD":       # absent => VCMI 'compliant' => every creature joins free
         o["options"] = {"character": "hostile"}
+    if options is not None:
+        o["options"] = options
+    elif ident.get("type") == "pandoraBox":  # absent => legal but permanently empty reward
+        o["options"] = _pandora_reward(rng)
     if cache:  # a guarded-pocket pickup, not open scatter — informational marker only,
         o["cache"] = True        # ignored by the vmap exporter, used by tests
     objs.append(o)
     return True
 
 
-def place_scatter(ts, zones, zid, terrain, open_set, prot, seed=1, bounds=None):
+def place_scatter(ts, zones, zid, terrain, open_set, prot, seed=1, bounds=None,
+                  entrances=None):
     """Unguarded scatter loot for one zone (resources/artifacts lying in the open along
     routes — user-mandated to always be free, never guarded, since it can just be walked
     around). Returns (objs, used, reach): `used` and `reach` (this zone's own BFS-reachable
@@ -247,8 +346,11 @@ def place_scatter(ts, zones, zid, terrain, open_set, prot, seed=1, bounds=None):
     reach = set(dweb)                                # reachable open tiles only
     op = PG.openness(open_set)
     ed = ZF.edge_dist(ts)
-    bands = ZF._zone_gate_bands(ts, zones, zid,
-                                open_frac=st.get("border_open_frac", 0.5))
+    if entrances is not None:                        # isolation plan: gd measures from the
+        bands = [(r, b) for r, b, _o in entrances]   # planned narrow crossings
+    else:
+        bands = ZF._zone_gate_bands(ts, zones, zid,
+                                    open_frac=st.get("border_open_frac", 0.5))
     gd = PG.gate_dist(ts, set().union(*(b for _r, b in bands)) if bands else set())
 
     pool_res = ON.gameplay_pool(terrain, "RESOURCE_PILE")
@@ -433,6 +535,180 @@ def place_pocket_caches(zone_records, seed=1, bounds=None):
                 placed_mouths.append(mouth)
 
     return objs, len(blobs)
+
+
+SEERHUT_ZONE_RATIO = 4    # ~1 seer-hut quest per 4 eligible zones -- zone_engine.py's own
+                          # corpus-replay convention for the same object
+MAX_SEER_HUTS = 6
+SEERHUT_MIN_REACH = 8     # a zone needs at least this many free reachable tiles to be worth
+                          # drawing into a quest (host EITHER the hut or its artifact)
+
+
+def place_seer_hut_quests(zone_records, seed=1, bounds=None, used_artifacts=None):
+    """One or more Seer Hut quests for the WHOLE level (VCMI RMG convention: a seer hut's
+    mission gates on a single named artifact the hero must find and hand-carry to it). Each
+    quest links two placements in DIFFERENT zones -- the quest's target artifact (an
+    unguarded findable pickup, same "always free in open ground" doctrine as scatter loot --
+    see the module docstring) and the seer hut itself (a rigid visitable building) -- with the
+    hut's `options.quest.limiter.artifacts` naming the exact artifact identity placed for it.
+
+    Runs once per level, after every zone's own gameplay/vegetation/scatter is finalized and
+    the map-level G2/island repair has run (so both placements land on truly reachable
+    ground), and BEFORE the pocket-cache pass claims the remaining nooks -- `zone_records`'
+    `open_set`/`reach`/`used` are shared with that pass, so tiles this function spends are
+    already excluded when pockets are judged.
+
+    `used_artifacts`, when passed, is a set MUTATED in place and shared across every level's
+    call for the same map (see `pp_map.build`) -- a named artifact is a map-unique relic in
+    vanilla H3, so one quest's target must never double as another level's target too.
+
+    `zone_records` is a list of {"zid", "terrain", "ts", "open_set", "passable", "reach",
+    "used"} (see `pp_map._run_level`/`place_pocket_caches`). Returns (objs, n_quests)."""
+    import random
+
+    eligible = [zr for zr in zone_records if len(zr["reach"] - zr["used"]) >= SEERHUT_MIN_REACH]
+    if len(eligible) < 2:
+        return [], 0
+    n = min(MAX_SEER_HUTS, max(1, len(eligible) // SEERHUT_ZONE_RATIO))
+
+    rng_pair = random.Random(seed ^ 0xEE47)
+    objs = []
+    if used_artifacts is None:
+        used_artifacts = set()
+    placed = 0
+    for i in range(n):
+        idx_hut, idx_art = rng_pair.sample(range(len(eligible)), 2)
+        hut_zr, art_zr = eligible[idx_hut], eligible[idx_art]
+        rng = random.Random(seed ^ (i * 92821) ^ 0xEE47)
+
+        pool_art = sorted((a for a in ON.gameplay_pool(art_zr["terrain"], "REWARD_PICKUP")
+                          if a.get("type") == "artifact"
+                          and a["subtype"] not in used_artifacts),
+                          key=lambda a: a["animation"])
+        if not pool_art:
+            continue
+        art_ident = rng.choice(pool_art)
+
+        pool_hut = sorted((h for h in ON.gameplay_pool(hut_zr["terrain"], "QUEST_GATE")
+                          if h.get("type") == "seerHut"),
+                          key=lambda h: h["animation"])
+        if not pool_hut:
+            continue
+        hut_ident = rng.choice(pool_hut)
+
+        st_art = PG.mine_gameplay()[art_zr["terrain"]]
+        art_cands = sorted(art_zr["reach"] - art_zr["used"])
+        rng.shuffle(art_cands)
+        art_xy = None
+        for t in art_cands:
+            if _place_one(objs, art_zr["used"], art_zr["reach"], rng, st_art, "REWARD_PICKUP",
+                         None, t[0], t[1], ident=art_ident, bounds=bounds):
+                art_xy = t
+                break
+        if art_xy is None:
+            continue
+
+        st_hut = PG.mine_gameplay()[hut_zr["terrain"]]
+        hut_cands = sorted(hut_zr["reach"] - hut_zr["used"])
+        rng.shuffle(hut_cands)
+        options = _seerhut_quest(rng, art_ident["subtype"])
+        hut_xy = None
+        for t in hut_cands:
+            if _place_one(objs, hut_zr["used"], hut_zr["reach"], rng, st_hut, "QUEST_GATE",
+                         None, t[0], t[1], ident=hut_ident, options=options, bounds=bounds):
+                hut_xy = t
+                break
+        if hut_xy is None:
+            # no room for the hut => a dangling quest artifact nobody asked for; drop it
+            # rather than leave an orphaned reference
+            objs.pop()
+            for cx, cy, _b in OR.mask_cells(art_ident["mask"], art_xy[0], art_xy[1]):
+                art_zr["used"].discard((cx, cy))
+            continue
+
+        used_artifacts.add(art_ident["subtype"])
+        placed += 1
+    return objs, placed
+
+
+REWARD_ZONE_ART_W = {"avarnd1": 20, "avarnd2": 40, "avarnd3": 30, "avarand": 10}
+#                    ^ portal reward zones skew toward minor/major artifacts — the fight to
+#                      get in (guarded portal) must pay better than open scatter (RND_ART
+#                      is treasure-heavy: 50/30/15/5).
+
+
+def place_reward_zone(zr, entry, seed=1, bounds=None):
+    """SPECIAL REWARD upgrade for a zone rescued by a guarded two-way monolith (pp_map's
+    unreachable-zone pass): the pocket-cache grammar scaled to the whole zone — dense
+    resource piles + artifact pickups (major-skewed, all `cache`-tagged) reachable from the
+    portal's `entry` tile, plus one interior guard whose strength tracks the accumulated
+    value (the cache ladder + 1). Works both for fully-populated zones (extra richness) and
+    for bare sub-MIN_AREA slivers the level pass skipped (their only content). Claims its
+    cells in `zr["used"]` so the later pocket-cache pass never double-stacks. Returns objs."""
+    import random
+
+    terrain = zr["terrain"]
+    st = PG.mine_gameplay()[terrain]
+    rng = random.Random(seed ^ (entry[0] * 92821) ^ (entry[1] * 131071) ^ 0x907A1)
+    ts = zr["ts"]
+    used = zr["used"]
+    area = len(ts)
+
+    # reach: what the portal's entry tile actually opens up (4-connected within passable)
+    passable = zr["passable"]
+    reach, q = {entry} if entry in passable else set(), [entry]
+    while q:
+        x, y = q.pop()
+        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            n = (x + dx, y + dy)
+            if n in passable and n not in reach:
+                reach.add(n)
+                q.append(n)
+    if not reach:
+        return []
+
+    n_res = max(4, area // 10)
+    n_art = max(2, area // 25)
+    pool_res = ON.gameplay_pool(terrain, "RESOURCE_PILE")
+    pool_art = ON.gameplay_pool(terrain, "REWARD_PICKUP")
+    objs = []
+    val = 0
+
+    spots = sorted(reach - used)
+    rng.shuffle(spots)
+    for t in spots:
+        if n_res <= 0:
+            break
+        if _place_one(objs, used, reach, rng, st, "RESOURCE_PILE", pool_res,
+                      t[0], t[1], cache=True, bounds=bounds):
+            n_res -= 1
+            val += 2
+    arts = [a for a in PG.RND_ART]
+    for t in spots:
+        if n_art <= 0:
+            break
+        if t in used:
+            continue
+        anim, _w, av = rng.choices(arts, weights=[REWARD_ZONE_ART_W[a] for a, _w2, _v in arts],
+                                   k=1)[0]
+        if _place_one(objs, used, reach, rng, st, "REWARD_PICKUP", pool_art,
+                      t[0], t[1], ident=ON.identity_of(anim), cache=True, bounds=bounds):
+            n_art -= 1
+            val += av
+
+    if objs:
+        # one interior guard near the zone's own centre: the portal guard gates entry, this
+        # one gates the hoard itself — cache ladder (pp_pickup pocket convention) + 1
+        cx = sum(x for x, _ in ts) / area
+        cy = sum(y for _, y in ts) / area
+        lvl = 1 + (val >= 4) + (val >= 7) + (val >= 10) + (val >= 13) + 1
+        gident = PG.rnd_monster(lvl)
+        for t in sorted(reach - used,
+                        key=lambda t: ((t[0] - cx) ** 2 + (t[1] - cy) ** 2, t)):
+            if _place_one(objs, used, reach, rng, st, "GUARD", None,
+                          t[0], t[1], ident=gident, bounds=bounds):
+                break
+    return objs
 
 
 def place_pickups(ts, zones, zid, terrain, open_set, prot, seed=1, bounds=None):

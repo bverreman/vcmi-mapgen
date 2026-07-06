@@ -706,3 +706,303 @@ def test_macro_generate_deterministic_and_coarse():
     rep = MT.report(g1)
     # the §4.3 gate: the macro layer must NOT fragment (the markov failure mode)
     assert rep["big_share"] >= 0.7, rep
+
+
+def test_despeckle_absorbs_tiny_zones():
+    """Shape-aware sliver rule: a terrain patch (= future zone) survives despeckle only when
+    it has >4 tiles or is a compact 2x2 square; narrow 4-tile shapes and anything smaller are
+    absorbed into the dominant LAND neighbour (water/rock only when no land borders it)."""
+    import zone_engine as ZE
+
+    GRASS, DIRT, WATER = 2, 0, 8
+    W, H = 24, 14
+    ids = [[GRASS] * W for _ in range(H)]
+    for x in range(3, 7):                 # 1x4 dirt line — narrow, must be absorbed
+        ids[3][x] = DIRT
+    for x, y in ((10, 5), (11, 5), (10, 6), (11, 6)):   # 2x2 dirt square — a fine zone, kept
+        ids[y][x] = DIRT
+    ids[9][3] = ids[9][4] = ids[10][3] = DIRT           # 3-tile L — absorbed
+    # 4-tile dirt line hugging a water edge: water borders it on more sides than grass does,
+    # but land preference must still repaint it GRASS, not water
+    for x in range(16, 22):
+        for y in range(2, 5):
+            ids[y][x] = WATER
+    for x in range(17, 21):
+        ids[5][x] = DIRT
+    # 2x2 grass island fully inside water — compact, must survive as its own zone
+    for x in range(16, 22):
+        for y in range(8, 13):
+            ids[y][x] = WATER
+    for x, y in ((18, 10), (19, 10), (18, 11), (19, 11)):
+        ids[y][x] = GRASS
+
+    out = ZE._despeckle_ids(ids, W, H)
+    assert out == ZE._despeckle_ids(ids, W, H), "despeckle must be deterministic"
+
+    assert all(out[3][x] == GRASS for x in range(3, 7)), "1x4 line absorbed into grass"
+    assert all(out[y][x] == DIRT for x, y in ((10, 5), (11, 5), (10, 6), (11, 6))), \
+        "2x2 square kept"
+    assert out[9][3] == out[9][4] == out[10][3] == GRASS, "3-tile patch absorbed"
+    assert all(out[5][x] == GRASS for x in range(17, 21)), \
+        "water-hugging sliver becomes LAND (grass), never water"
+    assert all(out[y][x] == GRASS for x, y in ((18, 10), (19, 10), (18, 11), (19, 11))), \
+        "2x2 island in water survives"
+
+    # no surviving land patch violates the rule
+    seen = set()
+    for y in range(H):
+        for x in range(W):
+            if (x, y) in seen or out[y][x] >= WATER:
+                continue
+            t, stack, tiles = out[y][x], [(x, y)], [(x, y)]
+            seen.add((x, y))
+            while stack:
+                a, b = stack.pop()
+                for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                    nx, ny = a + dx, b + dy
+                    if (0 <= nx < W and 0 <= ny < H and (nx, ny) not in seen
+                            and out[ny][nx] == t):
+                        seen.add((nx, ny))
+                        stack.append((nx, ny))
+                        tiles.append((nx, ny))
+            assert ZE._keep_patch(tiles), f"sliver patch survived: {sorted(tiles)}"
+
+
+def test_plan_entrances_aligned_and_few():
+    """Entrance plan: 1 crossing for a short front, 2 for a long one, both sides' bands
+    aligned (4-adjacent across the border), <=ENTRANCE_W tiles per side, deterministic."""
+    import zone_field as ZF
+
+    # short front: two 12x10 zones -> exactly ONE entrance for the pair
+    ts1 = {(x, y) for x in range(12) for y in range(10)}
+    ts2 = {(x, y) for x in range(12, 24) for y in range(10)}
+    zones = {1: {"tiles_set": sorted(ts1), "centroid": (5.5, 4.5), "area": 120,
+                 "terrain_type": 2},
+             2: {"tiles_set": sorted(ts2), "centroid": (17.5, 4.5), "area": 120,
+                 "terrain_type": 3}}
+    plan = ZF.plan_entrances(zones)
+    assert len(plan[1]) == 1 and len(plan[2]) == 1, "10-tile front gets a single entrance"
+    rep1, band1, other1 = plan[1][0]
+    rep2, band2, other2 = plan[2][0]
+    assert other1 == 2 and other2 == 1
+    assert rep1 in band1 and band1 <= ts1 and len(band1) <= ZF.ENTRANCE_W
+    assert rep2 in band2 and band2 <= ts2 and len(band2) <= ZF.ENTRANCE_W
+    assert abs(rep1[0] - rep2[0]) + abs(rep1[1] - rep2[1]) == 1, \
+        "the two sides' reps must be 4-adjacent (aligned crossing)"
+    assert plan == ZF.plan_entrances(zones), "planner must be deterministic"
+
+    # long front: 30-tile contact column -> two entrances, far apart
+    ts3 = {(x, y) for x in range(12) for y in range(30)}
+    ts4 = {(x, y) for x in range(12, 24) for y in range(30)}
+    zl = {1: {"tiles_set": sorted(ts3), "centroid": (5.5, 14.5), "area": 360,
+              "terrain_type": 2},
+          2: {"tiles_set": sorted(ts4), "centroid": (17.5, 14.5), "area": 360,
+              "terrain_type": 3}}
+    plan2 = ZF.plan_entrances(zl)
+    assert len(plan2[1]) == ZF.MAX_ENTRANCES, "30-tile front earns a second entrance"
+    (ra, _, _), (rb, _, _) = plan2[1]
+    assert max(abs(ra[0] - rb[0]), abs(ra[1] - rb[1])) >= ZF.MIN_ENTRANCE_SEP, \
+        "the two entrances of one pair must not crowd each other"
+
+
+@needs_stats
+def test_border_bias_densifies_front():
+    """Zone isolation: with BOTH zones sampling under the `border=` bias, the only aligned
+    open crossings left between them are the planned entrance band — each single side is
+    only a partial ridge (Geyer saturation caps clumping), but the seal is 2-thick."""
+    import pp_sample as PP
+    import zone_field as ZF
+
+    ts1 = {(x, y) for x in range(14) for y in range(12)}
+    ts2 = {(x, y) for x in range(14, 28) for y in range(12)}
+    zones = {1: {"tiles_set": sorted(ts1), "centroid": (6.5, 5.5), "area": 168,
+                 "terrain_type": 2},
+             2: {"tiles_set": sorted(ts2), "centroid": (20.5, 5.5), "area": 168,
+                 "terrain_type": 2}}
+    plan = ZF.plan_entrances(zones)
+    model = PP.build_model("grass")
+
+    def zone_pass(zid, ts, seed, border_bias=True):
+        z_entr = plan[zid]
+        edist = ZF.edge_dist(ts)
+        c = zones[zid]["centroid"]
+        seedt = min(ts, key=lambda t: (t[0] - int(round(c[0]))) ** 2
+                    + (t[1] - int(round(c[1]))) ** 2)
+        prot = PP.protected_web(ts, zones, zid, edist, seedt, entrances=z_entr)
+        front = set().union(*ZF._zone_fronts(ts, zones, zid).values())
+        bands = set().union(*(b for _r, b, _o in z_entr))
+        border = frozenset(front - bands) if border_bias else frozenset()
+        _, blk, _ = PP.sample_zone(ts, zones, zid, model, seed=seed, prot=prot,
+                                   border=border)
+        return blk, front, bands, frozenset(front - bands)
+
+    for seed in (3, 7):
+        blk1, f1, b1, border1 = zone_pass(1, ts1, seed)
+        blk2, _f2, b2, _ = zone_pass(2, ts2, seed)
+        assert not (blk1 & b1) and not (blk2 & b2), "entrance bands stay vegetation-free"
+        open_all = (ts1 - blk1) | (ts2 - blk2)
+        crossings = {t for t in f1
+                     if t in open_all and (t[0] + 1, t[1]) in open_all}
+        assert crossings, "the planned entrance must stay open"
+        assert crossings <= b1, \
+            f"every crossing must be a planned entrance, leaks: {sorted(crossings - b1)}"
+        # the bias densifies the front vs the unbiased sampler on the same seed
+        blk_plain, *_ = zone_pass(1, ts1, seed, border_bias=False)
+        assert len(blk1 & border1) > len(blk_plain & border1), \
+            "border bias must densify the front"
+        # coverage correction keeps TOTAL density corpus-like (redistribution, not inflation)
+        assert len(blk1) / len(ts1) < model["target"] + 0.2
+
+
+@needs_stats
+def test_entrance_guard_single_side():
+    """With an entrance plan, only the LOWER zid of a pair emits the crossing guard, and it
+    sits on the planned rep/band (a genuine chokepoint), not on a random pocket mouth."""
+    import pp_gameplay as PG
+    import zone_field as ZF
+
+    ts1 = {(x, y) for x in range(14) for y in range(12)}
+    ts2 = {(x, y) for x in range(14, 28) for y in range(12)}
+    zones = {1: {"tiles_set": sorted(ts1), "centroid": (6.5, 5.5), "area": 168,
+                 "terrain_type": 2},
+             2: {"tiles_set": sorted(ts2), "centroid": (20.5, 5.5), "area": 168,
+                 "terrain_type": 2}}
+    plan = ZF.plan_entrances(zones)
+    crossing1 = {t for r, b, _o in plan[1] for t in b | {r}}
+    crossing2 = {t for r, b, _o in plan[2] for t in b | {r}}
+
+    n_guarded = 0
+    for seed in range(1, 7):
+        objs1, *_ = PG.place_zone(ts1, zones, 1, "grass", seed=seed, entrances=plan[1])
+        objs2, *_ = PG.place_zone(ts2, zones, 2, "grass", seed=seed, entrances=plan[2])
+        g1 = [o for o in objs1 if o["purpose"] == "GUARD" and (o["x"], o["y"]) in crossing1]
+        g2 = [o for o in objs2 if o["purpose"] == "GUARD" and (o["x"], o["y"]) in crossing2]
+        assert len(g1) <= 1, "at most one guard per planned entrance"
+        assert not g2, "zone 2 (higher zid) must never emit the pair's crossing guard"
+        n_guarded += len(g1)
+    assert n_guarded >= 3, \
+        f"ENTRANCE_GUARD_PROB=0.85 should guard most seeds, got {n_guarded}/6"
+
+
+@needs_stats
+def test_portal_reward_zone():
+    """A rock-enclosed zone becomes a SPECIAL REWARD zone: a same-subtype two-way monolith
+    pair bridges it (far end inside, near end in the reachable host zone with a hostile
+    guard adjacent), cache-tagged loot fills it, traverse counts it reachable, and
+    fill_open_islands no longer buries it in decoration."""
+    import pp_map as PM
+    import traverse as TR
+    import mapeval as ME
+
+    S = 40
+    GRASS, ROCK = 2, 9
+    grid = [[GRASS] * S for _ in range(S)]
+    inner = {(x, y) for x in range(31, 37) for y in range(31, 37)}   # 36-tile enclave
+    for y in range(28, 40):
+        for x in range(28, 40):
+            if (x, y) not in inner:
+                grid[y][x] = ROCK
+    ts1 = {(x, y) for x in range(S) for y in range(S) if grid[y][x] == GRASS} - inner
+    zones = {1: {"tiles_set": sorted(ts1), "area": len(ts1), "terrain_type": GRASS,
+                 "centroid": (sum(x for x, _ in ts1) / len(ts1),
+                              sum(y for _, y in ts1) / len(ts1))},
+             2: {"tiles_set": sorted(inner), "area": len(inner), "terrain_type": GRASS,
+                 "centroid": (33.5, 33.5)}}
+
+    def mk(typ, x, y, purpose, mask=("A",)):
+        return {"type": typ, "subtype": "s", "animation": "X", "mask": list(mask),
+                "x": x, "y": y, "l": 0, "purpose": purpose,
+                "template": {"animation": "X", "mask": list(mask)}}
+
+    def run():
+        objs = {0: [mk("town", 5, 5, "TOWN"), mk("mine", 31, 31, "MINE")]}
+        targets = {0: [(5, 6)]}
+        n = PM.rescue_unreachable_zones(
+            S, {0: grid}, {0: zones}, objs, targets, {0: []},
+            start=(0, (5, 5)), gate_xy=set(), seed=3)
+        return n, objs[0], targets[0]
+
+    n, objs, targets = run()
+    assert n == 1, "the enclave must be rescued by exactly one portal pair"
+    mono = [o for o in objs if o["type"] == "monolithTwoWay"]
+    assert len(mono) == 2 and mono[0]["subtype"] == mono[1]["subtype"], \
+        "a same-subtype two-way pair"
+    far = [o for o in mono if (o["x"], o["y"]) in inner]
+    near = [o for o in mono if (o["x"], o["y"]) in ts1]
+    assert len(far) == 1 and len(near) == 1, "one end inside, one end in the host zone"
+    nx, ny = near[0]["x"], near[0]["y"]
+    guards = [o for o in objs if o.get("purpose") == "GUARD"
+              and max(abs(o["x"] - nx), abs(o["y"] - ny)) == 1]
+    assert guards and guards[0]["options"] == {"character": "hostile"}, \
+        "a hostile guard must sit adjacent to the reachable-side end"
+    loot = [o for o in objs if o.get("cache")]
+    assert len(loot) >= 6 and all((o["x"], o["y"]) in inner for o in loot), \
+        "the enclave holds a dense cache-tagged hoard"
+    assert set(targets) & {(o["x"], o["y"]) for o in loot}, "rewards are named G2 targets"
+
+    # determinism
+    n2, objs2, _ = run()
+    assert n2 == n and objs2 == objs
+
+    # traverse: the monolith network makes the enclave (and its mine) reachable
+    cell = {"view": 0, "rt": 0, "rd": 0, "ot": 0, "od": 0, "m": 0}
+    fm = {"name": "synthetic", "width": S, "height": S, "twoLevel": False, "players": 1,
+          "terrain": [[[dict(cell, t=grid[y][x]) for x in range(S)] for y in range(S)]],
+          "objects": objs}
+    rep = TR.traverse(fm)
+    assert rep["unreachable_mines"] == [], "the enclosed mine must be reachable via portal"
+    assert ME.relational_complete(fm) is True
+
+    # fill_open_islands: the enclave now carries targets -> no decoration fill
+    _objs3, _nrec, nfill = PM.fill_open_islands(S, grid, list(objs), list(targets), seed=3)
+    assert nfill == 0, f"rescued zone must not be decoration-filled, filled {nfill} tiles"
+
+
+def test_seal_zone_borders_closes_or_guards():
+    """Every cross-zone 8-adjacent open crossing outside the planned entrance bands is
+    either SEALED with a blocking decoration or contested by a back-path GUARD's zone of
+    control — an unguardable-and-unsealable free crossing must not survive."""
+    import pp_map as PM
+    import zone_field as ZF
+
+    S, GRASS = 20, 2
+    grid = [[GRASS] * S for _ in range(S)]
+    ts1 = {(x, y) for x in range(10) for y in range(S)}
+    ts2 = {(x, y) for x in range(10, S) for y in range(S)}
+    zones = {1: {"tiles_set": sorted(ts1), "centroid": (4.5, 9.5), "area": len(ts1),
+                 "terrain_type": GRASS},
+             2: {"tiles_set": sorted(ts2), "centroid": (14.5, 9.5), "area": len(ts2),
+                 "terrain_type": GRASS}}
+    plan = ZF.plan_entrances(zones)
+    bands = set()
+    for ents in plan.values():
+        for _r, b, _o in ents:
+            bands |= set(b)
+    # two facing unsealable tiles (a protected-web crossing) must earn a guard, not a seal
+    web_pair = {(9, 2), (10, 2)}
+    avoid = bands | web_pair
+
+    args = (S, S, grid, zones, plan, [], avoid, set(), 3, 0)
+    new_objs, sealed, guard_tiles, n_open = PM.seal_zone_borders(*args)
+    assert PM.seal_zone_borders(*args)[:2] == (new_objs, sealed), "deterministic"
+
+    assert sealed and not (sealed & avoid), "seals never land on protected tiles"
+    assert guard_tiles & web_pair, "the unsealable web crossing gets a back-path guard"
+    assert n_open == 0
+    guards = [o for o in new_objs if o.get("purpose") == "GUARD"]
+    assert all(o.get("seal") and o["options"] == {"character": "hostile"} for o in guards)
+
+    open_all = (ts1 | ts2) - sealed
+
+    def zoc(t):
+        return any(max(abs(g[0] - t[0]), abs(g[1] - t[1])) <= 1 for g in guard_tiles)
+
+    for t in sorted(open_all):
+        for dx, dy in ((1, 0), (0, 1), (1, 1), (1, -1)):
+            n = (t[0] + dx, t[1] + dy)
+            if n not in open_all:
+                continue
+            if (t in ts1) == (n in ts1):
+                continue
+            assert t in bands or n in bands or zoc(t) or zoc(n), \
+                f"free unguarded crossing survived at {t}->{n}"

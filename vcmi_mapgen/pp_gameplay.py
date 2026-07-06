@@ -104,6 +104,10 @@ RANDOM_SHARE = 0.7  # towns: random vs fixed split
 # guarded (user-reported bug: unguarded mines), valuable mines scaling higher still. The
 # town's own economy pair (sawmill/orePit) is guarded at level 1 specifically (user-mandated
 # — a trivial early fight, not a level-3+ wall in front of every town's starting economy).
+ENTRANCE_GUARD_PROB = 0.85  # a planned zone entrance is a genuine chokepoint (the rest of
+#                             the border is a vegetation ridge), so it is usually guarded —
+#                             vs 0.65 for the legacy wide-open border convention.
+
 MINE_GUARD_LVL = {
     "sawmill": 1,
     "orePit": 1,
@@ -450,7 +454,8 @@ def _info_pool(terrain, has_water, has_subterrain=False):
 
 def place_zone(ts, zones, zid, terrain, seed=1, coastal=frozenset(), force_town=False, ledger=None,
                 has_water=False, level=0, has_subterrain=False, avoid=frozenset(),
-                preoccupied=frozenset(), preblocked=frozenset(), preapproaches=()):
+                preoccupied=frozenset(), preblocked=frozenset(), preapproaches=(),
+                entrances=None):
     """Gameplay objects for one zone. Returns (objs, occupied, blocked, approaches):
     `occupied` = every footprint cell (no vegetation there), `blocked` = the impassable
     subset (the walkable web must route around these; approach tiles are never in it).
@@ -492,7 +497,15 @@ def place_zone(ts, zones, zid, terrain, seed=1, coastal=frozenset(), force_town=
     density pass, so a gate claims its own small footprint first and everything downstream
     — this function's own placements, then vegetation/scatter via the `occupied`/`approaches`
     this function returns — treats it exactly like a pre-existing mine or town: avoided by
-    its footprint + the ordinary GAP buffer only, not a large separately-reserved clearing."""
+    its footprint + the ordinary GAP buffer only, not a large separately-reserved clearing.
+
+    `entrances` (this zone's `zone_field.plan_entrances` entries, `[(rep, band, other_zid)]`)
+    switches the border model from corpus-open gate bands to the map-level ISOLATION plan:
+    the planned narrow bands replace `_zone_gate_bands` for the gate-distance covariate, no
+    gameplay footprint may squat on a band (the crossing must stay walkable), and the
+    zone-edge guard pass guards the planned entrance reps directly (prob
+    ENTRANCE_GUARD_PROB, single-side ownership zid < other) instead of hunting
+    pocket-mouths inside wide-open borders."""
     import random
 
     st = mine_gameplay(level=level)[terrain]
@@ -646,8 +659,24 @@ def place_zone(ts, zones, zid, terrain, seed=1, coastal=frozenset(), force_town=
     # Gates are corpus-wide BANDS of the contact front (not 1-tile corridors) — gate
     # distance is measured from the whole open band, matching the v5 corpus mining.
     ed = ZF.edge_dist(ts)
-    gate_bands = ZF._zone_gate_bands(ts, zones, zid, open_frac=st.get("border_open_frac", 0.5))
-    band_union = set().union(*(b for _r, b in gate_bands)) if gate_bands else set()
+    if entrances is not None:
+        gate_bands = [(rep, band) for rep, band, _other in entrances]
+        band_union = set().union(*(b for _r, b in gate_bands)) if gate_bands else set()
+        # reserve the whole 8-connected rim, not just the bands: a gameplay APPROACH tile
+        # sitting on the border is a permanently-walkable hole neither the border bias nor
+        # the seal pass may touch (diagonal contact included — corner-cutting is a legal
+        # hero move in H3, so a diagonal-only touch tile leaks exactly like a front tile).
+        others = set()
+        for zz, z2 in zones.items():
+            if zz != zid:
+                others.update(z2["tiles_set"])
+        rim8 = {t for t in ts
+                if any((t[0] + dx, t[1] + dy) in others for dx, dy in ZF.NB8)}
+        ent_reserved = frozenset(rim8 | band_union)
+    else:
+        gate_bands = ZF._zone_gate_bands(ts, zones, zid, open_frac=st.get("border_open_frac", 0.5))
+        band_union = set().union(*(b for _r, b in gate_bands)) if gate_bands else set()
+        ent_reserved = frozenset()
     gd = gate_dist(ts, band_union)
     tiles_sorted = sorted(ts)
     wcache = {}
@@ -743,12 +772,13 @@ def place_zone(ts, zones, zid, terrain, seed=1, coastal=frozenset(), force_town=
             cands = rng.choices(tiles_sorted, weights=weights, k=80)
             spiral = _SPIRAL[:25]
         for node in cands:
-            fit = _fits(ident, node[0], node[1], ts, occupied, near, set(approaches), avoid=avoid)
+            fit = _fits(ident, node[0], node[1], ts, occupied, near,
+                        set(approaches) | ent_reserved, avoid=avoid)
             if fit is None:  # nudge: try a tight spiral at the sample
                 for dx, dy in spiral:
                     fit = _fits(
-                        ident, node[0] + dx, node[1] + dy, ts, occupied, near, set(approaches),
-                        avoid=avoid,
+                        ident, node[0] + dx, node[1] + dy, ts, occupied, near,
+                        set(approaches) | ent_reserved, avoid=avoid,
                     )
                     if fit:
                         node = (node[0] + dx, node[1] + dy)
@@ -785,7 +815,8 @@ def place_zone(ts, zones, zid, terrain, seed=1, coastal=frozenset(), force_town=
                             (ex - 1, ey + 1),
                             (ex + 1, ey + 1),
                         ):
-                            if (sx, sy) in ts and (sx, sy) not in occupied and (sx, sy) not in avoid:
+                            if ((sx, sy) in ts and (sx, sy) not in occupied
+                                    and (sx, sy) not in avoid and (sx, sy) not in ent_reserved):
                                 seal_cell(rng.choice(seal_pool), sx, sy)
                 break
 
@@ -799,38 +830,66 @@ def place_zone(ts, zones, zid, terrain, seed=1, coastal=frozenset(), force_town=
         cand = sorted(coastal)
         rng.shuffle(cand)
         for c in cand[:150]:
-            fit = _fits(ident, c[0], c[1], ts, occupied, near, set(approaches), avoid=avoid)
+            fit = _fits(ident, c[0], c[1], ts, occupied, near,
+                        set(approaches) | ent_reserved, avoid=avoid)
             if fit:
                 settle("WATER_TRANSPORT", ident, fit, c)
                 break
 
-    # zone-edge guards: gate bands are deliberately WIDE corpus-open borders (see
-    # ZF._zone_gate_bands), so most crossings have no real bottleneck at all — guarding an
-    # arbitrary "least open" tile inside a wide band never actually blocks anything (the hero
-    # just walks around it through the rest of the band). A crossing only deserves a guard
-    # when it is a genuine chokepoint: `ZF.find_pockets(ts)` finds every tile from which one
-    # guard's zone of control seals a bounded (<=16-tile) pocket of this zone's own shape.
-    # A gate band tile that is ALSO one of those mouths sits inside a narrow niche that
-    # happens to open onto the neighbouring zone — that is worth guarding; a gate band tile
-    # that is not is just open ground, and stays unguarded.
-    pocket_mouths = ZF.find_pockets(ts)
-    for rep, band in sorted(gate_bands):
-        cands = [t for t in band if t in ts and t not in occupied and t in pocket_mouths]
-        if not cands:
-            continue
-        target = min(cands, key=lambda t: ((t[0] - rep[0]) ** 2 + (t[1] - rep[1]) ** 2, t))
-        if rng.random() > 0.65:
-            continue
-        lvl = min(7, 1 + area // 250 + (1 if rng.random() < 0.4 else 0))
-        gident = rnd_monster(lvl)
-        # only the interactive cell needs to be free/in-zone -- the mask's decorative overlay
-        # cells may bleed past the zone edge or over already-blocked scenery, same relaxation
-        # as the pickup layer's cache guards (see pp_pickup.put).
-        if not all(c in ts and c not in occupied
-                   for c in OR.mask_interactive_cells(gident["mask"], target[0], target[1])):
-            continue
-        emit("GUARD", gident, target[0], target[1])
-        occupied.update((tx, ty) for tx, ty, _b in OR.mask_cells(gident["mask"], target[0], target[1]))
+    if entrances is not None:
+        # zone-edge guards, ISOLATION model: each planned entrance is a genuine chokepoint
+        # (the rest of the border densifies into a vegetation ridge — see pp_sample's
+        # `border` bias), so the rep itself is worth guarding, at a higher probability and
+        # a slightly steeper strength ramp than the old wide-border convention. Only the
+        # LOWER zid of the pair emits (single-side ownership — the two sides planned the
+        # same aligned crossing, and pp_map's dup-guard cleanup stays as a backstop).
+        for rep, band, other in sorted(entrances):
+            if zid >= other:
+                continue
+            if rng.random() > ENTRANCE_GUARD_PROB:
+                continue
+            lvl = min(7, 1 + area // 200 + (1 if rng.random() < 0.4 else 0))
+            gident = rnd_monster(lvl)
+            cands = [t for t in [rep] + sorted(band) if t in ts and t not in occupied]
+            target = next(
+                (t for t in cands
+                 if all(c in ts and c not in occupied
+                        for c in OR.mask_interactive_cells(gident["mask"], t[0], t[1]))),
+                None)
+            if target is None:
+                continue
+            emit("GUARD", gident, target[0], target[1])
+            occupied.update(
+                (tx, ty) for tx, ty, _b in OR.mask_cells(gident["mask"], target[0], target[1]))
+    else:
+        # zone-edge guards: gate bands are deliberately WIDE corpus-open borders (see
+        # ZF._zone_gate_bands), so most crossings have no real bottleneck at all — guarding an
+        # arbitrary "least open" tile inside a wide band never actually blocks anything (the hero
+        # just walks around it through the rest of the band). A crossing only deserves a guard
+        # when it is a genuine chokepoint: `ZF.find_pockets(ts)` finds every tile from which one
+        # guard's zone of control seals a bounded (<=16-tile) pocket of this zone's own shape.
+        # A gate band tile that is ALSO one of those mouths sits inside a narrow niche that
+        # happens to open onto the neighbouring zone — that is worth guarding; a gate band tile
+        # that is not is just open ground, and stays unguarded.
+        pocket_mouths = ZF.find_pockets(ts)
+        for rep, band in sorted(gate_bands):
+            cands = [t for t in band if t in ts and t not in occupied and t in pocket_mouths]
+            if not cands:
+                continue
+            target = min(cands, key=lambda t: ((t[0] - rep[0]) ** 2 + (t[1] - rep[1]) ** 2, t))
+            if rng.random() > 0.65:
+                continue
+            lvl = min(7, 1 + area // 250 + (1 if rng.random() < 0.4 else 0))
+            gident = rnd_monster(lvl)
+            # only the interactive cell needs to be free/in-zone -- the mask's decorative
+            # overlay cells may bleed past the zone edge or over already-blocked scenery, same
+            # relaxation as the pickup layer's cache guards (see pp_pickup.put).
+            if not all(c in ts and c not in occupied
+                       for c in OR.mask_interactive_cells(gident["mask"], target[0], target[1])):
+                continue
+            emit("GUARD", gident, target[0], target[1])
+            occupied.update(
+                (tx, ty) for tx, ty, _b in OR.mask_cells(gident["mask"], target[0], target[1]))
 
     # tie the zone's RANDOM dwellings to its town: VCMI's `sameAsTown` link makes the
     # dwelling resolve to the town's (lobby-picked) faction at game start, so the creatures
@@ -927,7 +986,9 @@ def place_gates(ts0, ts1, occ0, occ1, appr0=frozenset(), appr1=frozenset(), seed
 
 # purposes deliberately NOT reproduced by the generator (the audit's whitelist)
 AUDIT_EXCLUDED = {
-    "TRANSPORT": "relational (monolith/portal pairing) — out of scope, spec §19",
+    "TRANSPORT": "relational: subterranean gates + two-way monoliths are placed by their own "
+                 "matched-set passes (place_gates / pp_map.rescue_unreachable_zones), not the "
+                 "per-zone density draw — the audit must not demand every corpus variant",
     "GUARD": "guards are leveled RANDOM monsters by design, never corpus identities",
 }
 # corpus sprite VARIANTS of ontology objects: same {type, subtype} gameplay object under a

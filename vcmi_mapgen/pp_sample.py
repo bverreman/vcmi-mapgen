@@ -98,7 +98,7 @@ def build_model(terrain):
 
 
 def protected_web(ts, zones, zid, edist, seedt, spacing=SPACING, extra_nodes=(),
-                  avoid=frozenset(), open_frac=0.5):
+                  avoid=frozenset(), open_frac=0.5, entrances=None, keep_off=frozenset()):
     """The PROTECTED walkable set: spanning backbone over farthest-point nodes + rim gate
     BANDS (constructive global connectivity, reusing zone_field's helpers — spec §5).
 
@@ -107,11 +107,32 @@ def protected_web(ts, zones, zid, edist, seedt, spacing=SPACING, extra_nodes=(),
     can never wall a border down to a 1-tile corridor — generated borders stay as open as
     real corpus borders. `extra_nodes` are mandatory destinations (gameplay approach tiles —
     every placed object stays reachable); `avoid` tiles (gameplay footprints) are
-    impassable, so corridors route AROUND towns/mines instead of through them."""
+    impassable, so corridors route AROUND towns/mines instead of through them.
+
+    `entrances` (this zone's `zone_field.plan_entrances` entries) switches the border model
+    from corpus-open to ISOLATED: only the planned narrow entrance bands are protected —
+    the rest of the front is left plantable, and `sample_zone`'s border bias actively
+    densifies it (the map-level isolation redesign). `keep_off` (the caller's 8-connected
+    rim: every tile with an 8-neighbour in another zone) further restricts backbone
+    ROUTING in that mode — a web corridor pinned to the rim would both hold the ridge open
+    and be unsealable by `pp_map.seal_zone_borders`."""
     ts_free = ts - set(avoid)
     if seedt not in ts_free:
         seedt = min(ts_free, key=lambda t: (t[0] - seedt[0]) ** 2 + (t[1] - seedt[1]) ** 2)
-    gate_bands = ZF._zone_gate_bands(ts, zones, zid, open_frac=open_frac)
+    if entrances is not None:
+        gate_bands = [(rep, band) for rep, band, _other in entrances]
+        # keep the backbone OFF the non-entrance front/rim: a path hugging the border would
+        # hold a protected walkable lane exactly where the border bias is trying to grow
+        # the isolation ridge. Entrance bands stay in the routing domain (a rep is reached
+        # through its own band); fall back to the full zone if a node is only reachable
+        # along the front.
+        fronts = ZF._zone_fronts(ts, zones, zid)
+        front = set().union(*fronts.values()) if fronts else set()
+        band_all = set().union(*(b for _r, b in gate_bands)) if gate_bands else set()
+        path_ts = ts_free - ((front | set(keep_off)) - band_all)
+    else:
+        gate_bands = ZF._zone_gate_bands(ts, zones, zid, open_frac=open_frac)
+        path_ts = ts_free
     gates = [r for r, _b in gate_bands]
     interior = [t for t in ts_free if edist.get(t, 0) >= 2] or list(ts_free)
     nodes = ZF._farthest_points(ts_free, seedt, spacing, cand=interior)
@@ -129,7 +150,9 @@ def protected_web(ts, zones, zid, edist, seedt, spacing=SPACING, extra_nodes=(),
                 d = (r[0] - c[0]) ** 2 + (r[1] - c[1]) ** 2
                 if d < bd:
                     bd, best_r, best_c = d, r, c
-        path = ZF._geodesic_path(best_c, best_r, ts_free) or ZF._geodesic_path(best_c, best_r, ts)
+        path = (ZF._geodesic_path(best_c, best_r, path_ts)
+                or ZF._geodesic_path(best_c, best_r, ts_free)
+                or ZF._geodesic_path(best_c, best_r, ts))
         prot.update(path)
         connected.append(best_r)
         remaining.remove(best_r)
@@ -139,17 +162,31 @@ def protected_web(ts, zones, zid, edist, seedt, spacing=SPACING, extra_nodes=(),
 
 
 ATTRACT = 0.7                   # log-intensity bonus on `attract` tiles (mine surroundings)
+BORDER_W = 2.5                  # log-intensity bonus on `border` tiles (zone-front belt):
+#                                 e^2.5 ~ 12x Papangelou intensity, so growth concentrates
+#                                 along zone borders and reads as a natural ridge. Each side
+#                                 only reaches ~70-90% front coverage (Geyer saturation), but
+#                                 BOTH zones densify their own side and a crossing needs an
+#                                 aligned open pair — measured on the 2-zone probe, every
+#                                 surviving crossing is the planned entrance band. The global
+#                                 coverage correction (alpha -> corpus veg_blocked_frac) keeps
+#                                 TOTAL vegetation corpus-like, so this REDISTRIBUTES mass to
+#                                 the border rather than inflating overall density.
 
 
 def sample_zone(ts, zones, zid, model, seed=1, steps_per_tile=STEPS_PER_TILE, prot=None,
-                forbid=frozenset(), attract=frozenset()):
+                forbid=frozenset(), attract=frozenset(), border=frozenset()):
     """Birth/death MH over decoration configurations in one zone. Returns
     (objects, blocked_set, prot) with objects = [{x, y, l, template:{animation, mask}}].
     `forbid` tiles (gameplay footprints + approach tiles) admit NO vegetation at all —
     neither an anchor nor any footprint cell (decor must not bury gameplay, per the repo rule).
     `attract` tiles carry a +ATTRACT log-intensity bonus — used for the annulus around MINE
     footprints so sawmills nestle in forest and gem ponds in growth (approaches and the
-    protected web stay hard zeros, so attraction never costs reachability)."""
+    protected web stay hard zeros, so attraction never costs reachability).
+    `border` tiles carry a +BORDER_W log-intensity bonus — the zone-isolation lever: the
+    zone's contact front (minus its planned entrance bands, which sit in `prot` as hard
+    zeros) densifies into a vegetation ridge with corpus-correct species/clumping, leaving
+    only the planned entrances open."""
     import numpy as np
     import random
     A = len(model["cats"])
@@ -205,10 +242,13 @@ def sample_zone(ts, zones, zid, model, seed=1, steps_per_tile=STEPS_PER_TILE, pr
         G = (G - v.mean()) / max(v.std(), 1e-6)
         M = np.exp(sigma * G - 0.5 * sigma * sigma)
 
-    att = np.zeros((H, W))                           # mine-surround attraction log-bonus
-    for (x, y) in attract:
+    att = np.zeros((H, W))                           # additive log-bonus grid
+    for (x, y) in attract:                           # mine-surround attraction
         if 0 <= x - x0 < W and 0 <= y - y0 < H:
             att[y - y0, x - x0] = ATTRACT
+    for (x, y) in border:                            # zone-front densification
+        if 0 <= x - x0 < W and 0 <= y - y0 < H:
+            att[y - y0, x - x0] += BORDER_W
 
     # padded per-category anchor-count grid (padding = no bounds checks on the window)
     C = np.zeros((A, H + 2 * RINT, W + 2 * RINT), dtype=np.int16)
