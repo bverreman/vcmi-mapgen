@@ -3,8 +3,9 @@ name: vcmi-mapgen
 description: "VCMI map-generator repo root — what the project is, uv tooling, the package layout, and how to run the zone engine / terrain generator / tests. Load first for any work in this repo."
 metadata:
   generated_by: farrier
-  source: library/skills/vcmi-mapgen/vcmi-mapgen/SKILL.md
-  do_not_edit: "edit the source in the central prompt library and re-run `make agent-install` to regenerate"
+  source: library/skills/projects/vcmi-mapgen/vcmi-mapgen/SKILL.md
+  resolve: "farrier source .claude/skills/vcmi-mapgen/SKILL.md"
+  do_not_edit: "generated — run the `resolve` command below for this machine's editable source path, edit that, then `make agent-install` to regenerate"
 ---
 
 # VCMI map-generator — repository root

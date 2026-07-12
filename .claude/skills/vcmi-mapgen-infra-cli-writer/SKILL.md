@@ -1,10 +1,11 @@
 ---
-name: vcmi-mapgen-cli-writer
+name: vcmi-mapgen-infra-cli-writer
 description: "CLI & Makefile Command Timeouts. Applies to **/Makefile,**/*.mk,scripts/**/*.sh,scripts/**."
 metadata:
   generated_by: farrier
-  source: library/skills/cli-writer/cli-writer/SKILL.md
-  do_not_edit: "edit the source in the central prompt library and re-run `make agent-install` to regenerate"
+  source: library/skills/infra/infra-cli-writer/SKILL.md
+  resolve: "farrier source .claude/skills/vcmi-mapgen-infra-cli-writer/SKILL.md"
+  do_not_edit: "generated — run the `resolve` command below for this machine's editable source path, edit that, then `make agent-install` to regenerate"
 ---
 
 # CLI & Makefile Command Timeouts
