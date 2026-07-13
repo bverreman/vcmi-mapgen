@@ -8,6 +8,7 @@ import json, re, glob, sys, os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import vmapwrite
 import ontology
+import vcmi_paths
 
 TCODE = {
     0: "dt",
@@ -125,7 +126,7 @@ def to_vmap(fm, out_path, name=None):
                 if not vo["options"]:
                     del vo["options"]
     header, _, _, _ = vmapwrite.read_raw(
-        glob.glob("/home/gabriel/.var/app/eu.vcmi.VCMI/data/vcmi/Maps/RandomMaps/*.vmap")[0]
+        glob.glob(os.path.join(vcmi_paths.vcmi_home(), "Maps", "RandomMaps", "*.vmap"))[0]
     )
     # Wire EACH player slot to its own starting town so the map is actually playable.
     # VCMI links a player to a town via mainTown = town_anchor - (2,2) (verified against

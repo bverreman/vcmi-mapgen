@@ -15,6 +15,10 @@ import pp_stats as PS           # noqa: E402
 HAVE_STATS = os.path.exists(os.path.join(PS.PP_DIR, "veg_grass.json"))
 needs_stats = pytest.mark.skipif(not HAVE_STATS, reason="data/pp stats not mined")
 
+import vcmi_paths  # noqa: E402
+
+RANDOMMAPS_GLOB = os.path.join(vcmi_paths.vcmi_home(), "Maps", "RandomMaps", "*.vmap")
+
 
 def test_pair_denominator_matches_bruteforce():
     """D[r] (numpy shifted-mask count) == brute-force ordered pair count at Chebyshev r."""
@@ -305,7 +309,7 @@ def test_vmap_export_roundtrip():
     import glob
     import json
     import zipfile
-    if not glob.glob("/home/gabriel/.var/app/eu.vcmi.VCMI/data/vcmi/Maps/RandomMaps/*.vmap"):
+    if not glob.glob(RANDOMMAPS_GLOB):
         pytest.skip("VCMI template .vmap not available")
     import ontology as ON
     import pp_map as PM
@@ -346,7 +350,7 @@ def test_vmap_export_game_contracts():
     import glob
     import json
     import zipfile
-    if not glob.glob("/home/gabriel/.var/app/eu.vcmi.VCMI/data/vcmi/Maps/RandomMaps/*.vmap"):
+    if not glob.glob(RANDOMMAPS_GLOB):
         pytest.skip("VCMI template .vmap not available")
     import ontology as ON
     import pp_gameplay as PG
@@ -420,7 +424,7 @@ def test_playability_overlay():
     import glob
     import json
     import zipfile
-    if not glob.glob("/home/gabriel/.var/app/eu.vcmi.VCMI/data/vcmi/Maps/RandomMaps/*.vmap"):
+    if not glob.glob(RANDOMMAPS_GLOB):
         pytest.skip("VCMI template .vmap not available")
     import ontology as ON
     import pp_map as PM
@@ -466,7 +470,7 @@ def test_playability_overlay_alliance_grouping():
     import glob
     import json
     import zipfile
-    if not glob.glob("/home/gabriel/.var/app/eu.vcmi.VCMI/data/vcmi/Maps/RandomMaps/*.vmap"):
+    if not glob.glob(RANDOMMAPS_GLOB):
         pytest.skip("VCMI template .vmap not available")
     import ontology as ON
     import pp_map as PM
@@ -497,7 +501,7 @@ def test_playability_overlay_random_town_shows_random_in_lobby():
     import glob
     import json
     import zipfile
-    if not glob.glob("/home/gabriel/.var/app/eu.vcmi.VCMI/data/vcmi/Maps/RandomMaps/*.vmap"):
+    if not glob.glob(RANDOMMAPS_GLOB):
         pytest.skip("VCMI template .vmap not available")
     import pp_gameplay as PG
     import pp_map as PM

@@ -5,11 +5,14 @@ config/objects/*.json : { "<type>": { "index": <class>, "types": { "<subtype>": 
 config/creatures/*.json, config/factions/*.json : { "<identifier>": { "index": <id> } }  (for monster/town subtypes)
 """
 
-import json, re, glob, os
+import json, re, glob, os, sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import vcmi_paths
 
 _BASES = [
     "/var/lib/flatpak/app/eu.vcmi.VCMI/current/active/files/share/vcmi/config",
-    os.path.expanduser("~/.var/app/eu.vcmi.VCMI/data/vcmi/Mods"),
+    os.path.join(vcmi_paths.vcmi_home(), "Mods"),
 ]
 
 

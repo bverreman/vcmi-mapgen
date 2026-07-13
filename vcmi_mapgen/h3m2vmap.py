@@ -6,7 +6,7 @@ opened in the editor and confirmed faithful, then trusted as the reference.
 import json, glob, os, sys, re, collections
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import h3m, vcmi_ids, vmapwrite
+import h3m, vcmi_ids, vmapwrite, vcmi_paths
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -104,7 +104,7 @@ def convert(h3m_path, out_path):
             }
         )
     header, _, _, _ = vmapwrite.read_raw(
-        glob.glob("/home/gabriel/.var/app/eu.vcmi.VCMI/data/vcmi/Maps/RandomMaps/*.vmap")[0]
+        glob.glob(os.path.join(vcmi_paths.vcmi_home(), "Maps", "RandomMaps", "*.vmap"))[0]
     )
     for pid, pl in list(header.get("players", {}).items()):
         if isinstance(pl, dict):
@@ -126,7 +126,7 @@ if __name__ == "__main__":
     src = (
         sys.argv[1]
         if len(sys.argv) > 1
-        else "/home/gabriel/.var/app/eu.vcmi.VCMI/data/vcmi/Maps/Elbow Room.h3m"
+        else os.path.join(vcmi_paths.vcmi_home(), "Maps", "Elbow Room.h3m")
     )
     out = f"{ROOT}/out/REAL_{os.path.basename(src).replace('.h3m', '')}.vmap"
     convert(src, out)

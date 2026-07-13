@@ -31,6 +31,7 @@ import pp_gameplay as PG        # noqa: E402
 import pp_pickup as PK          # noqa: E402
 import pp_sample as PP          # noqa: E402
 import terrain_segment as TSG   # noqa: E402
+import vcmi_paths as VPATH      # noqa: E402
 import zone_engine as ZE        # noqa: E402
 import zone_field as ZF         # noqa: E402
 
@@ -1364,7 +1365,7 @@ def build(seed=3, size=72, water=None, players=0, water_mode="normal", subterrai
     return levels, surfs, objs, info, player_towns
 
 
-VCMI_MAPS_DIR = "/home/gabriel/.var/app/eu.vcmi.VCMI/data/vcmi/Maps/pp-gen"
+VCMI_MAPS_DIR = os.path.join(VPATH.vcmi_home(), "Maps", "pp-gen")
 
 
 def gen_one(seed, size, water=None, water_mode="normal", players=2, teams_spec="ffa",

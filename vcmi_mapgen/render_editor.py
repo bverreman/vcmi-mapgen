@@ -14,7 +14,10 @@ import sys, os, struct, zlib, zipfile, re, json, argparse, collections
 from PIL import Image
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-LOD_DIR = "/home/gabriel/.var/app/eu.vcmi.VCMI/data/vcmi/Data"
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import vcmi_paths  # noqa: E402
+
+LOD_DIR = os.path.join(vcmi_paths.vcmi_home(), "Data")
 LOD_FILES = ["H3sprite.lod", "H3ab_spr.lod", "H3bitmap.lod", "H3ab_bmp.lod"]
 
 # terrain code (first 2 chars of tile string) -> terrain .def filename

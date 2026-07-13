@@ -1388,6 +1388,33 @@ MIN_TERRAIN_PATCH = 4   # a patch (= future zone) must have more than this many 
 #                         dominant LAND neighbour, so terrain reads as coherent regions (and
 #                         doesn't fragment the map into unplayable sliver-zones).
 
+# Terrains that legitimately occur 1-tile-wide in the corpus, exempt from thin-shape erosion:
+# dirt and sand are H3's base terrains (the NEIGHBOUR draws the transition on its own tile, a
+# base tile always renders clean), and subterranean is the underground tunnel terrain (real
+# undergrounds are full of 1-wide tunnels, so the tiler knows their signatures). Corpus interior
+# rates of no-2x2 tiles: dirt 0.065%, sand 0.59%, subterranean 0.45% — vs ~0.00% for everything
+# else (grass/snow/swamp/rough/lava/water/rock), whose transition tilesets cannot draw a 1-wide
+# shape at all: an unseen signature makes _tile_cell fall back to a flat clean tile, rendering
+# an abrupt untransitioned square (e.g. a lone white "snow hole" in the middle of dirt).
+_EROSION_EXEMPT = frozenset({0, 1, 6})  # dirt, sand, subterranean
+
+
+def _thin_tiles(ids, W, H):
+    """Tiles of a non-exempt terrain that belong to NO 2x2 same-terrain square. Off-map cells
+    count as same terrain, mirroring ``_neigh8``, so map-edge tiles get the natural treatment."""
+    def same(xs, ys, t):
+        return not (0 <= xs < W and 0 <= ys < H) or ids[ys][xs] == t
+    thin = []
+    for y in range(H):
+        for x in range(W):
+            t = ids[y][x]
+            if t in _EROSION_EXEMPT:
+                continue
+            if not any(all(same(xs + dx, ys + dy, t) for dx in (0, 1) for dy in (0, 1))
+                       for xs in (x - 1, x) for ys in (y - 1, y)):
+                thin.append((x, y))
+    return thin
+
 
 def _keep_patch(tiles, min_patch=MIN_TERRAIN_PATCH):
     """Shape-aware keep rule: more than ``min_patch`` tiles always stays; exactly ``min_patch``
@@ -1403,12 +1430,14 @@ def _keep_patch(tiles, min_patch=MIN_TERRAIN_PATCH):
 
 
 def _despeckle_ids(ids, W, H, min_patch=MIN_TERRAIN_PATCH, protect=frozenset()):
-    """Reassign every connected same-terrain patch failing ``_keep_patch`` to the LAND terrain
-    it borders most (water/rock only when no land borders it — a sliver enclosed by barriers
-    becomes barrier), iterating until no small patch remains (a merge can expose a new one).
-    `protect` cells are never merged: a thin corridor (e.g. an underground tunnel) can flank
-    rock on both long sides, so a short same-id stretch along it would otherwise out-vote to
-    rock and sever a connection the generator built on purpose."""
+    """Reassign every connected same-terrain patch failing ``_keep_patch`` — and every
+    non-exempt tile in no 2x2 same-terrain square (``_thin_tiles``: 1-wide tendrils, necks
+    and inlets H3's transition tilesets cannot draw) — to the LAND terrain it borders most
+    (water/rock only when no land borders it — a sliver enclosed by barriers becomes
+    barrier), iterating until no small patch or thin tile remains (a merge can expose new
+    ones). `protect` cells are never merged: a thin corridor (e.g. an underground tunnel)
+    can flank rock on both long sides, so a short same-id stretch along it would otherwise
+    out-vote to rock and sever a connection the generator built on purpose."""
     ids = [row[:] for row in ids]
     NB4 = ((1, 0), (-1, 0), (0, 1), (0, -1))
     for _ in range(24):
@@ -1450,6 +1479,22 @@ def _despeckle_ids(ids, W, H, min_patch=MIN_TERRAIN_PATCH, protect=frozenset()):
                 newt = nbr.most_common(1)[0][0]
                 for x, y in tiles:
                     ids[y][x] = newt
+                changed = True
+        for x, y in _thin_tiles(ids, W, H):
+            if (x, y) in protect:
+                continue
+            t = ids[y][x]
+            nbr_land = collections.Counter()
+            nbr_all = collections.Counter()
+            for dx, dy in NB4:
+                nx, ny = x + dx, y + dy
+                if 0 <= nx < W and 0 <= ny < H and ids[ny][nx] != t:
+                    nbr_all[ids[ny][nx]] += 1
+                    if ids[ny][nx] < TS.WATER:
+                        nbr_land[ids[ny][nx]] += 1
+            nbr = nbr_land or nbr_all
+            if nbr:
+                ids[y][x] = nbr.most_common(1)[0][0]
                 changed = True
         if not changed:
             break
