@@ -10,10 +10,10 @@
 # research` runs them together from this one file).
 #
 # Each service clones this repo from a READ-ONLY bind mount of your working
-# tree instead of GitHub — so no SSH key, token, or network is needed, and your
-# host working tree is never mutated (the clone lives in that workflow's own
-# workspace-<name> volume — each workflow gets its own, they are never shared).
-# checkout_workspace() only fast-forwards a clean checkout to the host's latest
+# tree instead of GitHub, so the host working tree is never mutated.
+# Each clone lives in that workflow's own workspace volume.
+# Workflow workspace volumes are never shared.
+# checkout_workspace() only fast-forwards a clean checkout to the configured
 # committed state on $REPO_BRANCH; if the container's copy has uncommitted
 # changes or commits not yet on origin/$REPO_BRANCH (e.g. a run that blocked
 # mid-way), it leaves the checkout alone so that work survives a restart.
@@ -29,6 +29,9 @@ services:
   research:
     image: *agent-image
     build: *agent-build
+    # Run the workflow container as nobody from process start; mounted volumes
+    # must already be writable by this container user.
+    user: "nobody"
     extra_hosts:
       # Lets the container's groom-sidecar — installed as an editable uv tool
       # when the GROOM_SRC bind below is set — reach a loopback-bound `groom`
@@ -44,12 +47,13 @@ services:
       - "host.docker.internal:host-gateway"
     environment:
       CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
+      # Workflow runtime.
       WORKFLOW_PATH: /workflow/workflow.yaml
       AGENT_RUNS_DIR: /runs
       DISABLE_AUTOUPDATER: "1"
-      # setup.sh / checkout_workspace() prefer these over the workflow's
-      # GitHub defaults.
+      # No explicit workflow.repoUrl: clone the read-only host checkout.
       REPO_URL: /mnt/vcmi-mapgen-src
+
       REPO_BRANCH: ${REPO_BRANCH:-main}
       # Repository name → /workspace/$REPO_NAME inside the container.
       REPO_NAME: ${REPO_NAME:-vcmi-mapgen}
@@ -59,6 +63,7 @@ services:
       # not the checkout_workspace() clone under /workspace.
       AGENT_REPO_DIR: /workspace/${REPO_NAME:-vcmi-mapgen}
     volumes:
+      # Claude subscription credentials — seeded into /claude-state by the workhorse entrypoint.
       - type: bind
         source: ${HOME}/.claude/.credentials.json
         target: /mnt/claude-credentials.json
@@ -70,6 +75,7 @@ services:
         source: ${REPO_SRC:-/mnt/data/workspace/vcmi-mapgen}
         target: /mnt/vcmi-mapgen-src
         read_only: true
+
       # Optional: host directory containing a .code-workspace file, for
       # multi-repo runs (or non-git sibling folders that can't be cloned — see
       # workhorse/workhorse/scriptutil.py's checkout_workspace()). Uncomment and

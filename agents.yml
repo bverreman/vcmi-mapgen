@@ -9,6 +9,10 @@ agents:
 skills:
   - projects/vcmi-mapgen/*   # repo root + maps domain
   - infra/infra-cli-writer   # CLI/Makefile command-timeout conventions
+prompts:
+  # /update-skill-from-conversation — fold a session's learnings back into the
+  # agent library (skills, commands, root instructions).
+  - agent-library/update-skill-from-conversation
 workflows:
   - research                 # gate-loop benchmark program (program.yml manifest)
 localInstructions:
