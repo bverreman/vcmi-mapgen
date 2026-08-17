@@ -848,7 +848,7 @@ def place_zone(ts, zones, zid, terrain, seed=1, coastal=frozenset(), force_town=
                 continue
             if rng.random() > ENTRANCE_GUARD_PROB:
                 continue
-            lvl = min(7, 1 + area // 200 + (1 if rng.random() < 0.4 else 0))
+            lvl = 1 if force_town else min(7, 1 + area // 200 + (1 if rng.random() < 0.4 else 0))
             gident = rnd_monster(lvl)
             cands = [t for t in [rep] + sorted(band) if t in ts and t not in occupied]
             target = next(
@@ -879,7 +879,7 @@ def place_zone(ts, zones, zid, terrain, seed=1, coastal=frozenset(), force_town=
             target = min(cands, key=lambda t: ((t[0] - rep[0]) ** 2 + (t[1] - rep[1]) ** 2, t))
             if rng.random() > 0.65:
                 continue
-            lvl = min(7, 1 + area // 250 + (1 if rng.random() < 0.4 else 0))
+            lvl = 1 if force_town else min(7, 1 + area // 250 + (1 if rng.random() < 0.4 else 0))
             gident = rnd_monster(lvl)
             # only the interactive cell needs to be free/in-zone -- the mask's decorative
             # overlay cells may bleed past the zone edge or over already-blocked scenery, same

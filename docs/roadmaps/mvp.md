@@ -28,7 +28,7 @@ as an integer-only guarantee. This roadmap is the milestone view.
 | 2 | **Terrain segmentation** | same-terrain zones + interior-depth features | Done |
 | 3 | **Record + bit-exact replay** | zone templates; `rebuild --identity --verify` = `IDENTITY OK 2027/2027` | Done |
 | 4 | **Editor-quality rendering + reliability tests** | real 32px H3 sprites (DEF fmt 0/1/2/3); golden rebuilt==source pixel check | Done |
-| 5 | **Stretch (larger shape)** | same objects at the same relative placement on a larger grid, VCMI-valid | Working |
+| 5 | **Stretch (larger shape)** | same objects at the same relative placement on a larger grid, VCMI-valid | Done |
 | 6 | **Learned terrain generator** | Markov chain learned from the corpus (`markov_terrain`) | Done |
 | 7 | **Arbitrary-outline warp** | oriented-bbox / depth-sweep shape coordinate (beyond rectangular stretch) | Next |
 | 8 | **Corpus-wide run** | every zone of every map; bridge recorded zones onto generated terrain | Future |

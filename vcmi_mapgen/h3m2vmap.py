@@ -103,9 +103,13 @@ def convert(h3m_path, out_path):
                 "y": o.y,
             }
         )
-    header, _, _, _ = vmapwrite.read_raw(
-        glob.glob(os.path.join(vcmi_paths.vcmi_home(), "Maps", "RandomMaps", "*.vmap"))[0]
-    )
+    _rmg = glob.glob(os.path.join(vcmi_paths.vcmi_home(), "Maps", "RandomMaps", "*.vmap"))
+    if _rmg:
+        header, _, _, _ = vmapwrite.read_raw(_rmg[0])
+    else:
+        _tpl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "data", "vmap_header_template.json")
+        header = json.load(open(_tpl))
     for pid, pl in list(header.get("players", {}).items()):
         if isinstance(pl, dict):
             pl["mainTown"] = None
