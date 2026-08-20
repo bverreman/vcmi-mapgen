@@ -31,7 +31,8 @@ as an integer-only guarantee. This roadmap is the milestone view.
 | 5 | **Stretch (larger shape)** | same objects at the same relative placement on a larger grid, VCMI-valid | Done |
 | 6 | **Learned terrain generator** | Markov chain learned from the corpus (`markov_terrain`) | Done |
 | 7 | **Arbitrary-outline warp** | oriented-bbox / depth-sweep shape coordinate (beyond rectangular stretch) | Skipped — stretch sufficient for M8; revisit if shape-transfer quality becomes a bottleneck |
-| 8 | **Corpus-wide run** | every zone of every map; bridge recorded zones onto generated terrain | Next |
+| 8 | **Corpus-wide run** | batch extract + rebuild --identity --verify across all 159 maps; zone catalog with stats | Done — 159/159 OK, 2989 zones, 355 273 objects; `zone_engine corpus` |
+| 9 | **Bridge to generated terrain** | Markov terrain → segment → query catalog by terrain+area → stretch replay → emit .vmap | Future |
 
 ## Standing constraints
 

@@ -1,6 +1,9 @@
 # transient generated artifacts (templates, features, renders, rebuilt maps)
 out/
 
+# large derived catalog (regenerate with: zone_engine corpus --no-verify)
+data/zone_catalog.json
+
 __pycache__/
 *.pyc
 .pytest_cache/

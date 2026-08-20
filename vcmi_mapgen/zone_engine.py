@@ -4201,6 +4201,93 @@ def cmd_grammar(args):
               + ", ".join(f"{t}:{len(s)}" for t, s in sorted(rel.items())))
 
 
+def cmd_corpus(args):
+    """Batch extract + identity verify across all 159 maps; write data/zone_catalog.json."""
+    import glob
+    maps_dir = os.path.join(ROOT, "maps_json")
+    catalog_path = os.path.join(ROOT, "data", "zone_catalog.json")
+
+    files = sorted(glob.glob(os.path.join(maps_dir, "*.json")))
+    if not files:
+        sys.exit(f"No maps_json/*.json files found in {maps_dir}")
+
+    # strip .json suffix to get the map name (same convention as load_faithful)
+    names = [os.path.splitext(os.path.basename(f))[0] for f in files]
+
+    total_zones = 0
+    total_objs = 0
+    pass_count = 0
+    fail_count = 0
+    catalog_zones = []
+
+    print(f"{'MAP':<45} {'ZONES':>5} {'OBJS':>6} {'VERIFY'}")
+    print("-" * 65)
+
+    for name in names:
+        try:
+            template = extract_template(name)
+        except Exception as e:
+            print(f"{'  ERROR extracting '+name:<45} {str(e)}")
+            fail_count += 1
+            continue
+
+        # Collect zones for the catalog (land zones only; water/rock filtered by segmentation)
+        for lvl_entry in template["levels"]:
+            L = lvl_entry["level"]
+            for z in lvl_entry["zones"]:
+                catalog_zones.append({
+                    "map": name,
+                    "level": L,
+                    "zone_id": z["zone_id"],
+                    "terrain_type": z["terrain_type"],
+                    "area": z["area"],
+                    "label": z["label"],
+                    "shape_hash": z["shape_hash"],
+                    "bbox": z["bbox"],
+                    "mask_rel": z["mask_rel"],
+                    "objects": z["objects"],
+                })
+
+        map_zones = sum(len(lvl["zones"]) for lvl in template["levels"])
+        map_objs = sum(len(z["objects"]) for lvl in template["levels"] for z in lvl["zones"])
+        total_zones += map_zones
+        total_objs += map_objs
+
+        if args.verify:
+            try:
+                src = OR.load_faithful(name)
+                fm, _stats = rebuild_map(template, src["terrain"], identity=True)
+                ok, _total, _matched, missing, extra = verify_identity(name, fm)
+                verdict = "OK" if ok else f"FAIL({sum(missing.values())}m/{sum(extra.values())}x)"
+                if ok:
+                    pass_count += 1
+                else:
+                    fail_count += 1
+            except Exception as e:
+                verdict = f"ERR({e})"
+                fail_count += 1
+        else:
+            verdict = "skipped"
+            pass_count += 1
+
+        print(f"  {name:<43} {map_zones:>5} {map_objs:>6}  {verdict}")
+
+    print("-" * 65)
+    print(f"  {'TOTAL':<43} {total_zones:>5} {total_objs:>6}  "
+          f"{pass_count} pass / {fail_count} fail  ({len(names)} maps)")
+
+    catalog = {
+        "maps": len(names),
+        "total_zones": len(catalog_zones),
+        "total_objects": total_objs,
+        "zones": catalog_zones,
+    }
+    os.makedirs(os.path.dirname(catalog_path), exist_ok=True)
+    with open(catalog_path, "w") as f:
+        json.dump(catalog, f, separators=(",", ":"))
+    print(f"\ncatalog -> {catalog_path}  ({len(catalog_zones)} zones)")
+
+
 def main():
     ap = argparse.ArgumentParser(description="Shape-driven zone-rebuilding engine")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -4282,6 +4369,12 @@ def main():
     prun = sub.add_parser("run", help="foundation pipeline to the inspection checkpoint")
     prun.add_argument("name")
     prun.set_defaults(func=cmd_run)
+
+    pcorp = sub.add_parser("corpus",
+                           help="batch extract + verify all 159 maps; write data/zone_catalog.json")
+    pcorp.add_argument("--no-verify", action="store_false", dest="verify",
+                       help="skip identity rebuild+verify (faster; catalog still written)")
+    pcorp.set_defaults(func=cmd_corpus, verify=True)
 
     pgr = sub.add_parser("grammar",
                          help="learn the feature grammar (relational setpieces + openness "
