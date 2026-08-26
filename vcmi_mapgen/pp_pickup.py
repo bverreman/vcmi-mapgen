@@ -1160,9 +1160,9 @@ def place_loot_zones(zone_records, entrance_plan, objs_existing, seed=1, bounds=
             if gate_tile is None:
                 continue
 
+            _fill_loot(terrain, st, reach, used, rng)
             _seal_all_passages(ts, open_set, used, terrain, rng)
             processed_loot_zids.add(zid)
-            _fill_loot(terrain, st, reach, used, rng)
 
             km_rng = random.Random(seed ^ (zid * 131071) ^ 0xCEBF)
             km_st  = PG.mine_gameplay()[km_zr["terrain"]]
@@ -1210,13 +1210,11 @@ def place_loot_zones(zone_records, entrance_plan, objs_existing, seed=1, bounds=
             if int_t is None:
                 continue
 
-            _seal_all_passages(ts, open_set, used, terrain, rng)
-            processed_loot_zids.add(zid)
-
             _place_one(objs, used, reach, rng, st, "TRANSPORT", None,
                       int_t[0], int_t[1], ident=mono_ident, bounds=bounds)
-
             _fill_loot(terrain, st, reach, used, rng)
+            _seal_all_passages(ts, open_set, used, terrain, rng)
+            processed_loot_zids.add(zid)
 
             ext_rng = random.Random(seed ^ (zid * 131071) ^ 0xCEBF)
             ext_st  = PG.mine_gameplay()[ext_zr["terrain"]]
