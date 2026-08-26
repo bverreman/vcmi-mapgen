@@ -902,11 +902,6 @@ def place_loot_zones(zone_records, entrance_plan, objs_existing, seed=1, bounds=
 
     town_tiles = {(o["x"], o["y"]) for o in objs_existing if o.get("purpose") == "TOWN"}
 
-    # Pre-compute all passable tiles — needed by _seal_all_passages.
-    _ext_pass_all = set()
-    for _zr in zone_records:
-        _ext_pass_all |= _zr.get("passable", _zr["open_set"])
-
     # Pre-compute full tile set of all zones for boundary detection.
     _all_ts = set()
     for _zr in zone_records:
@@ -999,12 +994,10 @@ def place_loot_zones(zone_records, entrance_plan, objs_existing, seed=1, bounds=
         return None, None
 
     def _seal_all_passages(ts, open_set, used, terrain, rng):
-        """Fill every loot-zone tile that borders a passable exterior tile
-        (8-connected) with blocking vegetation — these are the 'blue' passage
-        tiles in the overlay.  The deliberate entrance (gate/monolith visit
-        cell) is already in `used` after placement and so is skipped
-        automatically.  Removes any stray guard on the tile before sealing."""
-        ext_pass = _ext_pass_all - ts
+        """Fill ALL open loot-zone tiles with blocking vegetation — both the
+        boundary ('blue') passage tiles and the zone interior.  The deliberate
+        entrance (gate/monolith visit cell) is already in `used` after
+        placement and so is skipped automatically.  Removes any stray guard."""
         veg_pool = ON.decor_pool(terrain, blocking=True, max_cells=1,
                                  exclude_types=_LOOT_EXCL_DECOR)
         if not veg_pool:
@@ -1015,10 +1008,6 @@ def place_loot_zones(zone_records, entrance_plan, objs_existing, seed=1, bounds=
             if open_set is not None and t not in open_set:
                 continue  # already physically blocked
             tx, ty = t
-            if not any((tx + dx, ty + dy) in ext_pass
-                       for dx, dy in [(1, 0), (-1, 0), (0, 1), (0, -1),
-                                      (1, 1), (1, -1), (-1, 1), (-1, -1)]):
-                continue
             objs[:] = [o for o in objs if not (o.get("purpose") == "GUARD"
                                                 and o["x"] == tx and o["y"] == ty)]
             iv = rng.choice(veg_pool)

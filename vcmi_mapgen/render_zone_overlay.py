@@ -413,6 +413,60 @@ def _passage_tiles(zone_label, passable, H, W):
     return passages
 
 
+_LOOT_ZONE_MAX_TILES = 80
+
+
+def _loot_zone_tiles(zones, zone_label, objs0, H, W):
+    """Identify all tiles belonging to loot zones (area ≤ 80, no town, single
+    terrain-tile boundary cluster) using the same detection logic as pp_pickup."""
+    zone_ts = collections.defaultdict(set)
+    for y in range(H):
+        for x in range(W):
+            zid = zone_label[y][x]
+            if zid >= 0:
+                zone_ts[zid].add((x, y))
+
+    town_tiles = set()
+    for o in objs0:
+        if o.get("purpose") == "TOWN":
+            for cx, cy, _ in OR.mask_cells(o["mask"], o["x"], o["y"]):
+                town_tiles.add((cx, cy))
+
+    all_ts = set()
+    for ts in zone_ts.values():
+        all_ts |= ts
+
+    loot_tiles = set()
+    for zid, ts in zone_ts.items():
+        if len(ts) > _LOOT_ZONE_MAX_TILES:
+            continue
+        if any(t in town_tiles for t in ts):
+            continue
+        ext_ts = all_ts - ts
+        boundary = {t for t in ts
+                    if any((t[0] + dx, t[1] + dy) in ext_ts for dx, dy in _NB8)}
+        seen, n_clusters = set(), 0
+        for s in sorted(boundary):
+            if s in seen:
+                continue
+            n_clusters += 1
+            if n_clusters > 1:
+                break
+            q = collections.deque([s])
+            seen.add(s)
+            while q:
+                cx, cy = q.popleft()
+                for dx, dy in _NB8:
+                    nb = (cx + dx, cy + dy)
+                    if nb in boundary and nb not in seen:
+                        seen.add(nb)
+                        q.append(nb)
+        if n_clusters == 1:
+            loot_tiles |= ts
+
+    return loot_tiles
+
+
 # ---------------------------------------------------------------------------
 # zone overlay builder
 # ---------------------------------------------------------------------------
@@ -511,11 +565,15 @@ def main(seed=42, size=72, water_mode="normal", players=2):
     passages = _passage_tiles(zone_label, passable, H, W)
     blue_layer = _fill_layer(base_img.size, passages, (60, 140, 255, 200))
 
+    # Exclude loot zone tiles from pocket detection: loot zones are a distinct
+    # access mechanic (gate/monolith) and should never show a magenta overlay.
+    loot_tiles = _loot_zone_tiles(zones, zone_label, objs0, H, W)
+
     # For pocket geometry, treat visit tiles of normal structures as walls
     # (they are passable but "owned" by the structure).  Solo-visit tiles (no
     # blocking body, one visit tile) may sit inside a pocket but must never
     # serve as the pocket entrance.
-    passable_for_pockets = passable - struct_visit_tiles
+    passable_for_pockets = passable - struct_visit_tiles - loot_tiles
     magenta_layer, n_pockets, _mouth_tiles = _pocket_gradient_layer(
         base_img.size, passable_for_pockets, objs0, W, H,
     )
