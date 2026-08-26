@@ -32,6 +32,15 @@ CAPS = {"RESOURCE_PILE": 16, "REWARD_PICKUP": 8}   # base floors; caps scale (sc
                                 # pocket guards/caches are deterministic, see place_pickups)
 SCATTER_ART_SHARE = 0.15        # unguarded scatter: mostly LOOT (chests/campfires); the
                                 # tiered random artifacts live behind cache guards instead
+
+# Artifact tier (animation name from RND_ART) indexed by monster level 1-6:
+# treasure(1-2) → minor(3) → major(4-5) → any/relic(6).
+# The monster level is derived from resources + visitable structures placed in the pocket;
+# the artifact at the deepest tile then matches that level so the guard's strength is
+# always proportional to the prize behind it.
+_ART_BY_LVL = ["avarnd1", "avarnd1", "avarnd2", "avarnd3", "avarnd3", "avarand"]
+
+_SOLO_VIS_PURPOSES = ("BONUS_TEMP", "SPELL_SKILL", "MANA", "STAT_PERMANENT")
 LOOT_FLOOR_AREA = 300           # a real zone always yields a couple of unguarded loots
 POCKET_MIN_SEP = 4              # Chebyshev distance between accepted cache guards, applied
                                 # to TINY (1-2 tile) pockets only: the ZoC-neck detector
@@ -40,6 +49,25 @@ POCKET_MIN_SEP = 4              # Chebyshev distance between accepted cache guar
                                 # thinning, a long wall run grows a guard at every kink.
                                 # Real (3+ tile) pockets stay deterministic — every one gets
                                 # its cache, per the module doctrine above.
+
+LOOT_ZONE_MAX_TILES = 80        # land zone with fewer tiles, exactly one entrance, no town
+
+_LOOT_COLORS = [                # (border_gate_anim, keymaster_anim); index == VCMI subtype 0-7
+    ("avxbgt00", "avxkey00"),   # 0 light blue
+    ("avxbgt10", "avxkey10"),   # 1 green
+    ("avxbgt20", "avxkey20"),   # 2 red
+    ("avxbgt30", "avxkey30"),   # 3 dark blue
+    ("avxbgt40", "avxkey40"),   # 4 brown
+    ("avxbgt50", "avxkey50"),   # 5 purple
+    ("avxbgt60", "avxkey60"),   # 6 white
+    ("avxbgt70", "avxkey70"),   # 7 black
+]
+_LOOT_ART_W = {"avarnd1": 5, "avarnd2": 15, "avarnd3": 35, "avarand": 45}
+_LOOT_EXCL_DECOR = frozenset({"LAKE", "FROZEN_LAKE", "RIVER_DELTA", "KELP", "REEF", "LAKE_2"})
+# Two-way monolith pairs for sealed teleport loot zones (ci > 0).
+# Both ends of each pair use the SAME animation → same subtype → they teleport to each other.
+# Subtypes monolith1-4 (simple 1-4 cell, no blocking body) suit small pockets best.
+_LOOT_MONOLITHS = ["avxmn2g0", "avxmn2o0", "avxmn2p0", "avxmn4b0"]
 
 
 def _web_dist(open_set, prot):
@@ -385,6 +413,26 @@ def place_scatter(ts, zones, zid, terrain, open_set, prot, seed=1, bounds=None,
     return objs, used, reach
 
 
+def _solo_visit_pool(terrain):
+    """Objects with exactly one visit tile and no blocking body cells — the 'christmas-green'
+    category (shrines, magic wells, fountains, etc.).  These fit inside a single open tile
+    and are safe to cache inside pockets."""
+    pool = []
+    seen = set()
+    for purpose in _SOLO_VIS_PURPOSES:
+        for ident in ON.gameplay_pool(terrain, purpose):
+            anim = ident.get("animation", "")
+            if anim in seen:
+                continue
+            mask = ident.get("mask", [])
+            n_visit = sum(1 for row in mask for ch in row if ch in "AX")
+            n_body  = sum(1 for row in mask for ch in row if ch == "B")
+            if n_visit == 1 and n_body == 0:
+                seen.add(anim)
+                pool.append(ident)
+    return pool
+
+
 def place_pocket_caches(zone_records, seed=1, bounds=None):
     """Guarded caches in genuine geometric pockets — found in ONE global, zone-independent
     pass over the WHOLE map's TRUE physical passability, run once after every zone's
@@ -451,10 +499,13 @@ def place_pocket_caches(zone_records, seed=1, bounds=None):
         for t in zr["ts"]:
             zone_of[t] = zid
         terrain_of[zid] = zr["terrain"]
+        used |= zr["used"]           # always claim used cells — no double-stacking
+        if zr.get("loot_zone"):
+            continue                  # sealed loot zones: exclude from pocket-detection
+        # universe so their interiors don't look like pockets and get a second guard
         global_open |= zr["open_set"]
         global_true |= zr.get("passable", zr["open_set"])
         global_reach |= (zr["reach"] - zr["used"])
-        used |= zr["used"]
     global_reach8 = _reach8(global_true, global_reach)
     global_place = global_reach8 & global_open
 
@@ -465,10 +516,7 @@ def place_pocket_caches(zone_records, seed=1, bounds=None):
     placed_mouths = []
 
     for candidates in blobs:
-        # try candidate mouths for this SAME physical nook best-first; fall back instead of
-        # abandoning a genuine pocket just because its top-ranked mouth tile happens to
-        # coincide with an unrelated object's already-`used` approach cell (see
-        # `_dedupe_pockets` docstring).
+        # Pass 1: try to find a guardable mouth (guard footprint fits and is reachable).
         mouth = pocket = zid = None
         for cand_mouth, cand_pocket in candidates:
             if cand_mouth in used:
@@ -481,58 +529,93 @@ def place_pocket_caches(zone_records, seed=1, bounds=None):
                 continue
             mouth, pocket, zid = cand_mouth, cand_pocket, cand_zid
             break
-        if mouth is None:
+        guarded = mouth is not None
+
+        # Pass 2 (unguarded fallback): guard can't fit, but the pocket still exists and
+        # deserves resources. Pick the best-ranked candidate just for the pocket body.
+        ref_mouth = mouth
+        if not guarded:
+            for cand_mouth, cand_pocket in candidates:
+                cand_zid = zone_of.get(cand_mouth)
+                if cand_zid is None:
+                    continue
+                ref_mouth, pocket, zid = cand_mouth, cand_pocket, cand_zid
+                break
+        if pocket is None:
             continue
+
         # thin 1-2 tile nooklets that crowd an already-guarded cache (see POCKET_MIN_SEP)
-        if len(pocket) <= 2 and any(max(abs(mouth[0] - m[0]), abs(mouth[1] - m[1]))
-                                    < POCKET_MIN_SEP for m in placed_mouths):
+        if ref_mouth and len(pocket) <= 2 and any(
+                max(abs(ref_mouth[0] - m[0]), abs(ref_mouth[1] - m[1])) < POCKET_MIN_SEP
+                for m in placed_mouths):
             continue
+
         terrain = terrain_of[zid]
         st = PG.mine_gameplay()[terrain]
         pool_res = ON.gameplay_pool(terrain, "RESOURCE_PILE")
         pool_art = ON.gameplay_pool(terrain, "REWARD_PICKUP")
-        # deterministic per-pocket rng (keyed on the mouth's own position, not the zone id) —
-        # placement order no longer depends on per-zone iteration since pockets are now found
-        # in one global pass and may be visited in any deterministic order.
-        rng = random.Random(seed ^ (mouth[0] * 92821) ^ (mouth[1] * 131071) ^ 0x9C4)
+        # deterministic per-pocket rng keyed on the best-candidate mouth position.
+        rng = random.Random(seed ^ (ref_mouth[0] * 92821) ^ (ref_mouth[1] * 131071) ^ 0x9C4)
         # pocket tiles found via `global_true` may include tiles that are physically
         # walkable but NOT placement-eligible (another object's approach/occupied cell) --
         # those can't host a new resource/artifact, so filter to `global_open` here.
         cache_spots = [t for t in pocket if t not in used and t in global_open]
         if not cache_spots:
             continue
-        # reserve the neck for the duration of cache placement: a resource/artifact's own
-        # footprint carries a decorative overlay cell one tile OFF its own anchor, which can
-        # otherwise land exactly on the mouth and steal the guard's only interactive cell.
-        used.add(mouth)
-        rng.shuffle(cache_spots)
-        # nearest-to-the-mouth first, and "the pocket is fully filled with resource" (user's
-        # verbatim spec): one tile nearest the mouth is reserved for the artifact, every other
-        # pocket tile that can legally hold one gets a resource pile, so even a maximal
-        # 16-tile pocket reads as a dense, deliberate treasure room instead of a guard
-        # standing next to a few piles in an otherwise-empty space.
-        cache_spots.sort(key=lambda t: max(abs(t[0] - mouth[0]), abs(t[1] - mouth[1])))
-        art_spots = cache_spots[:1]
-        res_spots = cache_spots[1:]
-        val = 0                                      # reward value accumulated in this cache
-        for t in res_spots:
-            if _place_one(objs, used, global_place, rng, st, "RESOURCE_PILE", pool_res,
-                          t[0], t[1], cache=True, bounds=bounds):
-                val += 2
-        if art_spots:
-            t = art_spots[0]
-            anim, _w, av = rng.choices(PG.RND_ART,
-                                       weights=[w for _a, w, _v in PG.RND_ART], k=1)[0]
-            if _place_one(objs, used, global_place, rng, st, "REWARD_PICKUP", pool_art,
-                          t[0], t[1], ident=ON.identity_of(anim), cache=True, bounds=bounds):
-                val += av
-        used.discard(mouth)  # release: the precheck guarantees the guard's own placement succeeds
-        if val:
-            lvl = 1 + (val >= 4) + (val >= 7) + (val >= 10) + (val >= 13)
+
+        # Sort nearest-to-mouth (index 0) → deepest (index -1).
+        cache_spots.sort(key=lambda t: max(abs(t[0] - ref_mouth[0]), abs(t[1] - ref_mouth[1])))
+
+        if guarded:
+            # Assign spot buckets (nearest → deepest):
+            #   resources fill the tiles just past the entrance,
+            #   one solo-visitable structure sits in the middle (pocket ≥ 3 tiles),
+            #   one artifact sits at the deepest tile.
+            art_spot = cache_spots[-1:]
+            vis_spot = cache_spots[-2:-1] if len(cache_spots) >= 3 else []
+            res_spots = cache_spots[:len(cache_spots) - 1 - len(vis_spot)]
+
+            # Pre-estimate loot value from the intended fill (each resource ≈ 2,
+            # solo-visitable ≈ 3) to set the guard level before placing anything.
+            # Artifact value is excluded so the guard level is stable regardless of
+            # which artifact tier fits.
+            est_val = 2 * len(res_spots) + (3 if vis_spot else 0)
+            lvl = min(6, 1 + (est_val >= 4) + (est_val >= 7) + (est_val >= 10) + (est_val >= 13))
+            anim = _ART_BY_LVL[lvl - 1]
+
+            # 1. Guard at entrance — placed first; its footprint claims the mouth and
+            #    any decorative V cells that bleed into the pocket, so the fill below
+            #    naturally avoids stacking on tiles the guard sprite visually covers.
             gident = PG.rnd_monster(lvl + (1 if rng.random() < 0.25 else 0))
-            if _place_one(objs, used, global_place, rng, st, "GUARD", None,
-                          mouth[0], mouth[1], ident=gident, bounds=bounds):
-                placed_mouths.append(mouth)
+            if not _place_one(objs, used, global_place, rng, st, "GUARD", None,
+                              mouth[0], mouth[1], ident=gident, bounds=bounds):
+                continue
+            placed_mouths.append(mouth)
+
+            pool_vis = _solo_visit_pool(terrain)
+            # 2. Resources on the nearest tiles (just inside the entrance)
+            for t in res_spots:
+                _place_one(objs, used, global_place, rng, st, "RESOURCE_PILE", pool_res,
+                           t[0], t[1], cache=True, bounds=bounds)
+            # 3. Solo-visitable structure (one tile, middle of pocket)
+            for t in vis_spot:
+                ident = rng.choice(pool_vis) if pool_vis else None
+                if ident:
+                    _place_one(objs, used, global_place, rng, st,
+                               ident.get("purpose", "BONUS_TEMP"), None,
+                               t[0], t[1], ident=ident, cache=True, bounds=bounds)
+            # 4. Artifact at the deepest tile — tier matches guard level
+            if art_spot:
+                t = art_spot[0]
+                _place_one(objs, used, global_place, rng, st, "REWARD_PICKUP", pool_art,
+                           t[0], t[1], ident=ON.identity_of(anim), cache=True, bounds=bounds)
+        else:
+            # Unguarded pocket: no monster can seal the entrance, so no artifact or
+            # solo-visitable structure (those presuppose a guard). Fill every tile with
+            # resources so the pocket still contains something rather than being empty.
+            for t in cache_spots:
+                _place_one(objs, used, global_place, rng, st, "RESOURCE_PILE", pool_res,
+                           t[0], t[1], cache=True, bounds=bounds)
 
     return objs, len(blobs)
 
@@ -767,3 +850,239 @@ def place_water(ts, zones, zid, seed=1):
             objs.append(o)
             placed.append(t)
     return objs
+
+
+def place_loot_zones(zone_records, entrance_plan, objs_existing, seed=1, bounds=None):
+    """Loot-zone access mechanic for small single-entrance zones.
+
+    A 'loot zone' has <LOOT_ZONE_MAX_TILES tiles, exactly one entrance in `entrance_plan`,
+    and no town inside.  Dense fill (hero-strengthening structures, major/relic artifacts,
+    resource piles) is placed in every qualifying zone.  Access mechanic depends on rank:
+
+      ci == 0  (first / most prominent): BORDER_GATE at the entrance rep + matching-colour
+               KEYMASTER in the non-loot zone farthest from any castle.  The hero must first
+               find and visit the tent, then return to the gate.  Other entrance-band tiles
+               are sealed with vegetation so the gate is the sole physical opening.
+
+      ci  > 0  (all others): the entrance band is FULLY sealed with vegetation — the zone
+               becomes a walled pocket.  A TWO-WAY MONOLITH is placed inside and a matching
+               one outside (far from castles), so the only way in is to step on the external
+               monolith.  Both ends use the same subtype, forming an exclusive teleport pair.
+
+    In both cases the outer object (keymaster / exterior monolith) is pre-checked before the
+    inner object is committed, so no permanently impassable gate or unreachable interior is
+    ever left on the map.  Returns (objs, n_placements).
+    """
+    import random
+
+    town_tiles = {(o["x"], o["y"]) for o in objs_existing if o.get("purpose") == "TOWN"}
+
+    loot_zrs = []
+    for zr in zone_records:
+        if len(zr["ts"]) >= LOOT_ZONE_MAX_TILES:
+            continue
+        if any(t in town_tiles for t in zr["ts"]):
+            continue
+        if len(entrance_plan.get(zr["zid"], [])) != 1:
+            continue
+        loot_zrs.append(zr)
+
+    if not loot_zrs:
+        return [], 0, set()
+
+    loot_zids = {zr["zid"] for zr in loot_zrs}
+    ext_no_castle = [zr for zr in zone_records
+                     if zr["zid"] not in loot_zids
+                     and not any(t in town_tiles for t in zr["ts"])]
+    ext_any = [zr for zr in zone_records if zr["zid"] not in loot_zids]
+
+    def _far_score(zr):
+        free = zr["reach"] - zr["used"]
+        if not free:
+            return (-1, 0)
+        if town_tiles:
+            cx = sum(x for x, _ in zr["ts"]) / len(zr["ts"])
+            cy = sum(y for _, y in zr["ts"]) / len(zr["ts"])
+            d  = min((cx - tx) ** 2 + (cy - ty) ** 2 for tx, ty in town_tiles) ** 0.5
+        else:
+            d = 1e9
+        return (d, len(free))
+
+    def _find_ext_spot(ext_ident, ext_pool):
+        """Return (zone_record, tile) for the farthest-from-castle free spot."""
+        for cand in sorted(ext_pool, key=_far_score, reverse=True):
+            free = sorted(cand["reach"] - cand["used"])
+            if not free:
+                continue
+            if town_tiles:
+                free.sort(key=lambda t: -min(
+                    (t[0] - tx) ** 2 + (t[1] - ty) ** 2 for tx, ty in town_tiles))
+            for t in free:
+                if _legal(ext_ident, t[0], t[1], cand["reach"],
+                          cand["used"], bounds=bounds) is not None:
+                    return cand, t
+        return None, None
+
+    def _seal_band(band, ts, gate_tile, reach, used, terrain, rng, open_set=None):
+        """Fill entrance-band tiles (inside the zone) with 1×1 blocking vegetation.
+
+        Seals every open band tile except `gate_tile`.  Uses `open_set` (the zone's
+        placement-eligible tile set) when provided: any band tile that is open (in
+        `open_set`) is sealed regardless of whether it is 4-connected to the web
+        (`reach`).  Diagonal-only-accessible band tiles are physically walkable in H3
+        and would otherwise let a hero bypass the gate keeper without a fight, so they
+        must be blocked too.  Tiles already blocked (not in `open_set`) are skipped so
+        we never double-stack vegetation.  Falls back to the 4-connected `reach` check
+        when `open_set` is not supplied."""
+        veg_pool = ON.decor_pool(terrain, blocking=True, max_cells=1,
+                                 exclude_types=_LOOT_EXCL_DECOR)
+        for t in sorted(band & ts):
+            if t == gate_tile or t in used:
+                continue
+            if open_set is not None:
+                if t not in open_set:
+                    continue            # already physically blocked, nothing to do
+                # don't skip diagonal-only-accessible tiles: they need sealing
+            elif t not in reach:
+                continue                # fallback: 4-conn unreachable → likely blocked
+            if veg_pool:
+                iv = rng.choice(veg_pool)
+                used.add(t)
+                objs.append({"x": t[0], "y": t[1], "l": 0,
+                             "type": iv.get("type"), "subtype": iv.get("subtype"),
+                             "animation": iv["animation"], "mask": iv["mask"],
+                             "template": {"animation": iv["animation"],
+                                          "mask": iv["mask"]}})
+
+    def _fill_loot(terrain, st, reach, used, rng):
+        """Hero-strengthening structures → major/relic artifacts → resource piles."""
+        pool_vis = _solo_visit_pool(terrain)
+        pool_art = ON.gameplay_pool(terrain, "REWARD_PICKUP")
+        pool_res = ON.gameplay_pool(terrain, "RESOURCE_PILE")
+        arts     = [(a, _LOOT_ART_W.get(a, 1)) for a, _w, _v in PG.RND_ART]
+
+        free = sorted(reach - used)
+        rng.shuffle(free)
+        for t in free:
+            if not pool_vis:
+                break
+            iv = rng.choice(pool_vis)
+            _place_one(objs, used, reach, rng, st,
+                      iv.get("purpose", "BONUS_TEMP"), None,
+                      t[0], t[1], ident=iv, cache=True, bounds=bounds)
+
+        for t in sorted(reach - used):
+            ai = ON.identity_of(rng.choices(
+                [a for a, _ in arts], weights=[w for _, w in arts], k=1)[0])
+            if ai:
+                _place_one(objs, used, reach, rng, st, "REWARD_PICKUP", pool_art,
+                           t[0], t[1], ident=ai, cache=True, bounds=bounds)
+
+        for t in sorted(reach - used):
+            _place_one(objs, used, reach, rng, st, "RESOURCE_PILE", pool_res,
+                       t[0], t[1], cache=True, bounds=bounds)
+
+    objs, n_placed = [], 0
+    processed_loot_zids = set()   # zones whose entrance was actually sealed this run
+
+    for ci, loot_zr in enumerate(sorted(loot_zrs, key=lambda z: z["zid"])):
+        zid     = loot_zr["zid"]
+        terrain = loot_zr["terrain"]
+        st      = PG.mine_gameplay()[terrain]
+        ts      = loot_zr["ts"]
+        reach   = loot_zr["reach"]
+        used    = loot_zr["used"]
+        open_set = loot_zr.get("open_set")
+        rng     = random.Random(seed ^ (zid * 92821) ^ 0xA117)
+        ent     = entrance_plan[zid][0]
+        rep, band = ent[0], ent[1]
+        ext_pool = ext_no_castle or ext_any
+
+        if ci == 0:
+            # ── Border Gate + Keymaster ──────────────────────────────────────
+            gate_anim, key_anim = _LOOT_COLORS[0]
+            gate_ident = ON.identity_of(gate_anim)
+            key_ident  = ON.identity_of(key_anim)
+            if gate_ident is None or key_ident is None:
+                continue
+
+            km_zr, km_t = _find_ext_spot(key_ident, ext_pool)
+            if km_t is None:
+                continue
+
+            gate_tile = None
+            for t in sorted(ts, key=lambda t: (t[0]-rep[0])**2 + (t[1]-rep[1])**2):
+                if _place_one(objs, used, reach, rng, st, "QUEST_GATE", None,
+                             t[0], t[1], ident=gate_ident, bounds=bounds):
+                    gate_tile = t
+                    break
+            if gate_tile is None:
+                continue
+
+            _seal_band(band, ts, gate_tile, reach, used, terrain, rng, open_set=open_set)
+            processed_loot_zids.add(zid)
+            _fill_loot(terrain, st, reach, used, rng)
+
+            km_rng = random.Random(seed ^ (zid * 131071) ^ 0xCEBF)
+            km_st  = PG.mine_gameplay()[km_zr["terrain"]]
+            placed = _place_one(objs, km_zr["used"], km_zr["reach"], km_rng, km_st,
+                                "QUEST_GATE", None, km_t[0], km_t[1],
+                                ident=key_ident, bounds=bounds)
+            if not placed:
+                for t in sorted(km_zr["reach"] - km_zr["used"]):
+                    if _place_one(objs, km_zr["used"], km_zr["reach"], km_rng, km_st,
+                                 "QUEST_GATE", None, t[0], t[1],
+                                 ident=key_ident, bounds=bounds):
+                        placed = True
+                        break
+            if placed:
+                n_placed += 1
+
+        else:
+            # ── Fully sealed + Two-Way Monolith pair ─────────────────────────
+            mono_anim  = _LOOT_MONOLITHS[(ci - 1) % len(_LOOT_MONOLITHS)]
+            mono_ident = ON.identity_of(mono_anim)
+            if mono_ident is None:
+                continue
+
+            # Pre-check exterior monolith spot
+            ext_zr, ext_t = _find_ext_spot(mono_ident, ext_pool)
+            if ext_t is None:
+                continue
+
+            # Pre-check interior monolith spot (any reachable tile in the loot zone)
+            int_t = None
+            for t in sorted(reach - used):
+                if _legal(mono_ident, t[0], t[1], reach, used, bounds=bounds) is not None:
+                    int_t = t
+                    break
+            if int_t is None:
+                continue
+
+            # Seal ALL entrance-band tiles (zone is physically walled off)
+            _seal_band(band, ts, None, reach, used, terrain, rng, open_set=open_set)
+            processed_loot_zids.add(zid)
+
+            # Interior monolith — heroes arriving from outside land here
+            _place_one(objs, used, reach, rng, st, "TRANSPORT", None,
+                      int_t[0], int_t[1], ident=mono_ident, bounds=bounds)
+
+            _fill_loot(terrain, st, reach, used, rng)
+
+            # Exterior monolith — the hidden entrance in another zone
+            ext_rng = random.Random(seed ^ (zid * 131071) ^ 0xCEBF)
+            ext_st  = PG.mine_gameplay()[ext_zr["terrain"]]
+            placed  = _place_one(objs, ext_zr["used"], ext_zr["reach"], ext_rng, ext_st,
+                                 "TRANSPORT", None, ext_t[0], ext_t[1],
+                                 ident=mono_ident, bounds=bounds)
+            if not placed:
+                for t in sorted(ext_zr["reach"] - ext_zr["used"]):
+                    if _place_one(objs, ext_zr["used"], ext_zr["reach"], ext_rng, ext_st,
+                                 "TRANSPORT", None, t[0], t[1],
+                                 ident=mono_ident, bounds=bounds):
+                        placed = True
+                        break
+            if placed:
+                n_placed += 1
+
+    return objs, n_placed, processed_loot_zids

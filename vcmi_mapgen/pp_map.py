@@ -722,6 +722,21 @@ def _run_level(level, W, H, grid, zones, player_zids, ledger, gstats, seed, has_
         zr["passable"] -= sealed
         zr["open_set"] -= sealed | guard_tiles
 
+    loot_objs, n_loot, _loot_zids = PK.place_loot_zones(
+        zone_records, entrance_plan, objs, seed=seed, bounds=(W, H))
+    objs.extend(loot_objs)
+    targets.extend((o["x"], o["y"]) for o in loot_objs if o.get("purpose"))
+    # Mark sealed loot zones so place_pocket_caches excludes them from its detection
+    # universe — their interiors would otherwise appear as pockets and receive a
+    # spurious interior guard (the access mechanic already provides the gate keeper).
+    for zr in zone_records:
+        if zr["zid"] in _loot_zids:
+            zr["loot_zone"] = True
+    if n_loot:
+        print(f"  L{level} loot zones: {n_loot} access pair(s) placed "
+              f"(1 gate+key, {n_loot-1} sealed+monolith)" if n_loot > 1
+              else f"  L{level} loot zones: 1 gate+key pair placed")
+
     return objs, targets, zone_records, town_of_zone, has_water, nz, frozenset(ridge)
 
 

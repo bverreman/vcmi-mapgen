@@ -4288,6 +4288,70 @@ def cmd_corpus(args):
     print(f"\ncatalog -> {catalog_path}  ({len(catalog_zones)} zones)")
 
 
+def cmd_bridge(args):
+    """M9: Markov terrain → segment → catalog match by terrain+area → replay → emit .vmap."""
+    catalog_path = os.path.join(ROOT, "data", "zone_catalog.json")
+    if not os.path.exists(catalog_path):
+        sys.exit(f"Zone catalog not found: {catalog_path}\n"
+                 f"Run: zone_engine corpus --no-verify")
+
+    print(f"=== zone_engine bridge: seed={args.seed} size={args.size} ===")
+
+    catalog = json.load(open(catalog_path))
+    index = collections.defaultdict(list)
+    for z in catalog["zones"]:
+        if z["area"] >= args.min_zone:
+            index[z["terrain_type"]].append(z)
+    for t in index:
+        index[t].sort(key=lambda z: z["area"])
+
+    W = H = args.size
+    print(f"[1/3] generating {W}x{H} Markov terrain (seed={args.seed})...")
+    terr = markov_terrain_level(W, H, args.seed)
+
+    zones, _zone_label, canon = _segment_level(terr)
+    land_zones = {zid: z for zid, z in zones.items() if z["area"] >= args.min_zone}
+    print(f"[2/3] segmented: {len(zones)} zones total, "
+          f"{len(land_zones)} land zones >= {args.min_zone}t")
+
+    objects = []
+    rows = []
+    for zid in sorted(land_zones, key=lambda z: -land_zones[z]["area"]):
+        zone = land_zones[zid]
+        tt = zone["terrain_type"]
+        cands = index.get(tt, [])
+        if not cands:
+            rows.append((zid, TNAME.get(tt, tt), zone["area"], "—no catalog match—", 0, 0))
+            continue
+        best = min(cands, key=lambda z: abs(z["area"] - zone["area"]))
+        placed, info = rebuild_zone_warp(best, zone, canon[zid], level=0)
+        objects.extend(placed)
+        rows.append((zid, TNAME.get(tt, tt), zone["area"],
+                     f"{best['map']} z{best['zone_id']}", info["placed"], info["dropped"]))
+
+    print(f"\n  {'ZID':>3}  {'TERRAIN':<8} {'AREA':>5}  {'CATALOG MATCH':<38} {'PLACED':>6} {'DROP':>4}")
+    print("  " + "-" * 72)
+    for zid, tname, area, match, placed, dropped in rows:
+        print(f"  {zid:>3}  {tname:<8} {area:>5}  {match:<38} {placed:>6} {dropped:>4}")
+    total_placed = sum(r[4] for r in rows)
+    total_drop = sum(r[5] for r in rows)
+    print(f"  {'':>3}  {'TOTAL':<8} {'':>5}  {'':38} {total_placed:>6} {total_drop:>4}")
+
+    name = f"Bridge-s{args.seed}"
+    fm = {"name": name, "width": W, "height": H, "twoLevel": False,
+          "players": 1, "terrain": [terr], "objects": objects}
+    os.makedirs(os.path.join(ROOT, "out"), exist_ok=True)
+    os.makedirs(os.path.join(ROOT, "out", "render"), exist_ok=True)
+    stem = os.path.join(ROOT, "out", slug(name))
+    FA.save(fm, stem + ".json")
+    FA.to_vmap(fm, stem + ".vmap", name=name)
+
+    edit = os.path.join(ROOT, "out", "render", f"{slug(name)}.png")
+    editor_render(stem + ".vmap", edit)
+    print(f"\n[3/3] {total_placed} objects -> {stem}.vmap")
+    print(f"      render -> {edit}")
+
+
 def main():
     ap = argparse.ArgumentParser(description="Shape-driven zone-rebuilding engine")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -4409,6 +4473,14 @@ def main():
                     help="[pp layout] add a second, underground level connected to the "
                          "surface by Subterranean Gate pairs")
     pg.set_defaults(func=cmd_generate)
+
+    pb = sub.add_parser("bridge",
+                        help="M9: Markov terrain → catalog match → replay → .vmap")
+    pb.add_argument("--seed", type=int, default=0)
+    pb.add_argument("--size", type=int, default=72, help="W=H of generated terrain (default 72)")
+    pb.add_argument("--min-zone", type=int, default=12, dest="min_zone",
+                    help="skip zones smaller than this (default 12)")
+    pb.set_defaults(func=cmd_bridge)
 
     args = ap.parse_args()
     args.func(args)
