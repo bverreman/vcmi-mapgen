@@ -1080,9 +1080,27 @@ def place_loot_zones(zone_records, entrance_plan, objs_existing, seed=1, bounds=
         passage_cx = sum(t[0] for t in passage_tiles) / len(passage_tiles)
         passage_cy = sum(t[1] for t in passage_tiles) / len(passage_tiles)
 
+        # Determine which side of the loot zone's bounding box the passage is on.
+        ts_xs = [t[0] for t in ts]; ts_ys = [t[1] for t in ts]
+        bbox_x0, bbox_x1 = min(ts_xs), max(ts_xs)
+        bbox_y0, bbox_y1 = min(ts_ys), max(ts_ys)
+        d_top    = passage_cy - bbox_y0
+        d_bottom = bbox_y1 - passage_cy
+        d_left   = passage_cx - bbox_x0
+        d_right  = bbox_x1 - passage_cx
+        passage_side = min(
+            [("top", d_top), ("bottom", d_bottom), ("left", d_left), ("right", d_right)],
+            key=lambda s: s[1]
+        )[0]
+
         use_gate = rng.random() < 0.5
         if use_gate:
             # ── Border Gate + Keymaster ──────────────────────────────────────
+            # Gate mask ['VVVV','VBXB']: 4-wide × 2-tall, anchor = bottom-right.
+            # V-row at y-1 (passable/exterior), blocking-row at y (loot zone side).
+            # Sort candidates so the blocking-row aligns with the passage side:
+            #   top/bottom → anchor y at boundary row, x centred on passage
+            #   left/right → anchor y at passage cy, x so the gate span covers passage x
             gate_anim, key_anim = _LOOT_COLORS[gate_count % len(_LOOT_COLORS)]
             gate_ident = ON.identity_of(gate_anim)
             key_ident  = ON.identity_of(key_anim)
@@ -1093,12 +1111,52 @@ def place_loot_zones(zone_records, entrance_plan, objs_existing, seed=1, bounds=
             if km_t is None:
                 continue
 
+            def _gate_score(t):
+                gx, gy = t
+                if passage_side in ("top", "bottom"):
+                    bnd_y = bbox_y0 if passage_side == "top" else bbox_y1
+                    return (abs(gy - bnd_y), abs((gx - 1.5) - passage_cx))
+                else:  # left / right
+                    # anchor x so gate's span (gx-3 .. gx) covers the passage x
+                    ideal_x = bbox_x0 + 3 if passage_side == "left" else bbox_x1
+                    return (abs(gy - passage_cy), abs(gx - ideal_x))
+
             gate_tile = None
-            for t in sorted(ts, key=lambda t: (t[0] - passage_cx) ** 2 + (t[1] - passage_cy) ** 2):
-                if _place_one(objs, used, reach, rng, st, "QUEST_GATE", None,
-                             t[0], t[1], ident=gate_ident, bounds=bounds):
-                    gate_tile = t
-                    break
+            for t in sorted(ts, key=_gate_score):
+                gx, gy = t
+                gate_cells = [(cx, cy)
+                              for cx, cy, _ in OR.mask_cells(gate_ident["mask"], gx, gy)]
+                if bounds:
+                    bw, bh = bounds
+                    if any(not (0 <= cx < bw and 0 <= cy < bh) for cx, cy in gate_cells):
+                        continue
+                interactive = OR.mask_interactive_cells(gate_ident["mask"], gx, gy)
+                if not all(c in open_set for c in interactive):
+                    continue
+                # Clear any object (vegetation, guard) whose footprint overlaps the gate's
+                # full cell set — including V-row cells that may be in the exterior zone.
+                fp = set(gate_cells)
+                cleared = set()
+                for src in (objs_existing, objs):
+                    victims = [o for o in src
+                               if any((cx, cy) in fp
+                                      for cx, cy, _ in OR.mask_cells(o["mask"], o["x"], o["y"]))]
+                    for o in victims:
+                        src.remove(o)
+                        for cx, cy, _ in OR.mask_cells(o["mask"], o["x"], o["y"]):
+                            cleared.add((cx, cy))
+                for zr in zone_records:
+                    zr["used"] -= cleared
+                used.update(gate_cells)
+                objs.append({"x": gx, "y": gy, "l": 0, "purpose": "QUEST_GATE",
+                             "type": gate_ident.get("type"),
+                             "subtype": gate_ident.get("subtype"),
+                             "animation": gate_ident["animation"],
+                             "mask": gate_ident["mask"],
+                             "template": {"animation": gate_ident["animation"],
+                                          "mask": gate_ident["mask"]}})
+                gate_tile = t
+                break
             if gate_tile is None:
                 continue
 
