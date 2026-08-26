@@ -423,8 +423,7 @@ def _rim8(zones):
             if any(owner.get((t[0] + dx, t[1] + dy), zid) != zid for dx, dy in ZF.NB8)}
 
 
-def seal_zone_borders(W, H, grid, zones, entrance_plan, objs, avoid, hard_avoid, seed, level,
-                      no_guard=frozenset()):
+def seal_zone_borders(W, H, grid, zones, entrance_plan, objs, avoid, hard_avoid, seed, level):
     """Residual border-leak seal. The border bias (`pp_sample` BORDER_W) densifies zone
     fronts statistically, which is enough on compact probes but NOT on a real map: jagged
     fronts, gameplay approach tiles near the border and repair carve-backs leave aligned
@@ -520,12 +519,7 @@ def seal_zone_borders(W, H, grid, zones, entrance_plan, objs, avoid, hard_avoid,
         if not cands:
             unguarded += 1
             continue
-        # never place a guard inside a loot-zone candidate — its own seal pass handles it
-        cands_ext = [c for c in cands if c not in no_guard]
-        if not cands_ext:
-            unguarded += 1
-            continue
-        g = cands_ext[0]
+        g = cands[0]
         gident = PG.rnd_monster(3 + (1 if rng.random() < 0.3 else 0))
         new_objs.append({"x": g[0], "y": g[1], "l": 0, "purpose": "GUARD",
                          "type": gident.get("type"), "subtype": gident.get("subtype"),
@@ -714,29 +708,6 @@ def _run_level(level, W, H, grid, zones, player_zids, ledger, gstats, seed, has_
               f"{model['target']:.2f}), scatter res={pk.get('RESOURCE_PILE', 0)} "
               f"art={pk.get('REWARD_PICKUP', 0)}")
 
-    # residual border-leak seal: close every cross-zone crossing the statistics left open,
-    # guard the ones that must stay open (needs ALL zones' vegetation down first).
-    # Pre-identify loot-zone candidate interiors so guards are never planted inside them —
-    # place_loot_zones (below) seals those zones properly after this pass.
-    _loot_town = {(o["x"], o["y"]) for o in objs if o.get("purpose") == "TOWN"}
-    _loot_no_guard = set()
-    for _zr in zone_records:
-        if (len(_zr["ts"]) < PK.LOOT_ZONE_MAX_TILES
-                and not any(t in _loot_town for t in _zr["ts"])
-                and len(entrance_plan.get(_zr["zid"], [])) == 1):
-            _loot_no_guard |= _zr["ts"]
-    sobjs_seal, sealed, guard_tiles, n_open = seal_zone_borders(
-        W, H, grid, zones, entrance_plan, objs, seal_avoid | set(tunnel_protect),
-        hard_avoid, seed, level, no_guard=_loot_no_guard)
-    objs.extend(sobjs_seal)
-    if sealed or guard_tiles or n_open:
-        print(f"  L{level} border seal: {len(sealed)} cells closed, "
-              f"{len(guard_tiles)} back-path guards"
-              + (f", {n_open} crossings left free (unguardable)" if n_open else ""))
-    for zr in zone_records:                          # keep pocket detection honest
-        zr["passable"] -= sealed
-        zr["open_set"] -= sealed | guard_tiles
-
     loot_objs, n_loot, _loot_zids = PK.place_loot_zones(
         zone_records, entrance_plan, objs, seed=seed, bounds=(W, H))
     objs.extend(loot_objs)
@@ -752,6 +723,21 @@ def _run_level(level, W, H, grid, zones, player_zids, ledger, gstats, seed, has_
         print(f"  L{level} loot zones: {n_loot} access pair(s) placed "
               f"(1 gate+key, {n_loot-1} sealed+monolith) zones=[{zid_str}]" if n_loot > 1
               else f"  L{level} loot zones: 1 gate+key pair placed zones=[{zid_str}]")
+
+    # Residual border-leak seal: close every cross-zone crossing the statistics left open.
+    # Runs after place_loot_zones so loot-zone boundaries are already veg-sealed — no guards
+    # land inside them and seal_zone_borders only acts on the remaining open crossings.
+    sobjs_seal, sealed, guard_tiles, n_open = seal_zone_borders(
+        W, H, grid, zones, entrance_plan, objs, seal_avoid | set(tunnel_protect),
+        hard_avoid, seed, level)
+    objs.extend(sobjs_seal)
+    if sealed or guard_tiles or n_open:
+        print(f"  L{level} border seal: {len(sealed)} cells closed, "
+              f"{len(guard_tiles)} back-path guards"
+              + (f", {n_open} crossings left free (unguardable)" if n_open else ""))
+    for zr in zone_records:                          # keep pocket detection honest
+        zr["passable"] -= sealed
+        zr["open_set"] -= sealed | guard_tiles
 
     return objs, targets, zone_records, town_of_zone, has_water, nz, frozenset(ridge)
 
