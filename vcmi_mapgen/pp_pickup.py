@@ -1019,8 +1019,21 @@ def place_loot_zones(zone_records, entrance_plan, objs_existing, seed=1, bounds=
                        if placed_ext_tiles else 1e9)
                 return d_c + d_p
             free.sort(key=_tscore, reverse=True)
+            ts_set = cand["ts"]
+            op_set = cand["open_set"]
             for t in free:
-                if _legal(ext_ident, t[0], t[1], cand["reach"],
+                tx, ty = t
+                # [N N]   (tx-1,ty-1) (tx,  ty-1)
+                # [N X]   (tx-1,ty)   (tx,  ty)  ← anchor
+                # All three N-cells must be clear: either outside this zone or
+                # inside it and in open_set (not occupied by vegetation or objects).
+                if not all(
+                    (cx, cy) not in ts_set
+                    or ((cx, cy) in op_set and (cx, cy) not in cand["used"])
+                    for cx, cy in ((tx - 1, ty - 1), (tx, ty - 1), (tx - 1, ty))
+                ):
+                    continue
+                if _legal(ext_ident, tx, ty, cand["reach"],
                           cand["used"], bounds=bounds) is not None:
                     return cand, t
         return None, None
