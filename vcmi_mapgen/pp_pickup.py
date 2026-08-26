@@ -180,25 +180,25 @@ def _dedupe_pockets(pockets, reach=frozenset()):
     return sorted(blobs, key=lambda cands: ZF.mouth_key(reach, cands[0][0], cands[0][1]))
 
 
-def _legal(ident, x, y, open_set, used, bounds=None):
-    """A pickup/guard placement is legal if its INTERACTIVE cell(s) -- the tile(s) a hero
-    must actually step on, per `mask_interactive_cells` -- sit on an unused, placement-
-    eligible tile. Other footprint cells (mask 'V') are cosmetic sprite bleed and may overlap
-    non-open terrain exactly like real H3 maps place objects near walls; they only need to
-    stay on the map and avoid double-stacking another pickup placed this same pass. A pocket
-    is small and wall-bounded by construction, so requiring the WHOLE mask free (the old
-    behaviour) rejected the vast majority of otherwise-legal cache tiles whenever a 'V'
-    overlay cell fell on the pocket's own wall or off the map edge."""
+def _legal(ident, x, y, open_set, used, bounds=None, interactive_only=False):
+    """A pickup/guard placement is legal if its INTERACTIVE cell(s) sit on an unused,
+    placement-eligible tile.  V-overlay cells (sprite bleed) may overlap terrain/walls.
+
+    interactive_only=True: only the interactive (A/X) cell is checked against `used` and
+    bounds, and only that cell is returned for claiming.  Use this for dense fill passes
+    where adjacent pickups' V-cells would otherwise falsely block each other — V cells are
+    cosmetic in H3/VCMI and two objects sharing V-cell space is legal."""
     cells = [(tx, ty) for tx, ty, _b in OR.mask_cells(ident["mask"], x, y)]
+    interactive = OR.mask_interactive_cells(ident["mask"], x, y) or cells
+    check = interactive if interactive_only else cells
     if bounds is not None:
         bw, bh = bounds
-        if any(not (0 <= tx < bw and 0 <= ty < bh) for tx, ty in cells):
+        if any(not (0 <= tx < bw and 0 <= ty < bh) for tx, ty in check):
             return None
-    if any(c in used for c in cells):
+    if any(c in used for c in check):
         return None
-    interactive = OR.mask_interactive_cells(ident["mask"], x, y) or cells
     if all(c in open_set and c not in used for c in interactive):
-        return cells
+        return check
     return None
 
 
@@ -297,10 +297,14 @@ def _seerhut_quest(rng, artifact_subtype):
 
 
 def _place_one(objs, used, reach, rng, st, purpose, pool, x, y,
-               ident=None, art_share=0.45, cache=False, bounds=None, options=None):
+               ident=None, art_share=0.45, cache=False, bounds=None, options=None,
+               interactive_only=False):
     """Shared placement primitive for both scatter and pocket caches: resolve an identity,
     check its footprint against `reach`/`used`, and if legal append the obj and claim its
-    cells. Returns whether it landed."""
+    cells. Returns whether it landed.
+
+    interactive_only: passed to _legal — only the A-cell is checked/claimed so adjacent
+    pickups' V-cells never block each other (use for dense fill passes)."""
     ident = ident or _pick(pool, purpose, st, rng, art_share=art_share)
     if ident is None:
         return False
@@ -325,7 +329,8 @@ def _place_one(objs, used, reach, rng, st, purpose, pool, x, y,
             if any(not (0 <= tx < bw and 0 <= ty < bh) for tx, ty in cells):
                 return False
     else:
-        cells = _legal(ident, x, y, reach, used, bounds=bounds)
+        cells = _legal(ident, x, y, reach, used, bounds=bounds,
+                       interactive_only=interactive_only)
         if cells is None:
             return False
     used.update(cells)
@@ -629,36 +634,44 @@ def place_pocket_caches(zone_records, seed=1, bounds=None):
                 if pool_chest and rng.random() < 0.4:
                     if not _place_one(objs, used, global_place, rng, st, "REWARD_PICKUP",
                                       pool_art, t[0], t[1],
-                                      ident=rng.choice(pool_chest), cache=True, bounds=bounds):
+                                      ident=rng.choice(pool_chest), cache=True, bounds=bounds,
+                                      interactive_only=True):
                         _place_one(objs, used, global_place, rng, st, "RESOURCE_PILE",
-                                   pool_res, t[0], t[1], cache=True, bounds=bounds)
+                                   pool_res, t[0], t[1], cache=True, bounds=bounds,
+                                   interactive_only=True)
                 else:
                     _place_one(objs, used, global_place, rng, st, "RESOURCE_PILE", pool_res,
-                               t[0], t[1], cache=True, bounds=bounds)
+                               t[0], t[1], cache=True, bounds=bounds,
+                               interactive_only=True)
             # 3. Solo-visitable structure (one tile, middle of pocket)
             for t in vis_spot:
                 ident = rng.choice(pool_vis) if pool_vis else None
                 if ident:
                     _place_one(objs, used, global_place, rng, st,
                                ident.get("purpose", "BONUS_TEMP"), None,
-                               t[0], t[1], ident=ident, cache=True, bounds=bounds)
+                               t[0], t[1], ident=ident, cache=True, bounds=bounds,
+                               interactive_only=True)
             # 4. Artifact at the deepest tile — tier matches guard level
             if art_spot:
                 t = art_spot[0]
                 _place_one(objs, used, global_place, rng, st, "REWARD_PICKUP", pool_art,
-                           t[0], t[1], ident=ON.identity_of(anim), cache=True, bounds=bounds)
+                           t[0], t[1], ident=ON.identity_of(anim), cache=True, bounds=bounds,
+                           interactive_only=True)
         else:
             # Unguarded pocket: fill every tile with resources or chests.
             for t in cache_spots:
                 if pool_chest and rng.random() < 0.4:
                     if not _place_one(objs, used, global_place, rng, st, "REWARD_PICKUP",
                                       pool_art, t[0], t[1],
-                                      ident=rng.choice(pool_chest), cache=True, bounds=bounds):
+                                      ident=rng.choice(pool_chest), cache=True, bounds=bounds,
+                                      interactive_only=True):
                         _place_one(objs, used, global_place, rng, st, "RESOURCE_PILE",
-                                   pool_res, t[0], t[1], cache=True, bounds=bounds)
+                                   pool_res, t[0], t[1], cache=True, bounds=bounds,
+                                   interactive_only=True)
                 else:
                     _place_one(objs, used, global_place, rng, st, "RESOURCE_PILE", pool_res,
-                               t[0], t[1], cache=True, bounds=bounds)
+                               t[0], t[1], cache=True, bounds=bounds,
+                               interactive_only=True)
 
     return objs, len(blobs)
 
@@ -1070,7 +1083,8 @@ def place_loot_zones(zone_records, entrance_plan, objs_existing, seed=1, bounds=
             iv = rng.choice(pool_vis)
             if _place_one(objs, used, reach, rng, st,
                           iv.get("purpose", "BONUS_TEMP"), None,
-                          t[0], t[1], ident=iv, cache=True, bounds=bounds):
+                          t[0], t[1], ident=iv, cache=True, bounds=bounds,
+                          interactive_only=True):
                 vis_placed += 1
 
         # Artifacts + chests: 60% major-skewed random artifact, 40% chest/campfire
@@ -1082,11 +1096,13 @@ def place_loot_zones(zone_records, entrance_plan, objs_existing, seed=1, bounds=
                 ai = rng.choice(pool_chest) if pool_chest else ON.identity_of(arts[0][0])
             if ai:
                 _place_one(objs, used, reach, rng, st, "REWARD_PICKUP", pool_art,
-                           t[0], t[1], ident=ai, cache=True, bounds=bounds)
+                           t[0], t[1], ident=ai, cache=True, bounds=bounds,
+                           interactive_only=True)
 
         for t in sorted(reach - used):
             _place_one(objs, used, reach, rng, st, "RESOURCE_PILE", pool_res,
-                       t[0], t[1], cache=True, bounds=bounds)
+                       t[0], t[1], cache=True, bounds=bounds,
+                       interactive_only=True)
 
     objs, n_placed = [], 0
     processed_loot_zids = set()   # zones whose entrance was actually sealed this run
