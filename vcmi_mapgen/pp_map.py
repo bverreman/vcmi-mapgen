@@ -423,7 +423,8 @@ def _rim8(zones):
             if any(owner.get((t[0] + dx, t[1] + dy), zid) != zid for dx, dy in ZF.NB8)}
 
 
-def seal_zone_borders(W, H, grid, zones, entrance_plan, objs, avoid, hard_avoid, seed, level):
+def seal_zone_borders(W, H, grid, zones, entrance_plan, objs, avoid, hard_avoid, seed, level,
+                      skip_tiles=frozenset()):
     """Residual border-leak seal. The border bias (`pp_sample` BORDER_W) densifies zone
     fronts statistically, which is enough on compact probes but NOT on a real map: jagged
     fronts, gameplay approach tiles near the border and repair carve-backs leave aligned
@@ -467,11 +468,11 @@ def seal_zone_borders(W, H, grid, zones, entrance_plan, objs, avoid, hard_avoid,
     pairs = []
     for t in sorted(open_all):
         a = owner.get(t)
-        if a is None or t in bands:
+        if a is None or t in bands or t in skip_tiles:
             continue
         for dx, dy in ((1, 0), (0, 1), (1, 1), (1, -1)):    # each unordered pair once
             n = (t[0] + dx, t[1] + dy)
-            if n not in open_all or n in bands:
+            if n not in open_all or n in bands or n in skip_tiles:
                 continue
             b = owner.get(n)
             if b is not None and b != a:
@@ -725,11 +726,16 @@ def _run_level(level, W, H, grid, zones, player_zids, ledger, gstats, seed, has_
               else f"  L{level} loot zones: 1 gate+key pair placed zones=[{zid_str}]")
 
     # Residual border-leak seal: close every cross-zone crossing the statistics left open.
-    # Runs after place_loot_zones so loot-zone boundaries are already veg-sealed — no guards
-    # land inside them and seal_zone_borders only acts on the remaining open crossings.
+    # Runs after place_loot_zones so loot-zone boundaries are already veg-sealed.
+    # skip_tiles = all loot-zone tile sets: pairs touching a loot-zone tile are dropped
+    # entirely so no guard lands on the gate/monolith approach or on the exterior side.
+    _loot_ts = set()
+    for zr in zone_records:
+        if zr.get("loot_zone"):
+            _loot_ts |= zr["ts"]
     sobjs_seal, sealed, guard_tiles, n_open = seal_zone_borders(
         W, H, grid, zones, entrance_plan, objs, seal_avoid | set(tunnel_protect),
-        hard_avoid, seed, level)
+        hard_avoid, seed, level, skip_tiles=_loot_ts)
     objs.extend(sobjs_seal)
     if sealed or guard_tiles or n_open:
         print(f"  L{level} border seal: {len(sealed)} cells closed, "
