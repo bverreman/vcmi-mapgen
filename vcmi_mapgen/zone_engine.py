@@ -4199,6 +4199,9 @@ def cmd_generate(args):
         draw_labels(ImageDraw.Draw(ov))
         ov_png = os.path.join(ROOT, "out", "render", "pp", f"ppmap_s{args.seed}_overlays.png")
         ov.convert("RGB").save(ov_png)
+        _cache_path = os.path.join(ROOT, "out", "render", "pp", f"ppmap_s{args.seed}_cache.json")
+        with open(_cache_path, "w") as _cf:
+            json.dump({"level0": levels[0], "objs0": objs0}, _cf)
         print(f"  {png}\n  {ov_png}\n  {vmap}")
         return
     kinds = ["region", "skeleton", "jigsaw"] if args.layout == "all" else [args.layout]

@@ -29,6 +29,7 @@ Usage:
 import argparse
 import collections
 import colorsys
+import json
 import os
 import sys
 
@@ -471,24 +472,32 @@ def main(seed=42, size=72, water_mode="normal", players=2):
     print(f"=== render_zone_overlay seed={seed} size={size} "
           f"water={water_mode} players={players} ===")
 
-    levels, surfs, objs, info, _ = pp_map.build(
-        seed=seed, size=size, water_mode=water_mode, players=players,
-    )
-    print(info)
-
-    objs0 = [o for o in objs if o.get("l", 0) == 0]
-    base_img = RED.render_map(surfs[0], objs0)
-
     out_dir = os.path.join(ROOT, "out", "render", "pp")
     os.makedirs(out_dir, exist_ok=True)
 
-    # --- PNG 1: plain map ---
-    plain_path = os.path.join(out_dir, f"ppmap_s{seed}_plain.png")
-    base_img.save(plain_path)
-    print(f"\n[1/2] plain   -> {plain_path}")
+    _cache_path = os.path.join(out_dir, f"ppmap_s{seed}_cache.json")
+    _plain_path = os.path.join(out_dir, f"ppmap_s{seed}.png")
+    if os.path.exists(_cache_path) and os.path.exists(_plain_path):
+        with open(_cache_path) as _cf:
+            _cache = json.load(_cf)
+        levels0 = _cache["level0"]
+        objs0 = _cache["objs0"]
+        base_img = Image.open(_plain_path).convert("RGB")
+        print(f"  (overlay-only — loaded from cache, skipping map build)")
+    else:
+        levels, surfs, objs, info, _ = pp_map.build(
+            seed=seed, size=size, water_mode=water_mode, players=players,
+        )
+        print(info)
+        objs0 = [o for o in objs if o.get("l", 0) == 0]
+        levels0 = levels[0]
+        base_img = RED.render_map(surfs[0], objs0)
+        plain_path = os.path.join(out_dir, f"ppmap_s{seed}_plain.png")
+        base_img.save(plain_path)
+        print(f"\n[1/2] plain   -> {plain_path}")
 
-    # --- PNG 2: overlays ---
-    zone_fill, zone_border, draw_labels, zones, zone_label = _zone_layers(base_img.size, levels[0])
+    # --- overlay ---
+    zone_fill, zone_border, draw_labels, zones, zone_label = _zone_layers(base_img.size, levels0)
 
     background_tiles, struct_body_tiles, struct_visit_tiles, solo_visit_tiles = \
         _classify_objects(objs0)
@@ -497,8 +506,8 @@ def main(seed=42, size=72, water_mode="normal", players=2):
     dk_green_layer = _fill_layer(base_img.size, struct_visit_tiles, (  0, 120,  40, 220))
     xmas_layer     = _fill_layer(base_img.size, solo_visit_tiles,   (  0, 155,  70, 220))
 
-    passable = _compute_passable(levels[0], objs0)
-    H, W = len(levels[0]), len(levels[0][0])
+    passable = _compute_passable(levels0, objs0)
+    H, W = len(levels0), len(levels0[0])
     passages = _passage_tiles(zone_label, passable, H, W)
     blue_layer = _fill_layer(base_img.size, passages, (60, 140, 255, 200))
 
