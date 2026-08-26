@@ -501,8 +501,11 @@ def place_pocket_caches(zone_records, seed=1, bounds=None):
         terrain_of[zid] = zr["terrain"]
         used |= zr["used"]           # always claim used cells — no double-stacking
         if zr.get("loot_zone"):
-            continue                  # sealed loot zones: exclude from pocket-detection
-        # universe so their interiors don't look like pockets and get a second guard
+            # Include in geometry (global_true) so external tiles adjacent to the loot
+            # zone see passable neighbours and don't form false pockets against its wall.
+            # Exclude from open/reach so no guard or cache can be placed inside.
+            global_true |= zr.get("passable", zr["open_set"])
+            continue
         global_open |= zr["open_set"]
         global_true |= zr.get("passable", zr["open_set"])
         global_reach |= (zr["reach"] - zr["used"])
