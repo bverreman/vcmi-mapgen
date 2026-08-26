@@ -994,10 +994,11 @@ def place_loot_zones(zone_records, entrance_plan, objs_existing, seed=1, bounds=
         return None, None
 
     def _seal_all_passages(ts, open_set, used, terrain, rng):
-        """Fill ALL open loot-zone tiles with blocking vegetation — both the
-        boundary ('blue') passage tiles and the zone interior.  The deliberate
-        entrance (gate/monolith visit cell) is already in `used` after
-        placement and so is skipped automatically.  Removes any stray guard."""
+        """Fill the BOUNDARY tiles of the loot zone (tiles in `ts` that are
+        8-adjacent to any tile outside `ts`) with blocking vegetation.
+        The gate/monolith visit cell is already in `used` so it is skipped.
+        Interior tiles are left open for `_fill_loot` to place artifacts."""
+        ext_ts = _all_ts - ts
         veg_pool = ON.decor_pool(terrain, blocking=True, max_cells=1,
                                  exclude_types=_LOOT_EXCL_DECOR)
         if not veg_pool:
@@ -1008,6 +1009,10 @@ def place_loot_zones(zone_records, entrance_plan, objs_existing, seed=1, bounds=
             if open_set is not None and t not in open_set:
                 continue  # already physically blocked
             tx, ty = t
+            if not any((tx + dx, ty + dy) in ext_ts
+                       for dx, dy in [(1,0),(-1,0),(0,1),(0,-1),
+                                      (1,1),(1,-1),(-1,1),(-1,-1)]):
+                continue  # interior tile — left for loot
             objs[:] = [o for o in objs if not (o.get("purpose") == "GUARD"
                                                 and o["x"] == tx and o["y"] == ty)]
             iv = rng.choice(veg_pool)
@@ -1079,6 +1084,17 @@ def place_loot_zones(zone_records, entrance_plan, objs_existing, seed=1, bounds=
         ext_pool = ext_no_castle or ext_any
         passage_cx = sum(t[0] for t in passage_tiles) / len(passage_tiles)
         passage_cy = sum(t[1] for t in passage_tiles) / len(passage_tiles)
+
+        # Clear scatter vegetation so the whole interior is available for loot.
+        objs_existing[:] = [o for o in objs_existing if (o["x"], o["y"]) not in ts]
+        objs[:] = [o for o in objs if (o["x"], o["y"]) not in ts]
+        used.clear()
+        # After clearing, all zone tiles are passable (loot zones have no gameplay
+        # blockers — no town, no mine).  The stored open_set/reach were computed with
+        # dense vegetation in place (~70 % blocking) so they cover only ~30 % of ts.
+        # Reset both to the full tile set so seal and fill can reach every tile.
+        open_set = ts
+        reach    = ts
 
         # Determine which side of the loot zone's bounding box the passage is on.
         ts_xs = [t[0] for t in ts]; ts_ys = [t[1] for t in ts]
@@ -1160,9 +1176,9 @@ def place_loot_zones(zone_records, entrance_plan, objs_existing, seed=1, bounds=
             if gate_tile is None:
                 continue
 
-            _fill_loot(terrain, st, reach, used, rng)
             _seal_all_passages(ts, open_set, used, terrain, rng)
             processed_loot_zids.add(zid)
+            _fill_loot(terrain, st, open_set, used, rng)
 
             km_rng = random.Random(seed ^ (zid * 131071) ^ 0xCEBF)
             km_st  = PG.mine_gameplay()[km_zr["terrain"]]
@@ -1202,8 +1218,12 @@ def place_loot_zones(zone_records, entrance_plan, objs_existing, seed=1, bounds=
             if ext_t is None:
                 continue
 
+            # Place monolith at zone centroid (deepest interior tile).
+            ts_cx = sum(t[0] for t in ts) / len(ts)
+            ts_cy = sum(t[1] for t in ts) / len(ts)
             int_t = None
-            for t in sorted(reach - used):
+            for t in sorted(reach - used,
+                            key=lambda t: (t[0] - ts_cx) ** 2 + (t[1] - ts_cy) ** 2):
                 if _legal(mono_ident, t[0], t[1], reach, used, bounds=bounds) is not None:
                     int_t = t
                     break
@@ -1212,9 +1232,9 @@ def place_loot_zones(zone_records, entrance_plan, objs_existing, seed=1, bounds=
 
             _place_one(objs, used, reach, rng, st, "TRANSPORT", None,
                       int_t[0], int_t[1], ident=mono_ident, bounds=bounds)
-            _fill_loot(terrain, st, reach, used, rng)
             _seal_all_passages(ts, open_set, used, terrain, rng)
             processed_loot_zids.add(zid)
+            _fill_loot(terrain, st, open_set, used, rng)
 
             ext_rng = random.Random(seed ^ (zid * 131071) ^ 0xCEBF)
             ext_st  = PG.mine_gameplay()[ext_zr["terrain"]]
