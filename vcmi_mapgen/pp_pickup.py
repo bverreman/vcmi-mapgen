@@ -566,37 +566,53 @@ def place_pocket_caches(zone_records, seed=1, bounds=None):
         # Sort nearest-to-mouth (index 0) → deepest (index -1).
         cache_spots.sort(key=lambda t: max(abs(t[0] - ref_mouth[0]), abs(t[1] - ref_mouth[1])))
 
+        # chest-type loot for resource slots: treasure chests, campfires, lean-tos —
+        # animations NOT starting with 'ava' (the artifact namespace).
+        pool_chest = [i for i in pool_art if not i.get("animation", "").startswith("ava")]
+
         if guarded:
-            # Assign spot buckets (nearest → deepest):
-            #   resources fill the tiles just past the entrance,
-            #   one solo-visitable structure sits in the middle (pocket ≥ 3 tiles),
-            #   one artifact sits at the deepest tile.
+            # Pre-estimate loot value from the intended fill (each resource ≈ 2,
+            # solo-visitable ≈ 3) to set the guard level before placing anything.
             art_spot = cache_spots[-1:]
             vis_spot = cache_spots[-2:-1] if len(cache_spots) >= 3 else []
             res_spots = cache_spots[:len(cache_spots) - 1 - len(vis_spot)]
-
-            # Pre-estimate loot value from the intended fill (each resource ≈ 2,
-            # solo-visitable ≈ 3) to set the guard level before placing anything.
-            # Artifact value is excluded so the guard level is stable regardless of
-            # which artifact tier fits.
             est_val = 2 * len(res_spots) + (3 if vis_spot else 0)
             lvl = min(6, 1 + (est_val >= 4) + (est_val >= 7) + (est_val >= 10) + (est_val >= 13))
             anim = _ART_BY_LVL[lvl - 1]
 
             # 1. Guard at entrance — placed first; its footprint claims the mouth and
-            #    any decorative V cells that bleed into the pocket, so the fill below
-            #    naturally avoids stacking on tiles the guard sprite visually covers.
+            #    any decorative V cells that bleed into the pocket.
             gident = PG.rnd_monster(lvl + (1 if rng.random() < 0.25 else 0))
             if not _place_one(objs, used, global_place, rng, st, "GUARD", None,
                               mouth[0], mouth[1], ident=gident, bounds=bounds):
                 continue
             placed_mouths.append(mouth)
 
+            # Re-derive fill spots after guard V cells enter `used` — avoids silent
+            # empty tiles when the guard's decorative bleed overlaps the nearest cache
+            # slot (the old code computed res/vis/art from pre-guard cache_spots and
+            # then silently failed _place_one on any slot the guard had since claimed).
+            avail = [t for t in cache_spots if t not in used]
+            avail.sort(key=lambda t: max(abs(t[0] - ref_mouth[0]), abs(t[1] - ref_mouth[1])))
+            if not avail:
+                continue
+            art_spot  = avail[-1:]
+            vis_spot  = avail[-2:-1] if len(avail) >= 3 else []
+            res_spots = avail[:len(avail) - 1 - len(vis_spot)]
+
             pool_vis = _solo_visit_pool(terrain)
-            # 2. Resources on the nearest tiles (just inside the entrance)
+            # 2. Resources + chests on nearest tiles: 40% chance of treasure chest /
+            #    campfire instead of a resource pile so the pocket has loot variety.
             for t in res_spots:
-                _place_one(objs, used, global_place, rng, st, "RESOURCE_PILE", pool_res,
-                           t[0], t[1], cache=True, bounds=bounds)
+                if pool_chest and rng.random() < 0.4:
+                    if not _place_one(objs, used, global_place, rng, st, "REWARD_PICKUP",
+                                      pool_art, t[0], t[1],
+                                      ident=rng.choice(pool_chest), cache=True, bounds=bounds):
+                        _place_one(objs, used, global_place, rng, st, "RESOURCE_PILE",
+                                   pool_res, t[0], t[1], cache=True, bounds=bounds)
+                else:
+                    _place_one(objs, used, global_place, rng, st, "RESOURCE_PILE", pool_res,
+                               t[0], t[1], cache=True, bounds=bounds)
             # 3. Solo-visitable structure (one tile, middle of pocket)
             for t in vis_spot:
                 ident = rng.choice(pool_vis) if pool_vis else None
@@ -610,12 +626,17 @@ def place_pocket_caches(zone_records, seed=1, bounds=None):
                 _place_one(objs, used, global_place, rng, st, "REWARD_PICKUP", pool_art,
                            t[0], t[1], ident=ON.identity_of(anim), cache=True, bounds=bounds)
         else:
-            # Unguarded pocket: no monster can seal the entrance, so no artifact or
-            # solo-visitable structure (those presuppose a guard). Fill every tile with
-            # resources so the pocket still contains something rather than being empty.
+            # Unguarded pocket: fill every tile with resources or chests.
             for t in cache_spots:
-                _place_one(objs, used, global_place, rng, st, "RESOURCE_PILE", pool_res,
-                           t[0], t[1], cache=True, bounds=bounds)
+                if pool_chest and rng.random() < 0.4:
+                    if not _place_one(objs, used, global_place, rng, st, "REWARD_PICKUP",
+                                      pool_art, t[0], t[1],
+                                      ident=rng.choice(pool_chest), cache=True, bounds=bounds):
+                        _place_one(objs, used, global_place, rng, st, "RESOURCE_PILE",
+                                   pool_res, t[0], t[1], cache=True, bounds=bounds)
+                else:
+                    _place_one(objs, used, global_place, rng, st, "RESOURCE_PILE", pool_res,
+                               t[0], t[1], cache=True, bounds=bounds)
 
     return objs, len(blobs)
 
@@ -955,25 +976,42 @@ def place_loot_zones(zone_records, entrance_plan, objs_existing, seed=1, bounds=
                                           "mask": iv["mask"]}})
 
     def _fill_loot(terrain, st, reach, used, rng):
-        """Hero-strengthening structures → major/relic artifacts → resource piles."""
+        """Hero-strengthening structures → artifact+chest mix → resource piles.
+
+        Solo-visitable structures are capped at 1/4 of available tiles so the
+        remainder is split between random major-skewed artifacts and chest-type
+        loot (treasure chests, campfires, lean-tos — animations NOT starting
+        with 'ava', which is the artifact namespace).  Resource piles absorb
+        any tiles not claimed by the two reward passes."""
         pool_vis = _solo_visit_pool(terrain)
         pool_art = ON.gameplay_pool(terrain, "REWARD_PICKUP")
         pool_res = ON.gameplay_pool(terrain, "RESOURCE_PILE")
         arts     = [(a, _LOOT_ART_W.get(a, 1)) for a, _w, _v in PG.RND_ART]
+        # chest-type pickups: treasure chests, campfires, lean-tos, etc.
+        # 'ava*' is the artifact animation namespace (both named and random arts).
+        pool_chest = [i for i in pool_art if not i.get("animation", "").startswith("ava")]
 
         free = sorted(reach - used)
         rng.shuffle(free)
+        # Solo-vis: at most 1/4 of available tiles so chests/artifacts fill the rest
+        n_vis = max(1, min(len(free) // 4, 4))
+        vis_placed = 0
         for t in free:
-            if not pool_vis:
+            if not pool_vis or vis_placed >= n_vis:
                 break
             iv = rng.choice(pool_vis)
-            _place_one(objs, used, reach, rng, st,
-                      iv.get("purpose", "BONUS_TEMP"), None,
-                      t[0], t[1], ident=iv, cache=True, bounds=bounds)
+            if _place_one(objs, used, reach, rng, st,
+                          iv.get("purpose", "BONUS_TEMP"), None,
+                          t[0], t[1], ident=iv, cache=True, bounds=bounds):
+                vis_placed += 1
 
+        # Artifacts + chests: 60% major-skewed random artifact, 40% chest/campfire
         for t in sorted(reach - used):
-            ai = ON.identity_of(rng.choices(
-                [a for a, _ in arts], weights=[w for _, w in arts], k=1)[0])
+            if rng.random() < 0.6:
+                ai = ON.identity_of(rng.choices(
+                    [a for a, _ in arts], weights=[w for _, w in arts], k=1)[0])
+            else:
+                ai = rng.choice(pool_chest) if pool_chest else ON.identity_of(arts[0][0])
             if ai:
                 _place_one(objs, used, reach, rng, st, "REWARD_PICKUP", pool_art,
                            t[0], t[1], ident=ai, cache=True, bounds=bounds)
