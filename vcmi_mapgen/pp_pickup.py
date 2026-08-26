@@ -68,6 +68,12 @@ _LOOT_EXCL_DECOR = frozenset({"LAKE", "FROZEN_LAKE", "RIVER_DELTA", "KELP", "REE
 _FILL_EXCL_ANIMS = frozenset({"avsfntn0", "avsidol0"})  # Fountain of Fortune, Idol of Fortune
 # Only shrines teaching spells at level ≥ 3 are placed in loot zones (level 1-2 are too weak).
 _LOOT_SHRINE_MIN_LEVEL = 3
+# Vis-pool entries excluded from loot zones only (still allowed in pockets with sep. constraint).
+_LOOT_VIS_EXCL_ANIMS = frozenset({"avxwelg0", "avxwelr0", "avxwlsn0"})  # Magic Well
+# REWARD_PICKUP types excluded from loot zone art/chest fill (pool_art + pool_chest).
+_LOOT_ART_EXCL_TYPES = frozenset({"leanTo", "wagon", "warriorTomb", "denOfThieves"})
+# Types that must maintain a minimum map-fraction separation between any two instances in pockets.
+_POCKET_SPACED_TYPES = frozenset({"magicWell", "warriorTomb"})
 # Two-way monolith pairs for sealed teleport loot zones (ci > 0).
 # Both ends of each pair use the SAME animation → same subtype → they teleport to each other.
 # Subtypes monolith1-4 (simple 1-4 cell, no blocking body) suit small pockets best.
@@ -518,6 +524,18 @@ def place_pocket_caches(zone_records, seed=1, bounds=None):
     global_true = set()
     global_reach = set()
     used = set()
+    _sep_sq = (bounds[0] / 5.0) ** 2 if bounds else 0.0
+    _spaced = {}  # type -> [(x, y)] of placed instances in _POCKET_SPACED_TYPES
+
+    def _spaced_ok(typ, tx, ty):
+        """True if (tx, ty) is far enough from all prior same-type instances."""
+        return (not _sep_sq or typ not in _POCKET_SPACED_TYPES
+                or not any((tx - px) ** 2 + (ty - py) ** 2 < _sep_sq
+                           for px, py in _spaced.get(typ, ())))
+
+    def _register(ident, tx, ty):
+        if ident and ident.get("type") in _POCKET_SPACED_TYPES:
+            _spaced.setdefault(ident["type"], []).append((tx, ty))
     for zr in zone_records:
         zid = zr["zid"]
         for t in zr["ts"]:
@@ -632,25 +650,31 @@ def place_pocket_caches(zone_records, seed=1, bounds=None):
             #    campfire instead of a resource pile so the pocket has loot variety.
             for t in res_spots:
                 if pool_chest and rng.random() < 0.4:
+                    avail_c = [i for i in pool_chest if _spaced_ok(i.get("type"), t[0], t[1])]
+                    ci = rng.choice(avail_c) if avail_c else rng.choice(pool_chest)
                     if not _place_one(objs, used, global_place, rng, st, "REWARD_PICKUP",
                                       pool_art, t[0], t[1],
-                                      ident=rng.choice(pool_chest), cache=True, bounds=bounds,
+                                      ident=ci, cache=True, bounds=bounds,
                                       interactive_only=True):
                         _place_one(objs, used, global_place, rng, st, "RESOURCE_PILE",
                                    pool_res, t[0], t[1], cache=True, bounds=bounds,
                                    interactive_only=True)
+                    else:
+                        _register(ci, t[0], t[1])
                 else:
                     _place_one(objs, used, global_place, rng, st, "RESOURCE_PILE", pool_res,
                                t[0], t[1], cache=True, bounds=bounds,
                                interactive_only=True)
             # 3. Solo-visitable structure (one tile, middle of pocket)
             for t in vis_spot:
-                ident = rng.choice(pool_vis) if pool_vis else None
+                avail_v = [i for i in pool_vis if _spaced_ok(i.get("type"), t[0], t[1])]
+                ident = rng.choice(avail_v) if avail_v else rng.choice(pool_vis) if pool_vis else None
                 if ident:
-                    _place_one(objs, used, global_place, rng, st,
-                               ident.get("purpose", "BONUS_TEMP"), None,
-                               t[0], t[1], ident=ident, cache=True, bounds=bounds,
-                               interactive_only=True)
+                    if _place_one(objs, used, global_place, rng, st,
+                                  ident.get("purpose", "BONUS_TEMP"), None,
+                                  t[0], t[1], ident=ident, cache=True, bounds=bounds,
+                                  interactive_only=True):
+                        _register(ident, t[0], t[1])
             # 4. Artifact at the deepest tile — tier matches guard level
             if art_spot:
                 t = art_spot[0]
@@ -661,13 +685,17 @@ def place_pocket_caches(zone_records, seed=1, bounds=None):
             # Unguarded pocket: fill every tile with resources or chests.
             for t in cache_spots:
                 if pool_chest and rng.random() < 0.4:
+                    avail_c = [i for i in pool_chest if _spaced_ok(i.get("type"), t[0], t[1])]
+                    ci = rng.choice(avail_c) if avail_c else rng.choice(pool_chest)
                     if not _place_one(objs, used, global_place, rng, st, "REWARD_PICKUP",
                                       pool_art, t[0], t[1],
-                                      ident=rng.choice(pool_chest), cache=True, bounds=bounds,
+                                      ident=ci, cache=True, bounds=bounds,
                                       interactive_only=True):
                         _place_one(objs, used, global_place, rng, st, "RESOURCE_PILE",
                                    pool_res, t[0], t[1], cache=True, bounds=bounds,
                                    interactive_only=True)
+                    else:
+                        _register(ci, t[0], t[1])
                 else:
                     _place_one(objs, used, global_place, rng, st, "RESOURCE_PILE", pool_res,
                                t[0], t[1], cache=True, bounds=bounds,
@@ -1076,13 +1104,14 @@ def place_loot_zones(zone_records, entrance_plan, objs_existing, seed=1, bounds=
         loot (treasure chests, campfires, lean-tos — animations NOT starting
         with 'ava', which is the artifact namespace).  Resource piles absorb
         any tiles not claimed by the two reward passes."""
-        pool_vis = _solo_visit_pool(terrain, exclude_anims=_FILL_EXCL_ANIMS,
+        pool_vis = _solo_visit_pool(terrain,
+                                    exclude_anims=_FILL_EXCL_ANIMS | _LOOT_VIS_EXCL_ANIMS,
                                     min_shrine_level=_LOOT_SHRINE_MIN_LEVEL)
-        pool_art = ON.gameplay_pool(terrain, "REWARD_PICKUP")
+        pool_art = [i for i in ON.gameplay_pool(terrain, "REWARD_PICKUP")
+                    if i.get("type") not in _LOOT_ART_EXCL_TYPES]
         pool_res = ON.gameplay_pool(terrain, "RESOURCE_PILE")
         arts     = [(a, _LOOT_ART_W.get(a, 1)) for a, _w, _v in PG.RND_ART]
-        # chest-type pickups: treasure chests, campfires, lean-tos, etc.
-        # 'ava*' is the artifact animation namespace (both named and random arts).
+        # chest-type pickups: treasure chests, campfires — 'ava*' is the artifact namespace.
         pool_chest = [i for i in pool_art if not i.get("animation", "").startswith("ava")]
 
         free = sorted(reach - used)
