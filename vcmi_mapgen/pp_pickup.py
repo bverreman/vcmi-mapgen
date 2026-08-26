@@ -1066,21 +1066,21 @@ def place_loot_zones(zone_records, entrance_plan, objs_existing, seed=1, bounds=
                     return cand, t
         return None, None
 
-    def _seal_all_passages(ts, open_set, used, terrain, rng):
-        """Fill the BOUNDARY tiles of the loot zone (tiles in `ts` that are
-        8-adjacent to any tile outside `ts`) with blocking vegetation.
-        The gate/monolith visit cell is already in `used` so it is skipped.
-        Interior tiles are left open for `_fill_loot` to place artifacts."""
+    def _seal_all_passages(ts, open_set, used, terrain, rng, skip_cells=frozenset()):
+        """Fill EVERY boundary tile of the loot zone (tile in ts that is 8-adjacent
+        to a tile outside ts) with a single-cell blocking vegetation object, perfectly
+        sealing the perimeter including any passable V-overlay cells of the gate.
+
+        skip_cells: the gate's or monolith's interactive tile(s) — the one spot a hero
+        must stand on to activate the access object; these are NOT sealed."""
         ext_ts = _all_ts - ts
         veg_pool = ON.decor_pool(terrain, blocking=True, max_cells=1,
                                  exclude_types=_LOOT_EXCL_DECOR)
         if not veg_pool:
             return
         for t in sorted(ts):
-            if t in used:
-                continue
-            if open_set is not None and t not in open_set:
-                continue  # already physically blocked
+            if t in skip_cells:
+                continue  # access object's interactive tile — must stay passable
             tx, ty = t
             if not any((tx + dx, ty + dy) in ext_ts
                        for dx, dy in [(1,0),(-1,0),(0,1),(0,-1),
@@ -1254,7 +1254,8 @@ def place_loot_zones(zone_records, entrance_plan, objs_existing, seed=1, bounds=
             if gate_tile is None:
                 continue
 
-            _seal_all_passages(ts, open_set, used, terrain, rng)
+            _seal_all_passages(ts, open_set, used, terrain, rng,
+                               skip_cells=set(interactive))
             processed_loot_zids.add(zid)
             _fill_loot(terrain, st, open_set, used, rng)
 
@@ -1310,7 +1311,10 @@ def place_loot_zones(zone_records, entrance_plan, objs_existing, seed=1, bounds=
 
             _place_one(objs, used, reach, rng, st, "TRANSPORT", None,
                       int_t[0], int_t[1], ident=mono_ident, bounds=bounds)
-            _seal_all_passages(ts, open_set, used, terrain, rng)
+            mono_interactive = set(OR.mask_interactive_cells(mono_ident["mask"],
+                                                             int_t[0], int_t[1]))
+            _seal_all_passages(ts, open_set, used, terrain, rng,
+                               skip_cells=mono_interactive)
             processed_loot_zids.add(zid)
             _fill_loot(terrain, st, open_set, used, rng)
 
