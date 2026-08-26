@@ -64,6 +64,10 @@ _LOOT_COLORS = [                # (border_gate_anim, keymaster_anim); index == V
 ]
 _LOOT_ART_W = {"avarnd1": 5, "avarnd2": 15, "avarnd3": 35, "avarand": 45}
 _LOOT_EXCL_DECOR = frozenset({"LAKE", "FROZEN_LAKE", "RIVER_DELTA", "KELP", "REEF", "LAKE_2"})
+# Visitable structures excluded from BOTH pocket caches and loot zone fill.
+_FILL_EXCL_ANIMS = frozenset({"avsfntn0", "avsidol0"})  # Fountain of Fortune, Idol of Fortune
+# Shrine of Magic Mystery (avxl5sh0 and above) excluded from loot zones; levels 1-4 are fine.
+_LOOT_SHRINE_MAX_LEVEL = 4
 # Two-way monolith pairs for sealed teleport loot zones (ci > 0).
 # Both ends of each pair use the SAME animation → same subtype → they teleport to each other.
 # Subtypes monolith1-4 (simple 1-4 cell, no blocking body) suit small pockets best.
@@ -413,17 +417,31 @@ def place_scatter(ts, zones, zid, terrain, open_set, prot, seed=1, bounds=None,
     return objs, used, reach
 
 
-def _solo_visit_pool(terrain):
+def _shrine_spell_level(anim):
+    """Spell level a shrine teaches from its animation name (avxlNsh0 → N), or 0 if not a shrine."""
+    import re
+    m = re.match(r"avxl(\d)sh", anim, re.IGNORECASE)
+    return int(m.group(1)) if m else 0
+
+
+def _solo_visit_pool(terrain, exclude_anims=frozenset(), max_shrine_level=None):
     """Objects with exactly one visit tile and no blocking body cells — the 'christmas-green'
     category (shrines, magic wells, fountains, etc.).  These fit inside a single open tile
-    and are safe to cache inside pockets."""
+    and are safe to cache inside pockets.
+
+    exclude_anims: animation names to skip entirely.
+    max_shrine_level: when set, shrines teaching spells above this level are excluded."""
     pool = []
     seen = set()
     for purpose in _SOLO_VIS_PURPOSES:
         for ident in ON.gameplay_pool(terrain, purpose):
-            anim = ident.get("animation", "")
-            if anim in seen:
+            anim = ident.get("animation", "").lower()
+            if anim in seen or anim in exclude_anims:
                 continue
+            if max_shrine_level is not None:
+                lvl = _shrine_spell_level(anim)
+                if lvl > max_shrine_level:
+                    continue
             mask = ident.get("mask", [])
             n_visit = sum(1 for row in mask for ch in row if ch in "AX")
             n_body  = sum(1 for row in mask for ch in row if ch == "B")
@@ -603,7 +621,7 @@ def place_pocket_caches(zone_records, seed=1, bounds=None):
             vis_spot  = avail[-2:-1] if len(avail) >= 3 else []
             res_spots = avail[:len(avail) - 1 - len(vis_spot)]
 
-            pool_vis = _solo_visit_pool(terrain)
+            pool_vis = _solo_visit_pool(terrain, exclude_anims=_FILL_EXCL_ANIMS)
             # 2. Resources + chests on nearest tiles: 40% chance of treasure chest /
             #    campfire instead of a resource pile so the pocket has loot variety.
             for t in res_spots:
@@ -1031,7 +1049,8 @@ def place_loot_zones(zone_records, entrance_plan, objs_existing, seed=1, bounds=
         loot (treasure chests, campfires, lean-tos — animations NOT starting
         with 'ava', which is the artifact namespace).  Resource piles absorb
         any tiles not claimed by the two reward passes."""
-        pool_vis = _solo_visit_pool(terrain)
+        pool_vis = _solo_visit_pool(terrain, exclude_anims=_FILL_EXCL_ANIMS,
+                                    max_shrine_level=_LOOT_SHRINE_MAX_LEVEL)
         pool_art = ON.gameplay_pool(terrain, "REWARD_PICKUP")
         pool_res = ON.gameplay_pool(terrain, "RESOURCE_PILE")
         arts     = [(a, _LOOT_ART_W.get(a, 1)) for a, _w, _v in PG.RND_ART]
