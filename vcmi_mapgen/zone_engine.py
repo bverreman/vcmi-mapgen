@@ -4151,7 +4151,8 @@ def cmd_generate(args):
         png = os.path.join(ROOT, "out", "render", "pp", f"ppmap_s{args.seed}.png")
         os.makedirs(os.path.dirname(png), exist_ok=True)
         objs0 = [o for o in objs if o.get("l", 0) == 0]
-        RED.render_map(surfs[0], objs0, title="").save(png)
+        base_img = RED.render_map(surfs[0], objs0, title="")
+        base_img.save(png)
         if subterrain:
             png1 = os.path.join(ROOT, "out", "render", "pp", f"ppmap_s{args.seed}_L1.png")
             objs1 = [dict(o, l=0) for o in objs if o.get("l", 0) == 1]
@@ -4168,7 +4169,37 @@ def cmd_generate(args):
                 teams = list(range(len(ptowns)))
             pp_map.apply_playability(vmap, ptowns, teams)
             print(f"  playable: {len(ptowns)} players, teams={teams}, victory=defeat-all")
-        print(f"  {png}\n  {vmap}")
+        import render_zone_overlay as RZO
+        from PIL import Image, ImageDraw
+        H0, W0 = len(levels[0]), len(levels[0][0])
+        zone_fill, zone_border, draw_labels, _zones, zone_label = \
+            RZO._zone_layers(base_img.size, levels[0])
+        bg_t, sb_t, sv_t, solo_t = RZO._classify_objects(objs0)
+        passable = RZO._compute_passable(levels[0], objs0)
+        passages = RZO._passage_tiles(zone_label, passable, H0, W0)
+        passable_p = passable - sv_t
+        magenta_layer, _np, _mouths = RZO._pocket_gradient_layer(
+            base_img.size, passable_p, objs0, W0, H0)
+        guard_tiles = [
+            (ax + dx, ay + dy)
+            for o in objs0 if o.get("purpose") == "GUARD"
+            for ax, ay in OR.mask_interactive_cells(o["mask"], o["x"], o["y"])
+            for dx, dy in [(0, 0)] + RZO._NB8
+            if 0 <= ax + dx < W0 and 0 <= ay + dy < H0
+        ]
+        ov = Image.alpha_composite(base_img.convert("RGBA"), zone_fill)
+        ov = Image.alpha_composite(ov, zone_border)
+        ov = Image.alpha_composite(ov, RZO._fill_layer(base_img.size, bg_t,      (130, 130, 130, 160)))
+        ov = Image.alpha_composite(ov, RZO._fill_layer(base_img.size, sb_t,      (  0, 200,  80, 160)))
+        ov = Image.alpha_composite(ov, RZO._fill_layer(base_img.size, sv_t,      (  0, 120,  40, 220)))
+        ov = Image.alpha_composite(ov, RZO._fill_layer(base_img.size, solo_t,    (  0, 155,  70, 220)))
+        ov = Image.alpha_composite(ov, RZO._fill_layer(base_img.size, passages,  ( 60, 140, 255, 200)))
+        ov = Image.alpha_composite(ov, magenta_layer)
+        ov = Image.alpha_composite(ov, RZO._fill_layer(base_img.size, guard_tiles, (220, 50, 50, 160)))
+        draw_labels(ImageDraw.Draw(ov))
+        ov_png = os.path.join(ROOT, "out", "render", "pp", f"ppmap_s{args.seed}_overlays.png")
+        ov.convert("RGB").save(ov_png)
+        print(f"  {png}\n  {ov_png}\n  {vmap}")
         return
     kinds = ["region", "skeleton", "jigsaw"] if args.layout == "all" else [args.layout]
     print(f"=== generate: seed={args.seed} size={args.size} "
