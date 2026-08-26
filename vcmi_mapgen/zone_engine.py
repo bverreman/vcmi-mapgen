@@ -4177,7 +4177,8 @@ def cmd_generate(args):
         bg_t, sb_t, sv_t, solo_t = RZO._classify_objects(objs0)
         passable = RZO._compute_passable(levels[0], objs0)
         passages = RZO._passage_tiles(zone_label, passable, H0, W0)
-        passable_p = passable - sv_t
+        loot_tiles = RZO._loot_zone_tiles(_zones, zone_label, objs0, H0, W0)
+        passable_p = passable - sv_t - loot_tiles
         magenta_layer, _np, _mouths = RZO._pocket_gradient_layer(
             base_img.size, passable_p, objs0, W0, H0)
         guard_tiles = [
