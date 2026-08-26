@@ -975,6 +975,41 @@ def place_loot_zones(zone_records, entrance_plan, objs_existing, seed=1, bounds=
                              "template": {"animation": iv["animation"],
                                           "mask": iv["mask"]}})
 
+    # Build once: union of passable tiles in every NON-loot zone.  Used by
+    # _seal_diag_gaps to identify outside tiles that are still physically walkable
+    # after seal_zone_borders ran (before place_loot_zones).
+    _ext_pass_all = set()
+    for _zr in zone_records:
+        _ext_pass_all |= _zr.get("passable", _zr["open_set"])
+
+    def _seal_diag_gaps(zid, ts, used, terrain, rng, open_set):
+        """After _seal_band closes the 4-adjacent band, seal interior tiles that are
+        diagonally reachable from outside.  H3 diagonal movement only requires the
+        destination to be passable — the two intermediate tiles don't matter — so a
+        corner tile inside the zone can still be reached diagonally from an exterior
+        tile even when both adjacent band tiles are blocked."""
+        ext_pass = _ext_pass_all - ts   # passable tiles outside this loot zone
+        veg_pool = ON.decor_pool(terrain, blocking=True, max_cells=1,
+                                 exclude_types=_LOOT_EXCL_DECOR)
+        if not veg_pool:
+            return
+        for t in sorted(ts):
+            if t in used:
+                continue
+            if open_set is not None and t not in open_set:
+                continue                # already blocked
+            tx, ty = t
+            # diagonal-only neighbours: ±(1,1) variants
+            if any((tx + dx, ty + dy) in ext_pass
+                   for dx, dy in [(1, 1), (1, -1), (-1, 1), (-1, -1)]):
+                used.add(t)
+                iv = rng.choice(veg_pool)
+                objs.append({"x": tx, "y": ty, "l": 0,
+                             "type": iv.get("type"), "subtype": iv.get("subtype"),
+                             "animation": iv["animation"], "mask": iv["mask"],
+                             "template": {"animation": iv["animation"],
+                                          "mask": iv["mask"]}})
+
     def _fill_loot(terrain, st, reach, used, rng):
         """Hero-strengthening structures → artifact+chest mix → resource piles.
 
@@ -1058,6 +1093,7 @@ def place_loot_zones(zone_records, entrance_plan, objs_existing, seed=1, bounds=
                 continue
 
             _seal_band(band, ts, gate_tile, reach, used, terrain, rng, open_set=open_set)
+            _seal_diag_gaps(zid, ts, used, terrain, rng, open_set)
             processed_loot_zids.add(zid)
             _fill_loot(terrain, st, reach, used, rng)
 
@@ -1075,6 +1111,18 @@ def place_loot_zones(zone_records, entrance_plan, objs_existing, seed=1, bounds=
                         break
             if placed:
                 n_placed += 1
+                # Very strong guard adjacent to the keymaster — the hero must defeat
+                # it before reaching the tent (gate colour unlocks the loot zone).
+                gident_km = PG.rnd_monster(7)
+                for t in sorted(km_zr["reach"] - km_zr["used"],
+                                key=lambda t: max(abs(t[0] - km_t[0]),
+                                                  abs(t[1] - km_t[1]))):
+                    if max(abs(t[0] - km_t[0]), abs(t[1] - km_t[1])) > 2:
+                        break
+                    if _place_one(objs, km_zr["used"], km_zr["reach"], km_rng, km_st,
+                                  "GUARD", None, t[0], t[1], ident=gident_km,
+                                  bounds=bounds):
+                        break
 
         else:
             # ── Fully sealed + Two-Way Monolith pair ─────────────────────────
@@ -1099,6 +1147,7 @@ def place_loot_zones(zone_records, entrance_plan, objs_existing, seed=1, bounds=
 
             # Seal ALL entrance-band tiles (zone is physically walled off)
             _seal_band(band, ts, None, reach, used, terrain, rng, open_set=open_set)
+            _seal_diag_gaps(zid, ts, used, terrain, rng, open_set)
             processed_loot_zids.add(zid)
 
             # Interior monolith — heroes arriving from outside land here
@@ -1122,5 +1171,17 @@ def place_loot_zones(zone_records, entrance_plan, objs_existing, seed=1, bounds=
                         break
             if placed:
                 n_placed += 1
+                # Very strong guard adjacent to the exterior monolith — the hero must
+                # fight to use the teleport (the loot zone is high-value).
+                gident_ext = PG.rnd_monster(7)
+                for t in sorted(ext_zr["reach"] - ext_zr["used"],
+                                key=lambda t: max(abs(t[0] - ext_t[0]),
+                                                  abs(t[1] - ext_t[1]))):
+                    if max(abs(t[0] - ext_t[0]), abs(t[1] - ext_t[1])) > 2:
+                        break
+                    if _place_one(objs, ext_zr["used"], ext_zr["reach"], ext_rng, ext_st,
+                                  "GUARD", None, t[0], t[1], ident=gident_ext,
+                                  bounds=bounds):
+                        break
 
     return objs, n_placed, processed_loot_zids
