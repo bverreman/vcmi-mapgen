@@ -712,7 +712,20 @@ def _run_level(level, W, H, grid, zones, player_zids, ledger, gstats, seed, has_
     loot_objs, n_loot, _loot_zids = PK.place_loot_zones(
         zone_records, entrance_plan, objs, seed=seed, bounds=(W, H))
     objs.extend(loot_objs)
-    targets.extend((o["x"], o["y"]) for o in loot_objs if o.get("purpose"))
+    # Only add EXTERIOR loot zone objects to targets (keymaster, exterior monolith).
+    # Interior objects (gate, interior monolith) are reachable via teleportation/gate,
+    # not via physical traversal — adding them causes g2_repair to carve a hole in the
+    # loot zone seal to make them physically reachable.
+    _loot_interior_tiles = set()
+    for zr in zone_records:
+        if zr["zid"] in _loot_zids:
+            _loot_interior_tiles |= zr["ts"]
+    targets.extend((o["x"], o["y"]) for o in loot_objs
+                   if o.get("purpose") and (o["x"], o["y"]) not in _loot_interior_tiles)
+    # Remove any stale scatter targets from loot zone interiors — scatter loot was placed
+    # inside those zones before place_loot_zones cleared it; without this, g2_repair sees
+    # those now-open positions as unreachable targets and carves a path through the seal.
+    targets[:] = [t for t in targets if t not in _loot_interior_tiles]
     # Mark sealed loot zones so place_pocket_caches excludes them from its detection
     # universe — their interiors would otherwise appear as pockets and receive a
     # spurious interior guard (the access mechanic already provides the gate keeper).
@@ -798,8 +811,23 @@ def _repair_and_finish_level(level, size, grid, objs, targets, zone_records, see
 
     objs_before_fill = list(objs)
     ids_before_fill = {id(o) for o in objs_before_fill}
-    objs, nreconn, nfilled = fill_open_islands(size, grid, objs, targets, seed=seed,
-                                               boat_ok=boat_ok, costly=ridge)
+    # Loot zone interiors are accessible only via gate/monolith (teleportation), not physical
+    # traversal.  Two problems without intervention:
+    #   1. The interior itself looks like a disconnected island → fill_open_islands carves through
+    #      the seal to reach it.  Adding interior tiles to `fill_targets` tells fill_open_islands
+    #      they are already-reachable, removing them from the island list.
+    #   2. The seal veg at loot-zone boundary tiles can create tiny isolated pockets in the
+    #      EXTERNAL zone (1-tile notches that had only the now-sealed tile as their escape).
+    #      fill_open_islands would carve through the seal (cost 40 < cap 120) to reconnect
+    #      them.  Pricing loot-zone tiles at 400 makes those paths exceed the cap, so
+    #      fill_open_islands fills the pocket with blocking decoration instead of carving.
+    loot_interior = set()
+    for zr in zone_records:
+        if zr.get("loot_zone"):
+            loot_interior |= zr["ts"]
+    fill_targets = targets + [t for t in sorted(loot_interior) if t not in set(targets)]
+    objs, nreconn, nfilled = fill_open_islands(size, grid, objs, fill_targets, seed=seed,
+                                               boat_ok=boat_ok, costly=ridge | loot_interior)
     ids_after_fill = {id(o) for o in objs}
     removed_fill = [o for o in objs_before_fill if id(o) not in ids_after_fill]
     added_fill = [o for o in objs if id(o) not in ids_before_fill]
