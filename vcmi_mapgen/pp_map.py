@@ -575,10 +575,11 @@ def _run_level(level, W, H, grid, zones, player_zids, ledger, gstats, seed, has_
     rim_all = _rim8(zones)                           # 8-connected inter-zone rim, both sides
 
     has_water = False
+    water_tiles = {(x, y) for y in range(H) for x in range(W) if grid[y][x] == 8}
     if level == 0:
         # water is a segmentation BARRIER (never a zone) — populate its connected bodies
         # directly: flotsam / sea chests / buoys / boats / whirlpools / wrecks / sea guards
-        water = {(x, y) for y in range(H) for x in range(W) if grid[y][x] == 8}
+        water = water_tiles
         has_water = bool(water)
         seen_w = set()
         wi = 0
@@ -710,7 +711,8 @@ def _run_level(level, W, H, grid, zones, player_zids, ledger, gstats, seed, has_
               f"art={pk.get('REWARD_PICKUP', 0)}")
 
     loot_objs, n_loot, _loot_zids = PK.place_loot_zones(
-        zone_records, entrance_plan, objs, seed=seed, bounds=(W, H))
+        zone_records, entrance_plan, objs, seed=seed, bounds=(W, H),
+        water_tiles=water_tiles)
     objs.extend(loot_objs)
     # Only add EXTERIOR loot zone objects to targets (keymaster, exterior monolith).
     # Interior objects (gate, interior monolith) are reachable via teleportation/gate,

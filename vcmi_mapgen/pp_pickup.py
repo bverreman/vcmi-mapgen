@@ -936,7 +936,8 @@ def place_water(ts, zones, zid, seed=1):
     return objs
 
 
-def place_loot_zones(zone_records, entrance_plan, objs_existing, seed=1, bounds=None):
+def place_loot_zones(zone_records, entrance_plan, objs_existing, seed=1, bounds=None,
+                     water_tiles=None):
     """Loot-zone access mechanic for small single-entrance zones.
 
     A 'loot zone' has ≤ LOOT_ZONE_MAX_TILES tiles, exactly one 8-connected cluster of
@@ -963,6 +964,8 @@ def place_loot_zones(zone_records, entrance_plan, objs_existing, seed=1, bounds=
     town_tiles = {(o["x"], o["y"]) for o in objs_existing if o.get("purpose") == "TOWN"}
 
     # Pre-compute full tile set of all zones for boundary detection.
+    # water_tiles comes from the caller (grid-level water, never in zone_records).
+    water_ts = set(water_tiles) if water_tiles else set()
     _all_ts = set()
     for _zr in zone_records:
         _all_ts |= _zr["ts"]
@@ -995,6 +998,8 @@ def place_loot_zones(zone_records, entrance_plan, objs_existing, seed=1, bounds=
                         q.append(nb)
         return n, frozenset(boundary)
 
+    _DIRS8 = [(1,0),(-1,0),(0,1),(0,-1),(1,1),(1,-1),(-1,1),(-1,-1)]
+
     loot_zrs = []   # list of (zone_record, passage_tile_frozenset)
     for zr in zone_records:
         if len(zr["ts"]) > LOOT_ZONE_MAX_TILES:
@@ -1003,6 +1008,13 @@ def place_loot_zones(zone_records, entrance_plan, objs_existing, seed=1, bounds=
             continue
         n_clusters, passage_tiles = _passage_components(zr)
         if n_clusters != 1:
+            continue
+        # No water adjacency: no boundary tile may be 8-adjacent to a water tile.
+        if water_ts and any(
+            (t[0]+dx, t[1]+dy) in water_ts
+            for t in passage_tiles
+            for dx, dy in _DIRS8
+        ):
             continue
         loot_zrs.append((zr, passage_tiles))
 
@@ -1097,27 +1109,46 @@ def place_loot_zones(zone_records, entrance_plan, objs_existing, seed=1, bounds=
                                       "mask": iv["mask"]}})
 
     def _fill_loot(terrain, st, reach, used, rng):
-        """Hero-strengthening structures → artifact+chest mix → resource piles.
+        """Three-pass loot fill: hero-strengthening structures → mixed rewards → background decor.
 
-        Solo-visitable structures are capped at 1/4 of available tiles so the
-        remainder is split between random major-skewed artifacts and chest-type
-        loot (treasure chests, campfires, lean-tos — animations NOT starting
-        with 'ava', which is the artifact namespace).  Resource piles absorb
-        any tiles not claimed by the two reward passes."""
+        Pass 0 (bg): non-blocking terrain decor on interior tiles (under gameplay objects).
+        Pass 1 (30 %): solo-visitable hero-strengthening structures.
+        Pass 2: 30 % major/relic artifact, 30 % chest/campfire, 40 % rare resource pile
+                (mercury, sulfur, crystal, gems, gold — no wood/ore)."""
+        # Pass 0: background — non-blocking terrain decor on interior (non-boundary) tiles.
+        ext_ts_inner = _all_ts - reach
+        interior = {t for t in reach
+                    if not any((t[0]+dx, t[1]+dy) in ext_ts_inner for dx, dy in _DIRS8)}
+        pool_bg = ON.decor_pool(terrain, blocking=False, max_cells=1,
+                                exclude_types=_LOOT_EXCL_DECOR)
+        if pool_bg:
+            for t in sorted(interior):
+                if rng.random() < 0.5:
+                    iv = rng.choice(pool_bg)
+                    objs.append({"x": t[0], "y": t[1], "l": 0,
+                                 "type": iv.get("type"), "subtype": iv.get("subtype"),
+                                 "animation": iv["animation"], "mask": iv["mask"],
+                                 "template": {"animation": iv["animation"],
+                                              "mask": iv["mask"]}})
+
         pool_vis = _solo_visit_pool(terrain,
                                     exclude_anims=_FILL_EXCL_ANIMS | _LOOT_VIS_EXCL_ANIMS,
                                     min_shrine_level=_LOOT_SHRINE_MIN_LEVEL)
         pool_art = [i for i in ON.gameplay_pool(terrain, "REWARD_PICKUP")
                     if i.get("type") not in _LOOT_ART_EXCL_TYPES]
         pool_res = ON.gameplay_pool(terrain, "RESOURCE_PILE")
-        arts     = [(a, _LOOT_ART_W.get(a, 1)) for a, _w, _v in PG.RND_ART]
         # chest-type pickups: treasure chests, campfires — 'ava*' is the artifact namespace.
         pool_chest = [i for i in pool_art if not i.get("animation", "").startswith("ava")]
+        # High-tier artifacts only (major + relic).
+        arts_high = [(a, _LOOT_ART_W[a]) for a in ("avarnd3", "avarand") if a in _LOOT_ART_W]
+        # Rare resources: mercury(1), sulfur(3), crystal(4), gems(5), gold(6) — no wood(0)/ore(2).
+        pool_rare = [i for i in pool_res if i.get("subtype") not in {0, 2}]
 
         free = sorted(reach - used)
         rng.shuffle(free)
-        # Solo-vis: at most 1/4 of available tiles so chests/artifacts fill the rest
-        n_vis = max(1, min(len(free) // 4, 4))
+
+        # Pass 1: hero-strengthening structures — 30 % of available tiles
+        n_vis = max(1, len(free) * 3 // 10)
         vis_placed = 0
         for t in free:
             if not pool_vis or vis_placed >= n_vis:
@@ -1129,22 +1160,30 @@ def place_loot_zones(zone_records, entrance_plan, objs_existing, seed=1, bounds=
                           interactive_only=True):
                 vis_placed += 1
 
-        # Artifacts + chests: 60% major-skewed random artifact, 40% chest/campfire
+        # Pass 2: 30 % major/relic artifact | 30 % chest/campfire | 40 % rare resource
         for t in sorted(reach - used):
-            if rng.random() < 0.6:
-                ai = ON.identity_of(rng.choices(
-                    [a for a, _ in arts], weights=[w for _, w in arts], k=1)[0])
+            roll = rng.random()
+            if roll < 0.3:
+                if arts_high:
+                    ai = ON.identity_of(rng.choices(
+                        [a for a, _ in arts_high],
+                        weights=[w for _, w in arts_high], k=1)[0])
+                    if ai:
+                        _place_one(objs, used, reach, rng, st, "REWARD_PICKUP", pool_art,
+                                   t[0], t[1], ident=ai, cache=True, bounds=bounds,
+                                   interactive_only=True)
+            elif roll < 0.6:
+                ai = rng.choice(pool_chest) if pool_chest else None
+                if ai:
+                    _place_one(objs, used, reach, rng, st, "REWARD_PICKUP", pool_art,
+                               t[0], t[1], ident=ai, cache=True, bounds=bounds,
+                               interactive_only=True)
             else:
-                ai = rng.choice(pool_chest) if pool_chest else ON.identity_of(arts[0][0])
-            if ai:
-                _place_one(objs, used, reach, rng, st, "REWARD_PICKUP", pool_art,
-                           t[0], t[1], ident=ai, cache=True, bounds=bounds,
-                           interactive_only=True)
-
-        for t in sorted(reach - used):
-            _place_one(objs, used, reach, rng, st, "RESOURCE_PILE", pool_res,
-                       t[0], t[1], cache=True, bounds=bounds,
-                       interactive_only=True)
+                ri = rng.choice(pool_rare) if pool_rare else (rng.choice(pool_res) if pool_res else None)
+                if ri:
+                    _place_one(objs, used, reach, rng, st, "RESOURCE_PILE", pool_res,
+                               t[0], t[1], ident=ri, cache=True, bounds=bounds,
+                               interactive_only=True)
 
     objs, n_placed = [], 0
     processed_loot_zids = set()   # zones whose entrance was actually sealed this run
@@ -1254,6 +1293,14 @@ def place_loot_zones(zone_records, entrance_plan, objs_existing, seed=1, bounds=
             if gate_tile is None:
                 continue
 
+            # Verify seal leaves the gate's interactive tile with a passable interior neighbor.
+            # Exterior access is guaranteed (interactive tiles are boundary tiles by construction).
+            sealed_boundary = passage_tiles - set(interactive)
+            passable_after_seal = ts - sealed_boundary
+            if not any((sk[0]+dx, sk[1]+dy) in passable_after_seal
+                       for sk in interactive for dx, dy in _DIRS8):
+                continue
+
             _seal_all_passages(ts, open_set, used, terrain, rng,
                                skip_cells=set(interactive))
             processed_loot_zids.add(zid)
@@ -1279,7 +1326,7 @@ def place_loot_zones(zone_records, entrance_plan, objs_existing, seed=1, bounds=
                 for t in sorted(km_zr["reach"] - km_zr["used"],
                                 key=lambda t: max(abs(t[0] - km_t[0]),
                                                   abs(t[1] - km_t[1]))):
-                    if max(abs(t[0] - km_t[0]), abs(t[1] - km_t[1])) > 2:
+                    if max(abs(t[0] - km_t[0]), abs(t[1] - km_t[1])) > 1:
                         break
                     if _place_one(objs, km_zr["used"], km_zr["reach"], km_rng, km_st,
                                   "GUARD", None, t[0], t[1], ident=gident_km,
@@ -1338,7 +1385,7 @@ def place_loot_zones(zone_records, entrance_plan, objs_existing, seed=1, bounds=
                 for t in sorted(ext_zr["reach"] - ext_zr["used"],
                                 key=lambda t: max(abs(t[0] - ext_t[0]),
                                                   abs(t[1] - ext_t[1]))):
-                    if max(abs(t[0] - ext_t[0]), abs(t[1] - ext_t[1])) > 2:
+                    if max(abs(t[0] - ext_t[0]), abs(t[1] - ext_t[1])) > 1:
                         break
                     if _place_one(objs, ext_zr["used"], ext_zr["reach"], ext_rng, ext_st,
                                   "GUARD", None, t[0], t[1], ident=gident_ext,
