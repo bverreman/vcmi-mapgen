@@ -380,10 +380,6 @@ def place_scatter(ts, zones, zid, terrain, open_set, prot, seed=1, bounds=None,
 
     n_res = stoch(dens["RESOURCE_PILE"] * area, PG.scaled_cap(CAPS["RESOURCE_PILE"],
                                                               dens["RESOURCE_PILE"] * area))
-    n_art = stoch(dens["REWARD_PICKUP"] * area, PG.scaled_cap(CAPS["REWARD_PICKUP"],
-                                                              dens["REWARD_PICKUP"] * area))
-    if area >= LOOT_FLOOR_AREA:                      # a real zone always holds some loot
-        n_art = max(n_art, 2)
 
     dweb = _web_dist(open_set, prot)
     reach = set(dweb)                                # reachable open tiles only
@@ -397,14 +393,11 @@ def place_scatter(ts, zones, zid, terrain, open_set, prot, seed=1, bounds=None,
     gd = PG.gate_dist(ts, set().union(*(b for _r, b in bands)) if bands else set())
 
     pool_res = ON.gameplay_pool(terrain, "RESOURCE_PILE")
-    pool_art = ON.gameplay_pool(terrain, "REWARD_PICKUP")
 
     objs, used = [], set()
 
-    # rewards here are LOOT (treasure chests, campfires — the corpus mix), not artifacts: the
-    # tiered random artifacts sit behind the cache guards instead. User-mandated: scattered
-    # loot sits in the open field (not a genuine chokepoint), so it is ALWAYS free — no guard
-    # is ever planted beside it, since a monster in open terrain can just be walked around.
+    # Open-field scatter is resource piles only — artifacts are reserved for pockets
+    # and loot zones where a guard or gate makes them genuinely earned.
     def scatter(purpose, pool, n, min_sep):
         if n <= 0:
             return
@@ -424,7 +417,6 @@ def place_scatter(ts, zones, zid, terrain, open_set, prot, seed=1, bounds=None,
                 placed.append(t)
 
     scatter("RESOURCE_PILE", pool_res, n_res, min_sep=3)
-    scatter("REWARD_PICKUP", pool_art, n_art, min_sep=5)
     return objs, used, reach
 
 
@@ -589,6 +581,9 @@ def place_pocket_caches(zone_records, seed=1, bounds=None):
         if pocket is None:
             continue
 
+        if len(pocket) > 10:
+            continue
+
         # thin 1-2 tile nooklets that crowd an already-guarded cache (see POCKET_MIN_SEP)
         if ref_mouth and len(pocket) <= 2 and any(
                 max(abs(ref_mouth[0] - m[0]), abs(ref_mouth[1] - m[1])) < POCKET_MIN_SEP
@@ -616,12 +611,10 @@ def place_pocket_caches(zone_records, seed=1, bounds=None):
         pool_chest = [i for i in pool_art if not i.get("animation", "").startswith("ava")]
 
         if guarded:
-            # Pre-estimate loot value from the intended fill (each resource ≈ 2,
-            # solo-visitable ≈ 3) to set the guard level before placing anything.
-            art_spot = cache_spots[-1:]
-            vis_spot = cache_spots[-2:-1] if len(cache_spots) >= 3 else []
-            res_spots = cache_spots[:len(cache_spots) - 1 - len(vis_spot)]
-            est_val = 2 * len(res_spots) + (3 if vis_spot else 0)
+            # Pre-estimate guard level: artifact only if pocket > 2 tiles; rest is 50/25/25.
+            has_art = len(pocket) > 2
+            n_fill = len(cache_spots) - (1 if has_art else 0)
+            est_val = int(n_fill * 2.25) + (5 if has_art else 0)
             lvl = min(6, 1 + (est_val >= 4) + (est_val >= 7) + (est_val >= 10) + (est_val >= 13))
             anim = _ART_BY_LVL[lvl - 1]
 
@@ -633,73 +626,86 @@ def place_pocket_caches(zone_records, seed=1, bounds=None):
                 continue
             placed_mouths.append(mouth)
 
-            # Re-derive fill spots after guard V cells enter `used` — avoids silent
-            # empty tiles when the guard's decorative bleed overlaps the nearest cache
-            # slot (the old code computed res/vis/art from pre-guard cache_spots and
-            # then silently failed _place_one on any slot the guard had since claimed).
+            # Re-derive available spots after guard V cells enter `used`.
             avail = [t for t in cache_spots if t not in used]
             avail.sort(key=lambda t: max(abs(t[0] - ref_mouth[0]), abs(t[1] - ref_mouth[1])))
             if not avail:
                 continue
-            art_spot  = avail[-1:]
-            vis_spot  = avail[-2:-1] if len(avail) >= 3 else []
-            res_spots = avail[:len(avail) - 1 - len(vis_spot)]
+            art_spot   = avail[-1:] if has_art else []
+            fill_spots = avail[:-1] if has_art else avail
 
             pool_vis = _solo_visit_pool(terrain, exclude_anims=_FILL_EXCL_ANIMS)
-            # 2. Resources + chests on nearest tiles: 40% chance of treasure chest /
-            #    campfire instead of a resource pile so the pocket has loot variety.
-            for t in res_spots:
-                if pool_chest and rng.random() < 0.4:
+            # 2. Fill nearest→deep-1: 50 % resource | 25 % chest | 25 % hero structure
+            for t in fill_spots:
+                roll = rng.random()
+                if roll < 0.50:
+                    _place_one(objs, used, global_place, rng, st, "RESOURCE_PILE", pool_res,
+                               t[0], t[1], cache=True, bounds=bounds, interactive_only=True)
+                elif roll < 0.75:
                     avail_c = [i for i in pool_chest if _spaced_ok(i.get("type"), t[0], t[1])]
-                    ci = rng.choice(avail_c) if avail_c else rng.choice(pool_chest)
-                    if not _place_one(objs, used, global_place, rng, st, "REWARD_PICKUP",
-                                      pool_art, t[0], t[1],
-                                      ident=ci, cache=True, bounds=bounds,
-                                      interactive_only=True):
-                        _place_one(objs, used, global_place, rng, st, "RESOURCE_PILE",
-                                   pool_res, t[0], t[1], cache=True, bounds=bounds,
-                                   interactive_only=True)
+                    ci = rng.choice(avail_c) if avail_c else (rng.choice(pool_chest) if pool_chest else None)
+                    if not (ci and _place_one(objs, used, global_place, rng, st, "REWARD_PICKUP",
+                                              pool_art, t[0], t[1], ident=ci, cache=True,
+                                              bounds=bounds, interactive_only=True)):
+                        _place_one(objs, used, global_place, rng, st, "RESOURCE_PILE", pool_res,
+                                   t[0], t[1], cache=True, bounds=bounds, interactive_only=True)
                     else:
                         _register(ci, t[0], t[1])
                 else:
-                    _place_one(objs, used, global_place, rng, st, "RESOURCE_PILE", pool_res,
-                               t[0], t[1], cache=True, bounds=bounds,
-                               interactive_only=True)
-            # 3. Solo-visitable structure (one tile, middle of pocket)
-            for t in vis_spot:
-                avail_v = [i for i in pool_vis if _spaced_ok(i.get("type"), t[0], t[1])]
-                ident = rng.choice(avail_v) if avail_v else rng.choice(pool_vis) if pool_vis else None
-                if ident:
-                    if _place_one(objs, used, global_place, rng, st,
-                                  ident.get("purpose", "BONUS_TEMP"), None,
-                                  t[0], t[1], ident=ident, cache=True, bounds=bounds,
-                                  interactive_only=True):
-                        _register(ident, t[0], t[1])
-            # 4. Artifact at the deepest tile — tier matches guard level
+                    avail_v = [i for i in pool_vis if _spaced_ok(i.get("type"), t[0], t[1])]
+                    vi = rng.choice(avail_v) if avail_v else (rng.choice(pool_vis) if pool_vis else None)
+                    if not (vi and _place_one(objs, used, global_place, rng, st,
+                                             vi.get("purpose", "BONUS_TEMP"), None,
+                                             t[0], t[1], ident=vi, cache=True, bounds=bounds,
+                                             interactive_only=True)):
+                        _place_one(objs, used, global_place, rng, st, "RESOURCE_PILE", pool_res,
+                                   t[0], t[1], cache=True, bounds=bounds, interactive_only=True)
+                    else:
+                        _register(vi, t[0], t[1])
+            # 3. Artifact at the deepest tile — tier matches guard level
             if art_spot:
                 t = art_spot[0]
                 _place_one(objs, used, global_place, rng, st, "REWARD_PICKUP", pool_art,
                            t[0], t[1], ident=ON.identity_of(anim), cache=True, bounds=bounds,
                            interactive_only=True)
         else:
-            # Unguarded pocket: fill every tile with resources or chests.
-            for t in cache_spots:
-                if pool_chest and rng.random() < 0.4:
+            # Unguarded pocket: same 50/25/25 fill + treasure artifact at deepest if > 2 tiles.
+            has_art_u   = len(pocket) > 2
+            art_spot_u  = cache_spots[-1:] if has_art_u else []
+            fill_spots_u = cache_spots[:-1] if has_art_u else cache_spots
+
+            pool_vis = _solo_visit_pool(terrain, exclude_anims=_FILL_EXCL_ANIMS)
+            for t in fill_spots_u:
+                roll = rng.random()
+                if roll < 0.50:
+                    _place_one(objs, used, global_place, rng, st, "RESOURCE_PILE", pool_res,
+                               t[0], t[1], cache=True, bounds=bounds, interactive_only=True)
+                elif roll < 0.75:
                     avail_c = [i for i in pool_chest if _spaced_ok(i.get("type"), t[0], t[1])]
-                    ci = rng.choice(avail_c) if avail_c else rng.choice(pool_chest)
-                    if not _place_one(objs, used, global_place, rng, st, "REWARD_PICKUP",
-                                      pool_art, t[0], t[1],
-                                      ident=ci, cache=True, bounds=bounds,
-                                      interactive_only=True):
-                        _place_one(objs, used, global_place, rng, st, "RESOURCE_PILE",
-                                   pool_res, t[0], t[1], cache=True, bounds=bounds,
-                                   interactive_only=True)
+                    ci = rng.choice(avail_c) if avail_c else (rng.choice(pool_chest) if pool_chest else None)
+                    if not (ci and _place_one(objs, used, global_place, rng, st, "REWARD_PICKUP",
+                                              pool_art, t[0], t[1], ident=ci, cache=True,
+                                              bounds=bounds, interactive_only=True)):
+                        _place_one(objs, used, global_place, rng, st, "RESOURCE_PILE", pool_res,
+                                   t[0], t[1], cache=True, bounds=bounds, interactive_only=True)
                     else:
                         _register(ci, t[0], t[1])
                 else:
-                    _place_one(objs, used, global_place, rng, st, "RESOURCE_PILE", pool_res,
-                               t[0], t[1], cache=True, bounds=bounds,
-                               interactive_only=True)
+                    avail_v = [i for i in pool_vis if _spaced_ok(i.get("type"), t[0], t[1])]
+                    vi = rng.choice(avail_v) if avail_v else (rng.choice(pool_vis) if pool_vis else None)
+                    if not (vi and _place_one(objs, used, global_place, rng, st,
+                                             vi.get("purpose", "BONUS_TEMP"), None,
+                                             t[0], t[1], ident=vi, cache=True, bounds=bounds,
+                                             interactive_only=True)):
+                        _place_one(objs, used, global_place, rng, st, "RESOURCE_PILE", pool_res,
+                                   t[0], t[1], cache=True, bounds=bounds, interactive_only=True)
+                    else:
+                        _register(vi, t[0], t[1])
+            if art_spot_u:
+                t = art_spot_u[0]
+                _place_one(objs, used, global_place, rng, st, "REWARD_PICKUP", pool_art,
+                           t[0], t[1], ident=ON.identity_of("avarnd1"), cache=True,
+                           bounds=bounds, interactive_only=True)
 
     return objs, len(blobs)
 
