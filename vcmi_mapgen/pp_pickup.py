@@ -599,7 +599,7 @@ def place_pocket_caches(zone_records, seed=1, bounds=None):
         # pocket tiles found via `global_true` may include tiles that are physically
         # walkable but NOT placement-eligible (another object's approach/occupied cell) --
         # those can't host a new resource/artifact, so filter to `global_open` here.
-        cache_spots = [t for t in pocket if t not in used and t in global_open]
+        cache_spots = [t for t in pocket if t not in used and t in global_place]
         if not cache_spots:
             continue
 

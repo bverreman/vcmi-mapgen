@@ -520,6 +520,16 @@ def find_pockets(reach, max_dim=POCKET_MAX_DIM, max_tiles=POCKET_MAX_TILES):
         if (max(x for x, _ in pocket) - min(x for x, _ in pocket) >= max_dim or
                 max(y for _, y in pocket) - min(y for _, y in pocket) >= max_dim):
             continue
+        # Mouth size: 8-connected cluster of pocket tiles at the entry point.
+        # Two layers: ZoC-interior nook tiles (≥4 blocked neighbours, already in pocket)
+        # and the first outside-ZoC layer adjacent to the ZoC. Together they form the
+        # physical opening. Zone-boundary entrances are typically 3+ tiles wide here;
+        # genuine vegetation nooks/corridors are 1-2.
+        mouth = ((pocket & zoc) |
+                 {p for p in pocket if p not in zoc
+                  and any((p[0] + dx, p[1] + dy) in zoc for dx, dy in NB8)})
+        if len(mouth) > 2:
+            continue
         comp = frozenset(pocket)
         key = mouth_key(reach, g, comp)
         if comp not in best or key < best[comp][0]:
