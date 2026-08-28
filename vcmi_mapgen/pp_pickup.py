@@ -450,7 +450,8 @@ def _solo_visit_pool(terrain, exclude_anims=frozenset(), min_shrine_level=None):
     return pool
 
 
-def place_pocket_caches(zone_records, seed=1, bounds=None, border_guards=frozenset()):
+def place_pocket_caches(zone_records, seed=1, bounds=None, border_guards=frozenset(),
+                        precomputed_pockets=None):
     """Guarded caches in genuine geometric pockets — found in ONE global, zone-independent
     pass over the WHOLE map's TRUE physical passability, run once after every zone's
     terrain, vegetation and scatter is finalized. `zone_records` is a list of
@@ -541,7 +542,7 @@ def place_pocket_caches(zone_records, seed=1, bounds=None, border_guards=frozens
     global_reach8 = _reach8(global_true, global_reach)
     global_place = global_reach8 & global_open
 
-    raw = ZF.find_pockets(global_true)
+    raw = precomputed_pockets if precomputed_pockets is not None else ZF.find_pockets(global_true)
     blobs = _dedupe_pockets(raw, global_true)
     guard_mask = PG.rnd_monster(1)["mask"]  # uniform across levels 1-7; used to pre-check fit
     objs = []
@@ -700,7 +701,8 @@ SEERHUT_MIN_REACH = 8     # a zone needs at least this many free reachable tiles
                           # drawing into a quest (host EITHER the hut or its artifact)
 
 
-def place_seer_hut_quests(zone_records, seed=1, bounds=None, used_artifacts=None):
+def place_seer_hut_quests(zone_records, seed=1, bounds=None, used_artifacts=None,
+                          pocket_tiles=None):
     """One or more Seer Hut quests for the WHOLE level (VCMI RMG convention: a seer hut's
     mission gates on a single named artifact the hero must find and hand-carry to it). Each
     quest links two placements in DIFFERENT zones -- the quest's target artifact (an
@@ -732,18 +734,21 @@ def place_seer_hut_quests(zone_records, seed=1, bounds=None, used_artifacts=None
     if used_artifacts is None:
         used_artifacts = set()
     placed = 0
+    # Pre-compute which zones have pocket tiles so the per-attempt loop can skip quickly.
+    if pocket_tiles is not None:
+        _ptiles_global = pocket_tiles
+    else:
+        passable_all = set().union(*(zr.get("passable", zr["reach"]) for zr in zone_records))
+        raw_p = ZF.find_pockets(passable_all)
+        _ptiles_global = set()
+        for _g, (pt, _mf) in raw_p.items():
+            if len(pt) >= 3:
+                _ptiles_global |= set(pt)
+
     for i in range(n):
         idx_hut, idx_art = rng_pair.sample(range(len(eligible)), 2)
-        hut_zr, art_zr = eligible[idx_hut], eligible[idx_art]
+        hut_zr = eligible[idx_hut]
         rng = random.Random(seed ^ (i * 92821) ^ 0xEE47)
-
-        pool_art = sorted((a for a in ON.gameplay_pool(art_zr["terrain"], "REWARD_PICKUP")
-                          if a.get("type") == "artifact"
-                          and a["subtype"] not in used_artifacts),
-                          key=lambda a: a["animation"])
-        if not pool_art:
-            continue
-        art_ident = rng.choice(pool_art)
 
         pool_hut = sorted((h for h in ON.gameplay_pool(hut_zr["terrain"], "QUEST_GATE")
                           if h.get("type") == "seerHut"),
@@ -752,8 +757,31 @@ def place_seer_hut_quests(zone_records, seed=1, bounds=None, used_artifacts=None
             continue
         hut_ident = rng.choice(pool_hut)
 
+        # Find an art zone with a ≥3-tile pocket; start with the random pick then
+        # try other eligible zones to avoid getting 0 quests when the chosen zone
+        # has no pocket tiles available.
+        art_zr_order = [eligible[idx_art]] + [
+            zr for j, zr in enumerate(eligible) if j != idx_art and j != idx_hut]
+        art_zr = art_ident = None
+        for cand_art_zr in art_zr_order:
+            art_eligible = _ptiles_global & (cand_art_zr["reach"] - cand_art_zr["used"])
+            if not art_eligible:
+                continue
+            cand_pool_art = sorted((a for a in ON.gameplay_pool(cand_art_zr["terrain"],
+                                                                "REWARD_PICKUP")
+                                    if a.get("type") == "artifact"
+                                    and a["subtype"] not in used_artifacts),
+                                   key=lambda a: a["animation"])
+            if not cand_pool_art:
+                continue
+            art_zr, art_ident = cand_art_zr, rng.choice(cand_pool_art)
+            break
+        if art_zr is None:
+            continue   # no eligible art zone with a ≥3-tile pocket
+
         st_art = PG.mine_gameplay()[art_zr["terrain"]]
-        art_cands = sorted(art_zr["reach"] - art_zr["used"])
+        art_eligible = _ptiles_global & (art_zr["reach"] - art_zr["used"])
+        art_cands = sorted(art_eligible)
         rng.shuffle(art_cands)
         art_xy = None
         for t in art_cands:

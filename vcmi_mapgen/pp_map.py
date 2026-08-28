@@ -1075,8 +1075,20 @@ def _repair_and_finish_level(level, size, grid, objs, targets, zone_records, see
     # (VCMI RMG convention — "add seer hut with quest to the map like the vcmi generator
     # does"). Runs before pocket caches so its two footprints are already claimed in
     # `zone_records` when pocket geometry is judged.
+    # Pre-compute global pocket geometry ONCE, shared by both the seer-hut quest pass
+    # (artifact restricted to ≥3-tile pockets) and the pocket-cache pass (avoids a
+    # second expensive find_pockets call on the same data).
+    _global_true_pkt = set()
+    for _zr_pkt in zone_records:
+        _global_true_pkt |= _zr_pkt.get("passable", _zr_pkt["open_set"])
+    _raw_pkt = ZF.find_pockets(_global_true_pkt)
+    _pocket_tiles_pkt = set()
+    for _g_pkt, (_pt_pkt, _mf_pkt) in _raw_pkt.items():
+        if len(_pt_pkt) >= 3:
+            _pocket_tiles_pkt |= set(_pt_pkt)
     qobjs, n_quests = PK.place_seer_hut_quests(zone_records, seed=seed, bounds=(size, size),
-                                               used_artifacts=seerhut_artifacts)
+                                               used_artifacts=seerhut_artifacts,
+                                               pocket_tiles=_pocket_tiles_pkt)
     objs.extend(qobjs)
     targets.extend((o["x"], o["y"]) for o in qobjs)
     if n_quests:
@@ -1087,7 +1099,8 @@ def _repair_and_finish_level(level, size, grid, objs, targets, zone_records, see
     # repair passes above are finalized (user-mandated 2026-07-04 — see
     # pp_pickup.place_pocket_caches docstring for the rationale).
     cobjs, n_pockets = PK.place_pocket_caches(zone_records, seed=seed, bounds=(size, size),
-                                               border_guards=border_guards)
+                                               border_guards=border_guards,
+                                               precomputed_pockets=_raw_pkt)
     objs.extend(cobjs)
     targets.extend((o["x"], o["y"]) for o in cobjs)
     ck = collections.Counter(o["purpose"] for o in cobjs)
