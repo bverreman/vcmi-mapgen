@@ -144,25 +144,20 @@ def _dedupe_pockets(pockets, reach=frozenset()):
     so a flat-face nook alone yields ~4 candidates) -- and in H3 a guard already threatens
     every adjacent tile (stepping next to a wandering monster forces combat), so one guard
     placed at a shared neck already gates every mouth candidate touching it. Merge
-    mouth+pocket tiles into 4-connected blobs (union-find over shared tiles).
+    guard_tile+pocket tiles into 4-connected blobs (union-find over shared tiles).
+
+    `pockets` maps guard_tile -> (pocket_frozenset, mouth_frozenset) as returned by
+    `ZF.find_pockets`.
 
     Returns a list of candidate lists (one list per nook), each sorted by `ZF.mouth_key`
-    over `reach` (in-neck first, then largest pocket, then orthogonal-front -- so the guard
-    lands at the pocket's natural opening, not a tile out in the open field), outer list
-    sorted best-top-candidate first. The caller tries candidates within a blob in order and
-    falls back to the next one when the top pick's mouth tile is unusable -- e.g. it happens
-    to coincide with an unrelated, already-placed object's approach cell. Previously this
-    function collapsed each blob down to a single (best) mouth, so a blob whose ONLY
-    candidate happened to be blocked lost its cache and guard entirely even though 6 other
-    valid mouth candidates for the exact same physical nook existed (confirmed 2026-07-04:
-    a real 11-tile pocket next to a gem mine had its best mouth land on the mine's own
-    visitableFrom approach cell -- already `used` -- and was skipped outright, reproducing
-    the user's "pockets you found were not filled" complaint even after pocket DETECTION
-    was fixed)."""
-    items = list(pockets.items())
+    over `reach` (in-neck first, then largest pocket, then orthogonal-front), outer list
+    sorted best-top-candidate first. Each candidate is a (guard_tile, pocket, mouth_fs)
+    triple. The caller tries candidates within a blob in order and falls back to the next
+    one when the top pick's mouth tile is unusable."""
+    items = [(g, pocket, mouth_fs) for g, (pocket, mouth_fs) in pockets.items()]
     owner = collections.defaultdict(list)
-    for idx, (mouth, pocket) in enumerate(items):
-        for t in (mouth, *pocket):
+    for idx, (g, pocket, mouth_fs) in enumerate(items):
+        for t in (g, *pocket):
             owner[t].append(idx)
     parent = list(range(len(items)))
 
@@ -179,8 +174,8 @@ def _dedupe_pockets(pockets, reach=frozenset()):
                 parent[ra] = rb
 
     groups = collections.defaultdict(list)
-    for idx, (mouth, pocket) in enumerate(items):
-        groups[find(idx)].append((mouth, pocket))
+    for idx, (g, pocket, mouth_fs) in enumerate(items):
+        groups[find(idx)].append((g, pocket, mouth_fs))
     blobs = [sorted(cands, key=lambda kv: ZF.mouth_key(reach, kv[0], kv[1]))
              for cands in groups.values()]
     return sorted(blobs, key=lambda cands: ZF.mouth_key(reach, cands[0][0], cands[0][1]))
@@ -552,160 +547,140 @@ def place_pocket_caches(zone_records, seed=1, bounds=None):
     objs = []
     placed_mouths = []
 
+    def _pocket_fill(fill_spots, pool_res, pool_art, pool_chest, pool_vis, rng, st,
+                     ref_mouth, terrain, reach=None):
+        """50 % resource | 25 % chest (non-artifact) | 25 % hero structure for each fill tile.
+
+        reach: placement eligibility set — defaults to global_place (strict: open_set &
+        reachable8), but pocket callers pass global_reach8 so that approach cells of
+        adjacent objects (excluded from open_set but physically passable) can still
+        receive pickups inside the pocket."""
+        _r = reach if reach is not None else global_place
+        for t in fill_spots:
+            roll = rng.random()
+            if roll < 0.50:
+                _place_one(objs, used, _r, rng, st, "RESOURCE_PILE", pool_res,
+                           t[0], t[1], cache=True, bounds=bounds, interactive_only=True)
+            elif roll < 0.75:
+                avail_c = [i for i in pool_chest if _spaced_ok(i.get("type"), t[0], t[1])]
+                ci = rng.choice(avail_c) if avail_c else (rng.choice(pool_chest) if pool_chest else None)
+                if not (ci and _place_one(objs, used, _r, rng, st, "REWARD_PICKUP",
+                                          pool_art, t[0], t[1], ident=ci, cache=True,
+                                          bounds=bounds, interactive_only=True)):
+                    _place_one(objs, used, _r, rng, st, "RESOURCE_PILE", pool_res,
+                               t[0], t[1], cache=True, bounds=bounds, interactive_only=True)
+                else:
+                    _register(ci, t[0], t[1])
+            else:
+                avail_v = [i for i in pool_vis if _spaced_ok(i.get("type"), t[0], t[1])]
+                vi = rng.choice(avail_v) if avail_v else (rng.choice(pool_vis) if pool_vis else None)
+                if not (vi and _place_one(objs, used, _r, rng, st,
+                                         vi.get("purpose", "BONUS_TEMP"), None,
+                                         t[0], t[1], ident=vi, cache=True, bounds=bounds,
+                                         interactive_only=True)):
+                    _place_one(objs, used, _r, rng, st, "RESOURCE_PILE", pool_res,
+                               t[0], t[1], cache=True, bounds=bounds, interactive_only=True)
+                else:
+                    _register(vi, t[0], t[1])
+
     for candidates in blobs:
-        # Pass 1: try to find a guardable mouth (guard footprint fits and is reachable).
-        mouth = pocket = zid = None
-        for cand_mouth, cand_pocket in candidates:
-            if cand_mouth in used:
-                continue
-            cand_zid = zone_of.get(cand_mouth)
+        # Find the best guardable candidate (guard fits at the ZoC-centre position
+        # whose ZoC seals the pocket and both mouth tiles are within it).
+        guard_tile = pocket = zid = None
+        ref_g = None  # ZoC-centre (reference for sorting / unguarded fallback)
+        for cand_g, cand_pocket, cand_mouth_fs in candidates:
+            cand_zid = zone_of.get(cand_g)
+            if cand_zid is None:
+                for mt in sorted(cand_mouth_fs):
+                    cand_zid = zone_of.get(mt)
+                    if cand_zid:
+                        break
             if cand_zid is None:
                 continue
-            if not all(c in global_place and c not in used
-                       for c in OR.mask_interactive_cells(guard_mask, cand_mouth[0], cand_mouth[1])):
+            if ref_g is None:
+                ref_g, pocket, zid = cand_g, cand_pocket, cand_zid
+            if cand_g in used:
                 continue
-            mouth, pocket, zid = cand_mouth, cand_pocket, cand_zid
-            break
-        guarded = mouth is not None
-
-        # Pass 2 (unguarded fallback): guard can't fit, but the pocket still exists and
-        # deserves resources. Pick the best-ranked candidate just for the pocket body.
-        ref_mouth = mouth
-        if not guarded:
-            for cand_mouth, cand_pocket in candidates:
-                cand_zid = zone_of.get(cand_mouth)
-                if cand_zid is None:
+            if not all(c in global_place and c not in used
+                       for c in OR.mask_interactive_cells(guard_mask, cand_g[0], cand_g[1])):
+                continue
+            if bounds is not None:
+                bw, bh = bounds
+                gcells = [(tx, ty) for tx, ty, _b in OR.mask_cells(guard_mask, cand_g[0], cand_g[1])]
+                if any(not (0 <= tx < bw and 0 <= ty < bh) for tx, ty in gcells):
                     continue
-                ref_mouth, pocket, zid = cand_mouth, cand_pocket, cand_zid
-                break
+            guard_tile = cand_g
+            pocket, zid, ref_g = cand_pocket, cand_zid, cand_g
+            break
+
         if pocket is None:
             continue
 
-        if len(pocket) > 10:
+        # Size gate: 2–14 tiles only.
+        if len(pocket) < 2 or len(pocket) > 14:
             continue
 
-        # thin 1-2 tile nooklets that crowd an already-guarded cache (see POCKET_MIN_SEP)
-        if ref_mouth and len(pocket) <= 2 and any(
-                max(abs(ref_mouth[0] - m[0]), abs(ref_mouth[1] - m[1])) < POCKET_MIN_SEP
-                for m in placed_mouths):
+        # 3+ tile pockets require a guard — skip if none could be placed.
+        if len(pocket) > 2 and guard_tile is None:
             continue
+
+        # Reference point for distance-sorting (guard tile or ZoC-centre).
+        ref = guard_tile if guard_tile is not None else ref_g
 
         terrain = terrain_of[zid]
         st = PG.mine_gameplay()[terrain]
         pool_res = ON.gameplay_pool(terrain, "RESOURCE_PILE")
         pool_art = ON.gameplay_pool(terrain, "REWARD_PICKUP")
-        # deterministic per-pocket rng keyed on the best-candidate mouth position.
-        rng = random.Random(seed ^ (ref_mouth[0] * 92821) ^ (ref_mouth[1] * 131071) ^ 0x9C4)
-        # pocket tiles found via `global_true` may include tiles that are physically
-        # walkable but NOT placement-eligible (another object's approach/occupied cell) --
-        # those can't host a new resource/artifact, so filter to `global_open` here.
-        cache_spots = [t for t in pocket if t not in used and t in global_place]
+        rng = random.Random(seed ^ (ref_g[0] * 92821) ^ (ref_g[1] * 131071) ^ 0x9C4)
+        # Pocket tiles are passable (in global_true) and reachable (in global_reach8);
+        # they may be approach cells of adjacent gameplay objects (excluded from open_set /
+        # global_place) but are still valid for pickups — use global_reach8 as the
+        # eligibility check here, and pass it to _pocket_fill / _place_one below.
+        cache_spots = [t for t in pocket if t not in used and t in global_reach8]
         if not cache_spots:
             continue
 
-        # Sort nearest-to-mouth (index 0) → deepest (index -1).
-        cache_spots.sort(key=lambda t: max(abs(t[0] - ref_mouth[0]), abs(t[1] - ref_mouth[1])))
+        # Sort nearest-to-ref (index 0) → deepest (index -1).
+        cache_spots.sort(key=lambda t: max(abs(t[0] - ref[0]), abs(t[1] - ref[1])))
 
-        # chest-type loot for resource slots: treasure chests, campfires, lean-tos —
-        # animations NOT starting with 'ava' (the artifact namespace).
-        pool_chest = [i for i in pool_art if not i.get("animation", "").startswith("ava")]
+        # Chest pool: non-artifact REWARD_PICKUP (treasure chests, campfires).
+        pool_chest = [i for i in pool_art if i.get("type") != "artifact"]
+        pool_vis = _solo_visit_pool(terrain, exclude_anims=_FILL_EXCL_ANIMS)
 
-        if guarded:
-            # Pre-estimate guard level: artifact only if pocket > 2 tiles; rest is 50/25/25.
-            has_art = len(pocket) > 2
-            n_fill = len(cache_spots) - (1 if has_art else 0)
-            est_val = int(n_fill * 2.25) + (5 if has_art else 0)
+        if len(pocket) == 2:
+            # 2-tile pocket: no guard, no artifact — resources + structures only.
+            _pocket_fill(cache_spots, pool_res, pool_art, pool_chest, pool_vis, rng, st,
+                         ref, terrain, reach=global_reach8)
+        else:
+            # 3-14 tile pocket: guard at mouth tile + one artifact at deepest.
+            n_fill = len(cache_spots) - 1  # one slot reserved for artifact
+            est_val = int(n_fill * 2.25) + 5
             lvl = min(6, 1 + (est_val >= 4) + (est_val >= 7) + (est_val >= 10) + (est_val >= 13))
             anim = _ART_BY_LVL[lvl - 1]
 
-            # 1. Guard at entrance — placed first; its footprint claims the mouth and
-            #    any decorative V cells that bleed into the pocket.
             gident = PG.rnd_monster(lvl + (1 if rng.random() < 0.25 else 0))
             if not _place_one(objs, used, global_place, rng, st, "GUARD", None,
-                              mouth[0], mouth[1], ident=gident, bounds=bounds):
+                              guard_tile[0], guard_tile[1], ident=gident, bounds=bounds):
                 continue
-            placed_mouths.append(mouth)
+            placed_mouths.append(guard_tile)
 
             # Re-derive available spots after guard V cells enter `used`.
             avail = [t for t in cache_spots if t not in used]
-            avail.sort(key=lambda t: max(abs(t[0] - ref_mouth[0]), abs(t[1] - ref_mouth[1])))
+            avail.sort(key=lambda t: max(abs(t[0] - ref[0]), abs(t[1] - ref[1])))
             if not avail:
                 continue
-            art_spot   = avail[-1:] if has_art else []
-            fill_spots = avail[:-1] if has_art else avail
+            art_spot   = avail[-1:]  # deepest tile gets the artifact
+            fill_spots = avail[:-1]
 
-            pool_vis = _solo_visit_pool(terrain, exclude_anims=_FILL_EXCL_ANIMS)
-            # 2. Fill nearest→deep-1: 50 % resource | 25 % chest | 25 % hero structure
-            for t in fill_spots:
-                roll = rng.random()
-                if roll < 0.50:
-                    _place_one(objs, used, global_place, rng, st, "RESOURCE_PILE", pool_res,
-                               t[0], t[1], cache=True, bounds=bounds, interactive_only=True)
-                elif roll < 0.75:
-                    avail_c = [i for i in pool_chest if _spaced_ok(i.get("type"), t[0], t[1])]
-                    ci = rng.choice(avail_c) if avail_c else (rng.choice(pool_chest) if pool_chest else None)
-                    if not (ci and _place_one(objs, used, global_place, rng, st, "REWARD_PICKUP",
-                                              pool_art, t[0], t[1], ident=ci, cache=True,
-                                              bounds=bounds, interactive_only=True)):
-                        _place_one(objs, used, global_place, rng, st, "RESOURCE_PILE", pool_res,
-                                   t[0], t[1], cache=True, bounds=bounds, interactive_only=True)
-                    else:
-                        _register(ci, t[0], t[1])
-                else:
-                    avail_v = [i for i in pool_vis if _spaced_ok(i.get("type"), t[0], t[1])]
-                    vi = rng.choice(avail_v) if avail_v else (rng.choice(pool_vis) if pool_vis else None)
-                    if not (vi and _place_one(objs, used, global_place, rng, st,
-                                             vi.get("purpose", "BONUS_TEMP"), None,
-                                             t[0], t[1], ident=vi, cache=True, bounds=bounds,
-                                             interactive_only=True)):
-                        _place_one(objs, used, global_place, rng, st, "RESOURCE_PILE", pool_res,
-                                   t[0], t[1], cache=True, bounds=bounds, interactive_only=True)
-                    else:
-                        _register(vi, t[0], t[1])
-            # 3. Artifact at the deepest tile — tier matches guard level
+            _pocket_fill(fill_spots, pool_res, pool_art, pool_chest, pool_vis, rng, st,
+                         ref, terrain, reach=global_reach8)
+
+            # Artifact at the deepest tile — tier matches guard level.
             if art_spot:
                 t = art_spot[0]
-                _place_one(objs, used, global_place, rng, st, "REWARD_PICKUP", pool_art,
+                _place_one(objs, used, global_reach8, rng, st, "REWARD_PICKUP", pool_art,
                            t[0], t[1], ident=ON.identity_of(anim), cache=True, bounds=bounds,
                            interactive_only=True)
-        else:
-            # Unguarded pocket: same 50/25/25 fill + treasure artifact at deepest if > 2 tiles.
-            has_art_u   = len(pocket) > 2
-            art_spot_u  = cache_spots[-1:] if has_art_u else []
-            fill_spots_u = cache_spots[:-1] if has_art_u else cache_spots
-
-            pool_vis = _solo_visit_pool(terrain, exclude_anims=_FILL_EXCL_ANIMS)
-            for t in fill_spots_u:
-                roll = rng.random()
-                if roll < 0.50:
-                    _place_one(objs, used, global_place, rng, st, "RESOURCE_PILE", pool_res,
-                               t[0], t[1], cache=True, bounds=bounds, interactive_only=True)
-                elif roll < 0.75:
-                    avail_c = [i for i in pool_chest if _spaced_ok(i.get("type"), t[0], t[1])]
-                    ci = rng.choice(avail_c) if avail_c else (rng.choice(pool_chest) if pool_chest else None)
-                    if not (ci and _place_one(objs, used, global_place, rng, st, "REWARD_PICKUP",
-                                              pool_art, t[0], t[1], ident=ci, cache=True,
-                                              bounds=bounds, interactive_only=True)):
-                        _place_one(objs, used, global_place, rng, st, "RESOURCE_PILE", pool_res,
-                                   t[0], t[1], cache=True, bounds=bounds, interactive_only=True)
-                    else:
-                        _register(ci, t[0], t[1])
-                else:
-                    avail_v = [i for i in pool_vis if _spaced_ok(i.get("type"), t[0], t[1])]
-                    vi = rng.choice(avail_v) if avail_v else (rng.choice(pool_vis) if pool_vis else None)
-                    if not (vi and _place_one(objs, used, global_place, rng, st,
-                                             vi.get("purpose", "BONUS_TEMP"), None,
-                                             t[0], t[1], ident=vi, cache=True, bounds=bounds,
-                                             interactive_only=True)):
-                        _place_one(objs, used, global_place, rng, st, "RESOURCE_PILE", pool_res,
-                                   t[0], t[1], cache=True, bounds=bounds, interactive_only=True)
-                    else:
-                        _register(vi, t[0], t[1])
-            if art_spot_u:
-                t = art_spot_u[0]
-                _place_one(objs, used, global_place, rng, st, "REWARD_PICKUP", pool_art,
-                           t[0], t[1], ident=ON.identity_of("avarnd1"), cache=True,
-                           bounds=bounds, interactive_only=True)
 
     return objs, len(blobs)
 
@@ -1144,7 +1119,9 @@ def place_loot_zones(zone_records, entrance_plan, objs_existing, seed=1, bounds=
                     if i.get("type") not in _LOOT_ART_EXCL_TYPES]
         pool_res = ON.gameplay_pool(terrain, "RESOURCE_PILE")
         # chest-type pickups: treasure chests, campfires — 'ava*' is the artifact namespace.
-        pool_chest = [i for i in pool_art if not i.get("animation", "").startswith("ava")]
+        # chest-type only: treasure chests, campfires — explicitly exclude artifacts so
+        # named artifacts with non-'ava' animations (e.g. 'avssword0') can't slip in here.
+        pool_chest = [i for i in pool_art if i.get("type") != "artifact"]
         # High-tier artifacts only (major + relic).
         arts_high = [(a, _LOOT_ART_W[a]) for a in ("avarnd3", "avarand") if a in _LOOT_ART_W]
         # Rare resources: mercury(1), sulfur(3), crystal(4), gems(5), gold(6) — no wood(0)/ore(2).

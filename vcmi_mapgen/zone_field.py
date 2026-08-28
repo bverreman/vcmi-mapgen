@@ -482,10 +482,13 @@ def find_pockets(reach, max_dim=POCKET_MAX_DIM, max_tiles=POCKET_MAX_TILES):
         nook itself: it sits INSIDE the guard's ZoC, so grabbing its loot forces the
         fight even though a hero can path to it).
 
-    Returns {mouth: frozenset(pocket_tiles)} where the mouth is the guard tile, deduped
-    so each distinct pocket keeps a single canonical mouth (best `mouth_key`). Distinct-
-    but-overlapping candidates for the same physical nook still come out as separate
-    entries — `pp_pickup._dedupe_pockets` blob-merges those."""
+    Returns {guard_tile: (frozenset(pocket_tiles), frozenset(mouth_tiles))} where the
+    guard_tile is the canonical ZoC-centre that seals the pocket, mouth_tiles is the
+    ≤2-tile entry cluster (ZoC-interior nook tiles ∪ first outside-ZoC layer adjacent
+    to the ZoC), and the dict is deduped so each distinct pocket keeps a single
+    canonical entry (best `mouth_key`). Distinct-but-overlapping candidates for the
+    same physical nook still come out as separate entries — `pp_pickup._dedupe_pockets`
+    blob-merges those."""
     best = {}
     for g in sorted(reach):
         # a guard in fully open ground seals nothing and touches no nook: without a
@@ -533,8 +536,8 @@ def find_pockets(reach, max_dim=POCKET_MAX_DIM, max_tiles=POCKET_MAX_TILES):
         comp = frozenset(pocket)
         key = mouth_key(reach, g, comp)
         if comp not in best or key < best[comp][0]:
-            best[comp] = (key, g)
-    return {mouth: comp for comp, (_k, mouth) in best.items()}
+            best[comp] = (key, g, frozenset(mouth))
+    return {g: (comp, mouth_fs) for comp, (_k, g, mouth_fs) in best.items()}
 
 
 def _zone_gates(ts, zones, zid):
