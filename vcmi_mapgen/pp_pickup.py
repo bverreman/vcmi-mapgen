@@ -652,8 +652,10 @@ def place_pocket_caches(zone_records, seed=1, bounds=None, border_guards=frozens
 
         if len(pocket) == 2:
             # 2-tile pocket: no guard, no artifact — resources + structures only.
+            # Use global_place (not global_reach8) so caches never land on already-placed
+            # gameplay footprints or their approach tiles.
             _pocket_fill(cache_spots, pool_res, pool_art, pool_chest, pool_vis, rng, st,
-                         ref, terrain, reach=global_reach8)
+                         ref, terrain, reach=global_place)
         else:
             # 3-14 tile pocket: guard at mouth tile + one artifact at deepest.
             n_fill = len(cache_spots) - 1  # one slot reserved for artifact
@@ -677,13 +679,14 @@ def place_pocket_caches(zone_records, seed=1, bounds=None, border_guards=frozens
             art_spot   = avail[-1:]  # deepest tile gets the artifact
             fill_spots = avail[:-1]
 
+            # Use global_place so fill and artifact never stack on top of gameplay objects.
             _pocket_fill(fill_spots, pool_res, pool_art, pool_chest, pool_vis, rng, st,
-                         ref, terrain, reach=global_reach8)
+                         ref, terrain, reach=global_place)
 
             # Artifact at the deepest tile — tier matches guard level.
             if art_spot:
                 t = art_spot[0]
-                _place_one(objs, used, global_reach8, rng, st, "REWARD_PICKUP", pool_art,
+                _place_one(objs, used, global_place, rng, st, "REWARD_PICKUP", pool_art,
                            t[0], t[1], ident=ON.identity_of(anim), cache=True, bounds=bounds,
                            interactive_only=True)
 
