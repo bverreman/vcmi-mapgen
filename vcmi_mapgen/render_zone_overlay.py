@@ -312,7 +312,7 @@ def _pocket_gradient_layer(img_size, passable, objs0, W, H, no_entrance=frozense
     gradient darkens near the ZoC entrance and lightens toward the deepest tile.
 
     `no_entrance` kept for API compatibility; unused in guard-centric approach."""
-    _MAX_SEALED = 64  # BFS cap per component; exceeding it means open world
+    _MAX_SEALED = 14  # BFS cap per component; pocket grammar max size
 
     # Per guard: find bounded passable region behind its ZoC
     regions = []

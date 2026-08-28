@@ -450,7 +450,7 @@ def _solo_visit_pool(terrain, exclude_anims=frozenset(), min_shrine_level=None):
     return pool
 
 
-def place_pocket_caches(zone_records, seed=1, bounds=None):
+def place_pocket_caches(zone_records, seed=1, bounds=None, border_guards=frozenset()):
     """Guarded caches in genuine geometric pockets — found in ONE global, zone-independent
     pass over the WHOLE map's TRUE physical passability, run once after every zone's
     terrain, vegetation and scatter is finalized. `zone_records` is a list of
@@ -620,9 +620,12 @@ def place_pocket_caches(zone_records, seed=1, bounds=None):
         if len(pocket) < 2 or len(pocket) > 14:
             continue
 
-        # 3+ tile pockets require a guard — skip if none could be placed.
+        # 3+ tile pockets require a guard — skip if none could be placed, unless the
+        # pocket mouth is already sealed by a border guard (which isn't in global_place).
         if len(pocket) > 2 and guard_tile is None:
-            continue
+            if ref_g not in border_guards:
+                continue
+            # border guard already seals this pocket — fill without placing a new guard
 
         # Reference point for distance-sorting (guard tile or ZoC-centre).
         ref = guard_tile if guard_tile is not None else ref_g
@@ -658,11 +661,13 @@ def place_pocket_caches(zone_records, seed=1, bounds=None):
             lvl = min(6, 1 + (est_val >= 4) + (est_val >= 7) + (est_val >= 10) + (est_val >= 13))
             anim = _ART_BY_LVL[lvl - 1]
 
-            gident = PG.rnd_monster(lvl + (1 if rng.random() < 0.25 else 0))
-            if not _place_one(objs, used, global_place, rng, st, "GUARD", None,
-                              guard_tile[0], guard_tile[1], ident=gident, bounds=bounds):
-                continue
-            placed_mouths.append(guard_tile)
+            if guard_tile is not None:
+                # Place a new guard at the pocket mouth.
+                gident = PG.rnd_monster(lvl + (1 if rng.random() < 0.25 else 0))
+                if not _place_one(objs, used, global_place, rng, st, "GUARD", None,
+                                  guard_tile[0], guard_tile[1], ident=gident, bounds=bounds):
+                    continue
+                placed_mouths.append(guard_tile)
 
             # Re-derive available spots after guard V cells enter `used`.
             avail = [t for t in cache_spots if t not in used]

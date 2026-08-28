@@ -760,7 +760,7 @@ def _run_level(level, W, H, grid, zones, player_zids, ledger, gstats, seed, has_
         zr["passable"] -= sealed
         zr["open_set"] -= sealed | guard_tiles
 
-    return objs, targets, zone_records, town_of_zone, has_water, nz, frozenset(ridge)
+    return objs, targets, zone_records, town_of_zone, has_water, nz, frozenset(ridge), frozenset(guard_tiles)
 
 
 def _blocking_cells(o):
@@ -797,7 +797,8 @@ def _land_tiles(zones):
 
 
 def _repair_and_finish_level(level, size, grid, objs, targets, zone_records, seed,
-                             boat_ok=True, ridge=frozenset(), seerhut_artifacts=None):
+                             boat_ok=True, ridge=frozenset(), seerhut_artifacts=None,
+                             border_guards=frozenset()):
     """G2 map-level gate + island repair + guarded pocket caches + dup-guard cleanup for ONE
     already-fully-populated level (gates included). MUST run before pocket detection
     (user-mandated: "the pocket detection should run after the map is fully crafted" — a
@@ -867,7 +868,8 @@ def _repair_and_finish_level(level, size, grid, objs, targets, zone_records, see
     # reachable field now that every zone's terrain/vegetation/scatter AND the map-level
     # repair passes above are finalized (user-mandated 2026-07-04 — see
     # pp_pickup.place_pocket_caches docstring for the rationale).
-    cobjs, n_pockets = PK.place_pocket_caches(zone_records, seed=seed, bounds=(size, size))
+    cobjs, n_pockets = PK.place_pocket_caches(zone_records, seed=seed, bounds=(size, size),
+                                               border_guards=border_guards)
     objs.extend(cobjs)
     targets.extend((o["x"], o["y"]) for o in cobjs)
     ck = collections.Counter(o["purpose"] for o in cobjs)
@@ -1314,7 +1316,7 @@ def build(seed=3, size=72, water=None, players=0, water_mode="normal", subterrai
     ledger = {"missing": set(PG.BASIC_MINE_RES), "towns": len(player_zids), "gold": 0}
 
     gstats0 = PG.mine_gameplay(level=0)
-    objs0, targets0, zone_records0, town_of_zone0, has_water0, nz0, ridge0 = _run_level(
+    objs0, targets0, zone_records0, town_of_zone0, has_water0, nz0, ridge0, border_guards0 = _run_level(
         0, W, H, grid0, zones0, zids_by_level[0], ledger, gstats0, seed, subterrain,
         gate_occ=gate_occ0, gate_blk=gate_blk0, gate_appr=gate_appr0)
     objs0.extend(gobjs0_pre)
@@ -1322,9 +1324,10 @@ def build(seed=3, size=72, water=None, players=0, water_mode="normal", subterrai
     objs1 = targets1 = zone_records1 = town_of_zone1 = None
     nz1 = 0
     ridge1 = frozenset()
+    border_guards1 = frozenset()
     if subterrain:
         gstats1 = PG.mine_gameplay(level=1)
-        objs1, targets1, zone_records1, town_of_zone1, _has_water1, nz1, ridge1 = _run_level(
+        objs1, targets1, zone_records1, town_of_zone1, _has_water1, nz1, ridge1, border_guards1 = _run_level(
             1, W, H, grid1, zones1, zids_by_level[1], ledger, gstats1, seed, subterrain,
             gate_occ=gate_occ1, gate_blk=gate_blk1, gate_appr=gate_appr1,
             tunnel_protect=frozenset(tunnel_protect))
@@ -1368,11 +1371,11 @@ def build(seed=3, size=72, water=None, players=0, water_mode="normal", subterrai
     seerhut_artifacts = set()
     objs0, ncarved0, nreconn0, nfilled0, npockets0, ndrop0 = _repair_and_finish_level(
         0, size, grid0, objs0, targets0, zone_records0, seed, ridge=ridge0,
-        seerhut_artifacts=seerhut_artifacts)
+        seerhut_artifacts=seerhut_artifacts, border_guards=border_guards0)
     if subterrain:
         objs1, ncarved1, nreconn1, nfilled1, npockets1, ndrop1 = _repair_and_finish_level(
             1, size, grid1, objs1, targets1, zone_records1, seed, boat_ok=False, ridge=ridge1,
-            seerhut_artifacts=seerhut_artifacts)
+            seerhut_artifacts=seerhut_artifacts, border_guards=border_guards1)
         # place_zone/pp_pickup/pp_sample always tag l=0 by default (level-agnostic helpers
         # called twice, not level-aware internally) — retag the whole underground level's
         # objects in this single post-pass. Gate objects already carry the right l (0/1)
