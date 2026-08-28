@@ -639,23 +639,29 @@ def seal_zone_borders(W, H, grid, zones, entrance_plan, objs, avoid, hard_avoid,
         for _r, b, _o in ents:
             bands |= set(b)
 
+    # non-band pairs: eligible for vegetation seal AND guard fallback
+    # band pairs: entrance corridors — skip vegetation seal, guard-only
     pairs = []
+    band_pairs = []
     for t in sorted(open_all):
         a = owner.get(t)
-        if a is None or t in bands or t in skip_tiles:
+        if a is None or t in skip_tiles:
             continue
         for dx, dy in ((1, 0), (0, 1), (1, 1), (1, -1)):    # each unordered pair once
             n = (t[0] + dx, t[1] + dy)
-            if n not in open_all or n in bands or n in skip_tiles:
+            if n not in open_all or n in skip_tiles:
                 continue
             b = owner.get(n)
             if b is not None and b != a:
-                pairs.append((t, n))
+                if t in bands or n in bands:
+                    band_pairs.append((t, n))
+                else:
+                    pairs.append((t, n))
 
     dead = set()                                     # no decor pool for its terrain
 
     def sealable(t):
-        return t not in avoid and t not in dead and t in owner
+        return t not in avoid and t not in dead and t in owner and t not in bands
 
     new_objs, sealed = [], set()
     while pairs:
@@ -682,13 +688,21 @@ def seal_zone_borders(W, H, grid, zones, entrance_plan, objs, avoid, hard_avoid,
         sealed.add(pick)
         pairs = [p for p in pairs if pick not in p]
 
+    # Collect existing gameplay guards from objs (placed by pp_gameplay) so the guard
+    # pass below avoids duplicating coverage already provided.
+    existing_guards = {(o["x"], o["y"]) for o in objs if o.get("purpose") == "GUARD"}
+
+    def _covered(t, n, g_set):
+        return any(max(abs(g[0] - t[0]), abs(g[1] - t[1])) <= 1
+                   or max(abs(g[0] - n[0]), abs(g[1] - n[1])) <= 1
+                   for g in g_set)
+
     # what must stay open gets contested instead: one hostile guard covers every residual
     # crossing within its Chebyshev-1 zone of control
     guard_tiles = set()
     unguarded = 0
     for t, n in pairs:
-        if any(max(abs(g[0] - t[0]), abs(g[1] - t[1])) <= 1
-               or max(abs(g[0] - n[0]), abs(g[1] - n[1])) <= 1 for g in guard_tiles):
+        if _covered(t, n, guard_tiles | existing_guards):
             continue
         cands = [c for c in sorted((t, n)) if c not in hard_avoid]
         if not cands:
@@ -704,6 +718,29 @@ def seal_zone_borders(W, H, grid, zones, entrance_plan, objs, avoid, hard_avoid,
                          "options": {"character": "hostile"},
                          "seal": True})               # informational: dup-guard cleanup must
         guard_tiles.add(g)                            # never drop it — it IS the border
+
+    # Band pairs (planned entrance corridors) were left open on purpose but every corridor
+    # must have at least one guard so the crossing requires a fight.  If pp_gameplay already
+    # placed a guard that covers the pair, skip it; otherwise add one now.
+    band_guard_tiles = set()
+    for t, n in band_pairs:
+        if _covered(t, n, guard_tiles | existing_guards | band_guard_tiles):
+            continue
+        cands = [c for c in sorted((t, n)) if c not in hard_avoid]
+        if not cands:
+            continue
+        g = cands[0]
+        gident = PG.rnd_monster(3 + (1 if rng.random() < 0.3 else 0))
+        new_objs.append({"x": g[0], "y": g[1], "l": 0, "purpose": "GUARD",
+                         "type": gident.get("type"), "subtype": gident.get("subtype"),
+                         "animation": gident["animation"], "mask": gident["mask"],
+                         "template": {"animation": gident["animation"],
+                                      "mask": gident["mask"]},
+                         "options": {"character": "hostile"},
+                         "seal": True})
+        band_guard_tiles.add(g)
+
+    guard_tiles |= band_guard_tiles
     return new_objs, sealed, guard_tiles, unguarded
 
 
