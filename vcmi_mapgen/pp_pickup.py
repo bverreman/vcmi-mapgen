@@ -1277,6 +1277,10 @@ def place_loot_zones(zone_records, entrance_plan, objs_existing, seed=1, bounds=
                              "subtype": gate_ident.get("subtype"),
                              "animation": gate_ident["animation"],
                              "mask": gate_ident["mask"],
+                             # Allow approach from all 8 directions so the gate is
+                             # visitable from the exterior (above the VVVV row), not
+                             # only from the interior side.
+                             "visitableFrom": ["+++", "+-+", "+++"],
                              "template": {"animation": gate_ident["animation"],
                                           "mask": gate_ident["mask"]}})
                 gate_tile = t
@@ -1284,12 +1288,28 @@ def place_loot_zones(zone_records, entrance_plan, objs_existing, seed=1, bounds=
             if gate_tile is None:
                 continue
 
-            # Verify seal leaves the gate's interactive tile with a passable interior neighbor.
-            # Exterior access is guaranteed (interactive tiles are boundary tiles by construction).
+            # Verify seal leaves the gate's interactive tile with both an interior
+            # neighbor (so loot is reachable) and at least one passable exterior
+            # neighbor (so the gate can be approached and activated from outside).
             sealed_boundary = passage_tiles - set(interactive)
             passable_after_seal = ts - sealed_boundary
             if not any((sk[0]+dx, sk[1]+dy) in passable_after_seal
                        for sk in interactive for dx, dy in _DIRS8):
+                continue
+            # Check exterior access: at least one non-loot-zone tile adjacent to
+            # the interactive cell must be passable (not occupied/blocked by objects).
+            ext_blocked = set()
+            for o in objs + objs_existing:
+                for cx, cy, blk in OR.mask_cells(o["mask"], o["x"], o["y"]):
+                    if blk:
+                        ext_blocked.add((cx, cy))
+            has_ext_access = any(
+                (sk[0]+dx, sk[1]+dy) not in ts and (sk[0]+dx, sk[1]+dy) not in ext_blocked
+                and 0 <= sk[0]+dx < (bounds[0] if bounds else 999)
+                and 0 <= sk[1]+dy < (bounds[1] if bounds else 999)
+                for sk in interactive for dx, dy in _DIRS8
+            )
+            if not has_ext_access:
                 continue
 
             _seal_all_passages(ts, open_set, used, terrain, rng,

@@ -95,7 +95,7 @@ def to_vmap(fm, out_path, name=None):
         n += 1
         tmpl = {"animation": o["animation"], "editorAnimation": "",
                 "mask": export_mask(o)}
-        vf = visitable_from(o["mask"])                # semantics from the INTERNAL mask
+        vf = o.get("visitableFrom") or visitable_from(o["mask"])  # explicit override wins
         if vf:
             tmpl["visitableFrom"] = vf
         vo = {
