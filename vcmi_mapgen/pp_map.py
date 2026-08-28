@@ -423,6 +423,180 @@ def _rim8(zones):
             if any(owner.get((t[0] + dx, t[1] + dy), zid) != zid for dx, dy in ZF.NB8)}
 
 
+_SEAPORT_ANIM = "avxshyd0"
+_SEAPORT_MASK = ["VVV", "VVV", "BXB"]
+_WATER_BODY_MIN = 30   # minimum water body size to require seaports
+
+
+def _ensure_water_seaports(W, H, grid, zones, objs, seed):
+    """Guarantee ≥1 shipyard per land zone bordering a water body ≥ _WATER_BODY_MIN tiles,
+    and ≥1 shipyard per island land zone ≥ _WATER_BODY_MIN tiles.
+
+    For a 'lake' (water body not touching map borders) this ensures each bordering zone has
+    a seaport — typically 1 zone = 1 seaport.  For 'open water' touching map borders, each
+    zone on opposite shores gets its own seaport (≥2 total).
+
+    Placement uses any anchor in the zone where the 3×3 shipyard fits with all 9 cells and
+    the approach tile in the zone, and no blocking-cell conflict with existing objects.
+
+    Returns list of new shipyard objects to append to `objs`."""
+    import random as _rnd
+
+    WATER, ROCK = 8, 9
+    NB4 = ((1, 0), (-1, 0), (0, 1), (0, -1))
+
+    water_tiles = {(x, y) for y in range(H) for x in range(W) if grid[y][x] == WATER}
+    if not water_tiles:
+        return []
+
+    # land tile → zone id
+    land_zone_of = {}
+    for zid, z in zones.items():
+        if ZE.TNAME.get(z["terrain_type"]) in (None, "water", "rock"):
+            continue
+        for t in z["tiles_set"]:
+            land_zone_of[t] = zid
+
+    # All blocking/interactive cells of existing objects
+    existing_blk = set()
+    for o in objs:
+        mask_rows = o.get("mask") or o.get("template", {}).get("mask", ["X"])
+        ax, ay = o["x"], o["y"]
+        hh = len(mask_rows)
+        for r, row in enumerate(mask_rows):
+            ww = len(row)
+            for ci, ch in enumerate(row):
+                if ch in ("B", "X", "A"):
+                    tx = ax - (ww - 1 - ci)
+                    ty = ay - (hh - 1 - r)
+                    existing_blk.add((tx, ty))
+
+    new_objs = []
+
+    def _seaport_footprint(ax, ay):
+        allc, blk, approach = [], [], None
+        hh = len(_SEAPORT_MASK)
+        for r, row in enumerate(_SEAPORT_MASK):
+            ww = len(row)
+            for ci, ch in enumerate(row):
+                tx = ax - (ww - 1 - ci)
+                ty = ay - (hh - 1 - r)
+                allc.append((tx, ty))
+                if ch in ("B", "X"):
+                    blk.append((tx, ty))
+                if ch == "X":
+                    approach = (tx, ty + 1)
+        return allc, blk, approach
+
+    def _try_place(ts_set, cand_tiles, label):
+        """Try to place a shipyard. cand_tiles = anchor candidates (coastal tiles first)."""
+        rng = _rnd.Random(seed ^ hash(label) ^ 0x53A9)
+        shuffled = list(cand_tiles)
+        rng.shuffle(shuffled)
+        for ax, ay in shuffled[:300]:   # cap to bound runtime
+            allc, blk, approach = _seaport_footprint(ax, ay)
+            if any(c not in ts_set for c in allc):
+                continue
+            if approach not in ts_set:
+                continue
+            if any(c in existing_blk for c in blk):
+                continue
+            existing_blk.update(blk)
+            o = {
+                "x": ax, "y": ay, "l": 0, "purpose": "WATER_TRANSPORT",
+                "type": "shipyard", "subtype": "object",
+                "animation": _SEAPORT_ANIM, "mask": _SEAPORT_MASK,
+                "template": {
+                    "animation": _SEAPORT_ANIM, "editorAnimation": "",
+                    "mask": _SEAPORT_MASK,
+                    "visitableFrom": ["+++", "+-+", "+++"],
+                },
+            }
+            new_objs.append(o)
+            return o
+        return None
+
+    def _zone_has_seaport(zid, ts_set):
+        """True if any existing or new seaport is in this zone's tile set."""
+        for o in objs + new_objs:
+            if o.get("type") != "shipyard":
+                continue
+            # seaport BXB row at y=o["y"]: cells o["x"]-2..o["x"]
+            ax, ay = o["x"], o["y"]
+            if any((ax - 2 + i, ay) in ts_set for i in range(3)):
+                return True
+        return False
+
+    def _place_for_zone(zid, z, label):
+        """Ensure zone zid has a seaport; use coastal tiles first then full ts."""
+        ts_set = set(z["tiles_set"])
+        if _zone_has_seaport(zid, ts_set):
+            return True
+        # Coastal = zone tiles with a water neighbor
+        coastal = [t for t in ts_set if any(
+            0 <= t[0]+dx < W and 0 <= t[1]+dy < H and grid[t[1]+dy][t[0]+dx] == WATER
+            for dx, dy in NB4)]
+        # Try coastal tiles first, then all zone tiles
+        cands = coastal + [t for t in ts_set if t not in set(coastal)]
+        o = _try_place(ts_set, cands, label)
+        if not o:
+            print(f"  WARNING: no seaport placed on zone {zid} "
+                  f"({ZE.TNAME.get(z['terrain_type'])}, {z['area']} tiles)")
+            return False
+        return True
+
+    # ── 1. Water-body guarantee: one seaport per bordering zone ───────────────
+    seen_w = set()
+    for t0 in sorted(water_tiles):
+        if t0 in seen_w:
+            continue
+        comp, q = {t0}, [t0]
+        while q:
+            x, y = q.pop()
+            for dx, dy in NB4:
+                n = (x + dx, y + dy)
+                if n in water_tiles and n not in comp:
+                    comp.add(n)
+                    q.append(n)
+        seen_w |= comp
+        if len(comp) < _WATER_BODY_MIN:
+            continue
+
+        # Find unique zones bordering this water body (by shore tile zone membership)
+        bordering_zids = set()
+        for wx, wy in comp:
+            for dx, dy in NB4:
+                t = (wx + dx, wy + dy)
+                zid = land_zone_of.get(t)
+                if zid is not None:
+                    bordering_zids.add(zid)
+
+        for zid in sorted(bordering_zids):
+            z = zones[zid]
+            if z["area"] < _WATER_BODY_MIN:
+                continue   # tiny border sliver — skip
+            _place_for_zone(zid, z, f"wb_{t0}_{zid}")
+
+    # ── 2. Island guarantee ───────────────────────────────────────────────────
+    for zid, z in sorted(zones.items()):
+        terrain = ZE.TNAME.get(z["terrain_type"])
+        if terrain in (None, "water", "rock") or z["area"] < _WATER_BODY_MIN:
+            continue
+        ts_set = set(z["tiles_set"])
+        is_island = all(
+            grid[ny][nx] in (WATER, ROCK)
+            for x, y in ts_set
+            for dx, dy in NB4
+            for nx, ny in [(x + dx, y + dy)]
+            if 0 <= nx < W and 0 <= ny < H and (nx, ny) not in ts_set
+        )
+        if not is_island:
+            continue
+        _place_for_zone(zid, z, f"island_{zid}")
+
+    return new_objs
+
+
 def seal_zone_borders(W, H, grid, zones, entrance_plan, objs, avoid, hard_avoid, seed, level,
                       skip_tiles=frozenset()):
     """Residual border-leak seal. The border bias (`pp_sample` BORDER_W) densifies zone
@@ -709,6 +883,13 @@ def _run_level(level, W, H, grid, zones, player_zids, ledger, gstats, seed, has_
               f"gameplay, {len(zobjs):>4} veg (blocked {len(blocked) / len(ts):.2f}/"
               f"{model['target']:.2f}), scatter res={pk.get('RESOURCE_PILE', 0)} "
               f"art={pk.get('REWARD_PICKUP', 0)}")
+
+    # Guarantee ≥1 shipyard per shore of each water body ≥ 30 tiles, and per island ≥ 30 tiles.
+    if level == 0:
+        ship_objs = _ensure_water_seaports(W, H, grid, zones, objs, seed)
+        if ship_objs:
+            objs.extend(ship_objs)
+            print(f"  L{level} seaport guarantee: {len(ship_objs)} shipyard(s) added")
 
     loot_objs, n_loot, _loot_zids = PK.place_loot_zones(
         zone_records, entrance_plan, objs, seed=seed, bounds=(W, H),
