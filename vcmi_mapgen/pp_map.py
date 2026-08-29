@@ -528,20 +528,32 @@ def _ensure_water_seaports(W, H, grid, zones, objs, seed):
         return False
 
     def _place_for_zone(zid, z, label):
-        """Ensure zone zid has a seaport; use coastal tiles first then full ts."""
+        """Ensure zone zid has a seaport; restrict to near-coastal tiles only."""
         ts_set = set(z["tiles_set"])
         if _zone_has_seaport(zid, ts_set):
             return True
-        # Coastal = zone tiles with a water neighbor
-        coastal = [t for t in ts_set if any(
+        # Coastal = zone tiles adjacent to water
+        coastal_set = {t for t in ts_set if any(
             0 <= t[0]+dx < W and 0 <= t[1]+dy < H and grid[t[1]+dy][t[0]+dx] == WATER
-            for dx, dy in NB4)]
-        # Try coastal tiles first, then all zone tiles
-        cands = coastal + [t for t in ts_set if t not in set(coastal)]
-        o = _try_place(ts_set, cands, label)
+            for dx, dy in NB4)}
+        if not coastal_set:
+            return False
+        # Expand 4 hops inland (still near-shore) so approach tile can be the
+        # coastal tile itself (needed for south-facing and west-facing coasts
+        # where the BXB anchor must sit 1-2 tiles back from the water edge,
+        # and for narrow zones that need a touch more clearance for the 3×3 footprint).
+        near_coastal = set(coastal_set)
+        for _ in range(4):
+            for t in list(near_coastal):
+                for dx, dy in NB4:
+                    nb = (t[0]+dx, t[1]+dy)
+                    if nb in ts_set:
+                        near_coastal.add(nb)
+        o = _try_place(ts_set, list(near_coastal), label)
         if not o:
             print(f"  WARNING: no seaport placed on zone {zid} "
-                  f"({ZE.TNAME.get(z['terrain_type'])}, {z['area']} tiles)")
+                  f"({ZE.TNAME.get(z['terrain_type'])}, {z['area']} tiles) — "
+                  f"no valid near-coastal anchor found")
             return False
         return True
 
