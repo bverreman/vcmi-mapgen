@@ -110,6 +110,13 @@ def _classify_objects(objs0):
             else:
                 struct_visit |= visit
                 struct_body  |= body
+        elif purpose == "WATER_TRANSPORT":
+            # Seaport: dark green for the X (visit) cell, green for blocking B cells
+            visit = set(OR.mask_interactive_cells(mask, ox, oy))
+            body = {(cx, cy) for cx, cy, blk in OR.mask_cells(mask, ox, oy)
+                    if blk and (cx, cy) not in visit}
+            struct_visit |= visit
+            struct_body  |= body
         elif not purpose or purpose == "DECORATION":
             for cx, cy, blk in OR.mask_cells(mask, ox, oy):
                 if blk:

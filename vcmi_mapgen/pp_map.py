@@ -538,12 +538,11 @@ def _ensure_water_seaports(W, H, grid, zones, objs, seed):
             for dx, dy in NB4)}
         if not coastal_set:
             return False
-        # Expand 4 hops inland (still near-shore) so approach tile can be the
-        # coastal tile itself (needed for south-facing and west-facing coasts
-        # where the BXB anchor must sit 1-2 tiles back from the water edge,
-        # and for narrow zones that need a touch more clearance for the 3×3 footprint).
+        # Expand 1 hop inland so the 3×3 footprint can anchor with its BXB bottom
+        # row immediately adjacent to the water edge — keeps seaports ≤1 tile
+        # from the shoreline.
         near_coastal = set(coastal_set)
-        for _ in range(4):
+        for _ in range(1):
             for t in list(near_coastal):
                 for dx, dy in NB4:
                     nb = (t[0]+dx, t[1]+dy)
@@ -824,6 +823,10 @@ def _run_level(level, W, H, grid, zones, player_zids, ledger, gstats, seed, has_
                 print(f"  sea  {wi:>3} water    {len(comp):>5} tiles: {len(wobjs):>3} sea objects")
             wi += 1
 
+    # ── Pass 1: L3 gameplay for all zones ─────────────────────────────────────
+    # Seaports are placed after all gameplay objects are known (so conflict
+    # detection is complete), but BEFORE vegetation so veg forbids their footprint.
+    zone_cache = {}   # zid → per-zone data needed for pass 2
     for zid, z in sorted(zones.items()):
         terrain = ZE.TNAME.get(z["terrain_type"])
         if terrain in (None, "water", "rock") or z["area"] < MIN_AREA:
@@ -860,9 +863,9 @@ def _run_level(level, W, H, grid, zones, player_zids, ledger, gstats, seed, has_
         # protected walkable web: backbone + gates + gameplay approaches, routed around the
         # IMPASSABLE gameplay cells (approach tiles themselves are passable and stay nodes)
         edist = ZF.edge_dist(ts)
-        cx, cy = z["centroid"]
-        seedt = min(ts, key=lambda t: (t[0] - int(round(cx))) ** 2
-                    + (t[1] - int(round(cy))) ** 2)
+        zcx, zcy = z["centroid"]
+        seedt = min(ts, key=lambda t: (t[0] - int(round(zcx))) ** 2
+                    + (t[1] - int(round(zcy))) ** 2)
         # the zone's 8-connected rim: every tile with an 8-neighbour in ANOTHER zone
         # (diagonal corner-cutting is a legal hero move, so diagonal-only contact leaks
         # like a front tile). The web routes off it, scatter skips it, the sampler's
@@ -875,6 +878,50 @@ def _run_level(level, W, H, grid, zones, player_zids, ledger, gstats, seed, has_
                                 open_frac=gstats[terrain].get("border_open_frac", 0.5),
                                 entrances=z_entr, keep_off=rim8)
         prot = prot | (tunnel_protect & ts)
+        zone_cache[zid] = dict(
+            terrain=terrain, ts=ts, ts_full=ts_full,
+            gobjs=gobjs, occupied=occupied, gblocked=gblocked, approaches=approaches,
+            z_entr=z_entr, prot=prot, rim8=rim8, ent_bands=ent_bands,
+        )
+
+    # ── Seaport placement: after all gameplay objects, before vegetation ────────
+    # Seaports are treated as gameplay objects: they block vegetation, their
+    # approach tile is added to targets, and their footprint is excluded from
+    # scatter open sets.  Placed here so the veg pass below can forbid their cells.
+    if level == 0:
+        ship_objs = _ensure_water_seaports(W, H, grid, zones, objs, seed)
+        if ship_objs:
+            objs.extend(ship_objs)
+            print(f"  L{level} seaport guarantee: {len(ship_objs)} shipyard(s) added")
+
+    # Seaport blocking cells + approach tile — exclude from vegetation in pass 2.
+    # The approach tile (one tile south of the X cell) must stay walkable so a
+    # hero can board the ship.
+    _seaport_blk = set()
+    _seaport_appr = set()
+    for _so in objs:
+        if _so.get("type") == "shipyard":
+            for _scx, _scy, _sblk in OR.mask_cells(_so["mask"], _so["x"], _so["y"]):
+                if _sblk:
+                    _seaport_blk.add((_scx, _scy))
+            _seaport_appr.add((_so["x"] - 1, _so["y"] + 1))
+
+    # ── Pass 2: L2 vegetation + L4a scatter for all zones ─────────────────────
+    for zid, z in sorted(zones.items()):
+        if zid not in zone_cache:
+            continue
+        c = zone_cache[zid]
+        terrain  = c["terrain"]
+        ts       = c["ts"]
+        ts_full  = c["ts_full"]
+        gobjs    = c["gobjs"]
+        occupied = c["occupied"]
+        gblocked = c["gblocked"]
+        approaches = c["approaches"]
+        z_entr   = c["z_entr"]
+        prot     = c["prot"]
+        rim8     = c["rim8"]
+        ent_bands = c["ent_bands"]
 
         # L2 vegetation: gameplay cells + approaches admit no vegetation at all; the
         # annulus around MINE footprints ATTRACTS vegetation (sawmills nestle in forest)
@@ -883,9 +930,11 @@ def _run_level(level, W, H, grid, zones, player_zids, ledger, gstats, seed, has_
         model = models[terrain]
         if not model["cats"]:
             continue
-        forbid = frozenset(occupied) | frozenset(approaches)
-        mine_cells = {(cx, cy) for o in gobjs if o.get("purpose") == "MINE"
-                      for cx, cy, blk in OR.mask_cells(o["mask"], o["x"], o["y"]) if blk}
+        # Seaport footprint in this zone must be excluded from vegetation
+        zone_seaport_cells = (_seaport_blk | _seaport_appr) & ts_full
+        forbid = frozenset(occupied) | frozenset(approaches) | zone_seaport_cells
+        mine_cells = {(mcx, mcy) for o in gobjs if o.get("purpose") == "MINE"
+                      for mcx, mcy, mblk in OR.mask_cells(o["mask"], o["x"], o["y"]) if mblk}
         attract = frozenset(
             t for t in ts if t not in forbid
             and 2 <= min(max(abs(t[0] - mx), abs(t[1] - my)) for mx, my in mine_cells) <= 3
@@ -905,7 +954,7 @@ def _run_level(level, W, H, grid, zones, player_zids, ledger, gstats, seed, has_
         # Guarded pocket caches are NOT placed per zone — see the global pass below, which
         # must run once the whole map's zones are done (a pocket's neck is only genuine when
         # judged against TRUE map-wide passability, not one zone's reach alone).
-        open_set = ts - blocked - gblocked - set(occupied) - set(approaches)
+        open_set = ts - blocked - gblocked - set(occupied) - set(approaches) - zone_seaport_cells
         # TRUE physical passability, for pocket GEOMETRY only: unlike `open_set` (placement
         # eligibility — excludes approach tiles and non-blocking occupied cells so new
         # objects can't stack on them), this only drops tiles that are actually impassable.
@@ -921,6 +970,8 @@ def _run_level(level, W, H, grid, zones, player_zids, ledger, gstats, seed, has_
         # every planned crossing must survive repair: its rep is a named G2 target, so
         # `g2_repair` verifies the entrance stayed connected once the level is finalized
         targets.extend(r for r, _b, _o in z_entr)
+        # Seaport approach tile must stay reachable (hero boards ship from there)
+        targets.extend(t for t in (_seaport_appr & ts_full))
         seal_avoid |= prot | forbid | sused | set(approaches)
         hard_avoid |= set(occupied) | sused | set(approaches)
         nz += 1
@@ -932,13 +983,6 @@ def _run_level(level, W, H, grid, zones, player_zids, ledger, gstats, seed, has_
               f"gameplay, {len(zobjs):>4} veg (blocked {len(blocked) / len(ts):.2f}/"
               f"{model['target']:.2f}), scatter res={pk.get('RESOURCE_PILE', 0)} "
               f"art={pk.get('REWARD_PICKUP', 0)}")
-
-    # Guarantee ≥1 shipyard per shore of each water body ≥ 30 tiles, and per island ≥ 30 tiles.
-    if level == 0:
-        ship_objs = _ensure_water_seaports(W, H, grid, zones, objs, seed)
-        if ship_objs:
-            objs.extend(ship_objs)
-            print(f"  L{level} seaport guarantee: {len(ship_objs)} shipyard(s) added")
 
     loot_objs, n_loot, _loot_zids = PK.place_loot_zones(
         zone_records, entrance_plan, objs, seed=seed, bounds=(W, H),
