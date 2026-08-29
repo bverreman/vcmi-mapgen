@@ -472,6 +472,8 @@ def _ensure_water_seaports(W, H, grid, zones, objs, seed):
                     existing_blk.add((tx, ty))
 
     new_objs = []
+    # Anchor positions of seaports already in objs (for 20-tile spacing constraint)
+    placed_anchors = [(o["x"], o["y"]) for o in objs if o.get("type") == "shipyard"]
 
     def _seaport_footprint(ax, ay):
         allc, blk, approach = [], [], None
@@ -488,20 +490,43 @@ def _ensure_water_seaports(W, H, grid, zones, objs, seed):
                     approach = (tx, ty + 1)
         return allc, blk, approach
 
-    def _try_place(ts_set, cand_tiles, label):
-        """Try to place a shipyard. cand_tiles = anchor candidates (coastal tiles first)."""
+    _SEAPORT_SPACING_SQ = 20 * 20  # minimum squared Euclidean distance between seaports
+
+    def _try_place(ts_set, cand_tiles, label, force=True):
+        """Try to place a shipyard. cand_tiles = anchor candidates (coastal tiles first).
+        Prefers positions ≥20 tiles from existing seaports; when force=True (required
+        placement) falls back to any valid position if no spaced candidate exists."""
         rng = _rnd.Random(seed ^ hash(label) ^ 0x53A9)
         shuffled = list(cand_tiles)
         rng.shuffle(shuffled)
-        for ax, ay in shuffled[:300]:   # cap to bound runtime
+        cap = shuffled[:300]
+
+        def _candidate_ok(ax, ay, check_spacing):
             allc, blk, approach = _seaport_footprint(ax, ay)
             if any(c not in ts_set for c in allc):
-                continue
+                return False
             if approach not in ts_set:
-                continue
+                return False
+            # Approach tile must not be occupied (dark-green X tile must be accessible)
+            if approach in existing_blk:
+                return False
             if any(c in existing_blk for c in blk):
-                continue
+                return False
+            # At least one BXB cell must be 4-adjacent to water
+            if not any((bx + dx, by + dy) in water_tiles
+                       for bx, by in blk for dx, dy in NB4):
+                return False
+            if check_spacing and any(
+                (ax - px) ** 2 + (ay - py) ** 2 < _SEAPORT_SPACING_SQ
+                for px, py in placed_anchors
+            ):
+                return False
+            return True
+
+        def _do_place(ax, ay):
+            _, blk, _ = _seaport_footprint(ax, ay)
             existing_blk.update(blk)
+            placed_anchors.append((ax, ay))
             o = {
                 "x": ax, "y": ay, "l": 0, "purpose": "WATER_TRANSPORT",
                 "type": "shipyard", "subtype": "object",
@@ -514,6 +539,14 @@ def _ensure_water_seaports(W, H, grid, zones, objs, seed):
             }
             new_objs.append(o)
             return o
+
+        for ax, ay in cap:
+            if _candidate_ok(ax, ay, check_spacing=True):
+                return _do_place(ax, ay)
+        if force:
+            for ax, ay in cap:
+                if _candidate_ok(ax, ay, check_spacing=False):
+                    return _do_place(ax, ay)
         return None
 
     def _zone_has_seaport(zid, ts_set):
