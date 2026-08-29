@@ -32,7 +32,20 @@ as an integer-only guarantee. This roadmap is the milestone view.
 | 6 | **Learned terrain generator** | Markov chain learned from the corpus (`markov_terrain`) | Done |
 | 7 | **Arbitrary-outline warp** | oriented-bbox / depth-sweep shape coordinate (beyond rectangular stretch) | Skipped — stretch sufficient for M8; revisit if shape-transfer quality becomes a bottleneck |
 | 8 | **Corpus-wide run** | batch extract + rebuild --identity --verify across all 159 maps; zone catalog with stats | Done — 159/159 OK, 2989 zones, 355 273 objects; `zone_engine corpus` |
-| 9 | **Bridge to generated terrain** | Markov terrain → segment → query catalog by terrain+area → stretch replay → emit .vmap | Future |
+| 9 | **PP-map generation pipeline** | `generate --layout pp` → playable `.vmap` with loot zones, pocket caches, guards, seaports, vegetation | In progress |
+
+### M9 progress
+
+`zone_engine generate --layout pp` produces a `.vmap` + zone-overlay PNG. Features landed:
+
+- **Loot zones** — interior sealed by blocking vegetation on all passable boundary tiles; no interior guards; strong exterior guard; filled with high-value treasures, artifacts, and level-3/4 shrines; accessible only from exterior zone via a single keyed gate.
+- **Pocket caches** — 2–14-tile concave pockets detected and filled; 2-tile pockets unguarded; ≥3-tile pockets get a guard + artifact; footprint overlap with gameplay objects prevented.
+- **Zone-border guards** — every zone-crossing passable tile blocked by a guard; guard footprints cleared of overhead vegetation.
+- **Seaports** — ≥1 placed per zone that borders a water body >30 tiles; restricted to ≤4 tiles from coastline and exactly 1 tile from shore; rendered in the overlay.
+- **Vegetation fill** — dense decoration fill with interactive-object priority for loot zones and pockets; wide-mouth and open-field pockets excluded from artifact drops.
+- **Zone overlay** — auto-rendered alongside plain PNG; build cached after first generate so re-renders are fast.
+
+Remaining for M9: mine distribution, hero start-zone tuning, batch verify across seeds.
 
 ## Standing constraints
 
