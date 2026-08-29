@@ -544,6 +544,7 @@ def main(seed=42, size=72, water_mode="normal", players=2):
         levels0 = _cache["level0"]
         objs0 = _cache["objs0"]
         base_img = Image.open(_plain_path).convert("RGB")
+        plain_path = _plain_path
         print(f"  (overlay-only — loaded from cache, skipping map build)")
     else:
         levels, surfs, objs, info, _ = pp_map.build(
