@@ -560,135 +560,23 @@ def _run_level(level, W, H, grid, zones, player_zids, ledger, gstats, seed, has_
     Returns (objs, targets, zone_records, town_of_zone, has_water, nz); every object still
     carries `l=0` (place_zone's/pp_pickup's own default) — `build()` retags the whole
     underground level's objects to `l=1` in one post-processing pass."""
-    models = {}
-    objs = []
     targets = []                                     # G2: tiles that must stay reachable
     nz = 0
     zone_records = []                                 # for the per-level pocket-cache pass
-    town_of_zone = {}
-
-    # map-level isolation plan: 1-2 aligned narrow crossings per adjacent zone pair,
-    # computed ONCE over all zones so both sides agree where the entrances are. Everything
-    # downstream keys off it: gameplay keeps footprints off the bands and guards the reps,
-    # the protected web keeps only the bands vegetation-free (not the legacy wide corpus-open
-    # share of the front), and the vegetation sampler actively densifies the rest of the
-    # border (`border=` bias) so zones read as isolated regions with a few real entrances.
-    # `seal_zone_borders` below then closes whatever aligned holes the statistics left.
-    entrance_plan = ZF.plan_entrances(zones)
     seal_avoid = set()                               # tiles the seal pass must leave veg-free
     hard_avoid = set()                               # tiles that can't even host a guard
-    ridge = set()                                    # all rim tiles minus entrance bands
-    rim_all = _rim8(zones)                           # 8-connected inter-zone rim, both sides
+    models = {}
 
-    has_water = False
-    water_tiles = {(x, y) for y in range(H) for x in range(W) if grid[y][x] == 8}
-    if level == 0:
-        # water is a segmentation BARRIER (never a zone) — populate its connected bodies
-        # directly: flotsam / sea chests / buoys / boats / whirlpools / wrecks / sea guards
-        water = water_tiles
-        has_water = bool(water)
-        seen_w = set()
-        wi = 0
-        for t0 in sorted(water):
-            if t0 in seen_w:
-                continue
-            comp, q = {t0}, [t0]
-            while q:
-                x, y = q.pop()
-                for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
-                    n = (x + dx, y + dy)
-                    if n in water and n not in comp:
-                        comp.add(n)
-                        q.append(n)
-            seen_w |= comp
-            if len(comp) >= MIN_AREA:
-                wobjs = PK.place_water(comp, zones, 1000 + wi, seed=seed)
-                objs.extend(wobjs)
-                print(f"  sea  {wi:>3} water    {len(comp):>5} tiles: {len(wobjs):>3} sea objects")
-            wi += 1
-
-    # ── Pass 1: L3 gameplay for all zones ─────────────────────────────────────
-    # Seaports are placed after all gameplay objects are known (so conflict
-    # detection is complete), but BEFORE vegetation so veg forbids their footprint.
-    zone_cache = {}   # zid → per-zone data needed for pass 2
-    for zid, z in sorted(zones.items()):
-        terrain = ZE.TNAME.get(z["terrain_type"])
-        if terrain in (None, "water", "rock") or z["area"] < MIN_AREA:
-            continue
-        ts_full = set(z["tiles_set"])
-        ts = ts_full
-        z_gate_occ = ts_full & gate_occ
-        z_gate_blk = ts_full & gate_blk
-        z_gate_appr = tuple(a for a in gate_appr if a in ts_full)
-        coastal = frozenset(t for t in ts
-                            for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1))
-                            if 0 <= t[0] + dx < W and 0 <= t[1] + dy < H
-                            and grid[t[1] + dy][t[0] + dx] == 8)
-
-        # L3 gameplay first: rigid objects at spread nodes (corpus densities, ontology pools)
-        # `avoid` keeps every footprint/approach off the corridor protect set — gameplay
-        # runs before `protected_web`, so without this a town/mine/monster could wall off
-        # a tunnel that vegetation-forbidding alone could never have touched.
-        z_entr = entrance_plan.get(zid, [])
-        gobjs, occupied, gblocked, approaches = PG.place_zone(
-            ts, zones, zid, terrain, seed=seed, coastal=coastal,
-            force_town=zid in player_zids, ledger=ledger, has_water=has_water,
-            level=level, has_subterrain=has_subterrain, avoid=tunnel_protect & ts,
-            preoccupied=z_gate_occ, preblocked=z_gate_blk, preapproaches=z_gate_appr,
-            entrances=z_entr)
-        objs.extend(gobjs)
-        if zid in player_zids:
-            t = next((o for o in gobjs if o.get("purpose") == "TOWN"), None)
-            if t is not None:
-                town_of_zone[zid] = t
-            else:
-                print(f"  WARNING: player zone {zid} (level {level}) could not fit its town")
-
-        # protected walkable web: backbone + gates + gameplay approaches, routed around the
-        # IMPASSABLE gameplay cells (approach tiles themselves are passable and stay nodes)
-        edist = ZF.edge_dist(ts)
-        zcx, zcy = z["centroid"]
-        seedt = min(ts, key=lambda t: (t[0] - int(round(zcx))) ** 2
-                    + (t[1] - int(round(zcy))) ** 2)
-        # the zone's 8-connected rim: every tile with an 8-neighbour in ANOTHER zone
-        # (diagonal corner-cutting is a legal hero move, so diagonal-only contact leaks
-        # like a front tile). The web routes off it, scatter skips it, the sampler's
-        # border bias targets it, and repair prices carving it at 400.
-        ent_bands = set().union(*(b for _r, b, _o in z_entr)) if z_entr else set()
-        rim8 = rim_all & ts
-        ridge |= rim8 - ent_bands
-        prot = PP.protected_web(ts, zones, zid, edist, seedt,
-                                extra_nodes=approaches, avoid=gblocked,
-                                open_frac=gstats[terrain].get("border_open_frac", 0.5),
-                                entrances=z_entr, keep_off=rim8)
-        prot = prot | (tunnel_protect & ts)
-        zone_cache[zid] = dict(
-            terrain=terrain, ts=ts, ts_full=ts_full,
-            gobjs=gobjs, occupied=occupied, gblocked=gblocked, approaches=approaches,
-            z_entr=z_entr, prot=prot, rim8=rim8, ent_bands=ent_bands,
-        )
-
-    # ── Seaport placement: after all gameplay objects, before vegetation ────────
-    # Seaports are treated as gameplay objects: they block vegetation, their
-    # approach tile is added to targets, and their footprint is excluded from
-    # scatter open sets.  Placed here so the veg pass below can forbid their cells.
-    if level == 0:
-        ship_objs = _ensure_water_seaports(W, H, grid, zones, objs, seed)
-        if ship_objs:
-            objs.extend(ship_objs)
-            print(f"  L{level} seaport guarantee: {len(ship_objs)} shipyard(s) added")
-
-    # Seaport blocking cells + approach tile — exclude from vegetation in pass 2.
-    # The approach tile (one tile south of the X cell) must stay walkable so a
-    # hero can board the ship.
-    _seaport_blk = set()
-    _seaport_appr = set()
-    for _so in objs:
-        if _so.get("type") == "shipyard":
-            for _scx, _scy, _sblk in OR.mask_cells(_so["mask"], _so["x"], _so["y"]):
-                if _sblk:
-                    _seaport_blk.add((_scx, _scy))
-            _seaport_appr.add((_so["x"] - 1, _so["y"] + 1))
+    # L3 gameplay (per-zone place_zone + protected web), water-body population, and the
+    # seaport guarantee — split out into steps/gameplay/step.py so both this legacy path and
+    # GameplayStep call the identical logic (pipeline-refactor-v2-folders.md, Phase 2).
+    from vcmi_mapgen.steps.gameplay.step import _run_level_gameplay
+    (objs, zone_cache, entrance_plan, has_water, town_of_zone, ridge,
+     _seaport_blk, _seaport_appr, water_tiles) = _run_level_gameplay(
+        level, W, H, grid, zones, player_zids, ledger, gstats, seed, has_subterrain,
+        gate_occ=gate_occ, gate_blk=gate_blk, gate_appr=gate_appr,
+        tunnel_protect=tunnel_protect,
+    )
 
     # ── Pass 2: L2 vegetation + L4a scatter for all zones ─────────────────────
     for zid, z in sorted(zones.items()):
@@ -1545,11 +1433,15 @@ def _pipeline_gen_one(seed, size, water=None, water_mode="normal", players=2,
                       teams_spec="ffa", vmap=True, install=False, tag="",
                       name=None, subterrain=False):
     """Generate one map using VcmiMapGenPipeline + renderers."""
-    from vcmi_mapgen.pipeline import VcmiMapGenPipeline
+    from vcmi_mapgen.pipeline import PlacementWorkspace, VcmiMapGenPipeline
     from vcmi_mapgen.steps import (TerrainGenStep, TileStep, SegmentStep,
                                    GateStep, GameplayStep, PickupStep,
                                    VegetationStep, RepairStep)
     from vcmi_mapgen.renderers import PngRenderer, VmapRenderer
+
+    # shared inter-step handoff object (Gameplay -> Vegetation -> Pickup -> Repair);
+    # see pipeline.PlacementWorkspace and pipeline-refactor-v2-folders.md
+    workspace = PlacementWorkspace()
 
     pipeline = VcmiMapGenPipeline(ontology=None)
     pipeline.add_step(TerrainGenStep(size=size, seed=seed, water=water,
@@ -1558,7 +1450,7 @@ def _pipeline_gen_one(seed, size, water=None, water_mode="normal", players=2,
     pipeline.add_step(SegmentStep())
     if subterrain:
         pipeline.add_step(GateStep(seed=seed))
-    pipeline.add_step(GameplayStep(seed=seed, players=players))
+    pipeline.add_step(GameplayStep(seed=seed, players=players, workspace=workspace))
     pipeline.add_step(PickupStep(seed=seed))
     pipeline.add_step(VegetationStep(seed=seed))
     pipeline.add_step(RepairStep(seed=seed))

@@ -77,9 +77,11 @@ class ZoneWorkspace:
     terrain: str = ""
     ts: frozenset = frozenset()          # set by GameplayStep
     ts_full: frozenset = frozenset()
+    gobjs: list = field(default_factory=list)
     occupied: frozenset = frozenset()
     gblocked: frozenset = frozenset()
     approaches: tuple = ()
+    entrances: list = field(default_factory=list)   # zone_field.plan_entrances entries
     prot: frozenset = frozenset()         # protected web
     rim8: frozenset = frozenset()
     ent_bands: frozenset = frozenset()
@@ -98,6 +100,9 @@ class LevelWorkspace:
     seal_avoid: set = field(default_factory=set)
     hard_avoid: set = field(default_factory=set)
     guard_tiles: frozenset = frozenset()
+    # seaport blocking/approach cells (set by GameplayStep) — vegetation must forbid them
+    seaport_blk: frozenset = frozenset()
+    seaport_appr: frozenset = frozenset()
 
 
 class PlacementWorkspace:
