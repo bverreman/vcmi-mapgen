@@ -31,19 +31,17 @@ import collections
 import colorsys
 import json
 import os
-import sys
+import pathlib
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-import obj_resolve as OR
-import pp_map
-import render_editor as RED
-import terrain_segment as TS
+from vcmi_mapgen import obj_resolve as OR
+from vcmi_mapgen import pp_map
+from vcmi_mapgen import render_editor as RED
+from vcmi_mapgen import terrain_segment as TS
 from PIL import Image, ImageDraw
 
 TILE = 32
 WATER, ROCK = 8, 9
-ROOT = os.path.join(os.path.dirname(__file__), "..")
+ROOT = pathlib.Path(__file__).parent.parent
 
 TNAME = {0: "dirt", 1: "sand", 2: "grass", 3: "snow", 4: "swamp",
          5: "rough", 6: "subterr", 7: "lava", 8: "water", 9: "rock"}

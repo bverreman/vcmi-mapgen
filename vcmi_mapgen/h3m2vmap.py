@@ -4,11 +4,11 @@ opened in the editor and confirmed faithful, then trusted as the reference.
 """
 
 import json, glob, os, sys, re, collections
+import pathlib
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import h3m, vcmi_ids, vmapwrite, vcmi_paths
+from vcmi_mapgen import h3m, vcmi_ids, vmapwrite, vcmi_paths
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = pathlib.Path(__file__).parent.parent
 
 TCODE = {
     0: "dt",
@@ -107,8 +107,7 @@ def convert(h3m_path, out_path):
     if _rmg:
         header, _, _, _ = vmapwrite.read_raw(_rmg[0])
     else:
-        _tpl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                            "data", "vmap_header_template.json")
+        _tpl = str(ROOT / "data" / "vmap_header_template.json")
         header = json.load(open(_tpl))
     for pid, pl in list(header.get("players", {}).items()):
         if isinstance(pl, dict):
@@ -132,5 +131,5 @@ if __name__ == "__main__":
         if len(sys.argv) > 1
         else os.path.join(vcmi_paths.vcmi_home(), "Maps", "Elbow Room.h3m")
     )
-    out = f"{ROOT}/out/REAL_{os.path.basename(src).replace('.h3m', '')}.vmap"
+    out = str(ROOT / "out" / f"REAL_{os.path.basename(src).replace('.h3m', '')}.vmap")
     convert(src, out)

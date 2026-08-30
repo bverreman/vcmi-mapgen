@@ -18,13 +18,12 @@ from __future__ import annotations
 
 import json
 import os
-import sys
+import pathlib
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import ontology as ON
+from vcmi_mapgen import ontology as ON
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_OBJLIB = json.load(open(os.path.join(ROOT, "data", "objlib.json")))
+ROOT = pathlib.Path(__file__).parent.parent
+_OBJLIB = json.load(open(str(ROOT / "data" / "objlib.json")))
 
 # Identity fields a faithful object carries that the .vmap writer needs.
 _IDENT_KEYS = ("type", "subtype", "animation", "mask")
@@ -35,7 +34,7 @@ _IDENT_KEYS = ("type", "subtype", "animation", "mask")
 # ---------------------------------------------------------------------------
 
 def faithful_path(name: str) -> str:
-    return os.path.join(ROOT, "maps_json", f"{name}.json")
+    return str(ROOT / "maps_json" / f"{name}.json")
 
 
 def load_faithful(name: str) -> dict:
@@ -44,7 +43,7 @@ def load_faithful(name: str) -> dict:
 
 
 def all_map_names() -> list[str]:
-    d = os.path.join(ROOT, "maps_json")
+    d = ROOT / "maps_json"
     return [os.path.splitext(f)[0] for f in sorted(os.listdir(d)) if f.endswith(".json")]
 
 

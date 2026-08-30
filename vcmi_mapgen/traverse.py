@@ -11,12 +11,11 @@ town and asserts every zone, every town and every mine is reachable. Wired into
 `ralph/verify.sh`, an unreachable map FAILS the gate.
 """
 
-import sys, os, json, collections
+import os, json, collections
+import pathlib
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-OBJ = json.load(open(f"{ROOT}/data/objlib.json"))
+ROOT = pathlib.Path(__file__).parent.parent
+OBJ = json.load(open(str(ROOT / "data" / "objlib.json")))
 TYPE2PURPOSE = {it["type"]: p for p, terr in OBJ.items() for items in terr.values() for it in items}
 WATER = 8
 ROCK = 9

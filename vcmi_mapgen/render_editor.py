@@ -13,9 +13,9 @@ Usage:
 import sys, os, struct, zlib, zipfile, re, json, argparse, collections
 from PIL import Image
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import vcmi_paths  # noqa: E402
+import pathlib
+ROOT = pathlib.Path(__file__).parent.parent
+from vcmi_mapgen import vcmi_paths
 
 LOD_DIR = os.path.join(vcmi_paths.vcmi_home(), "Data")
 LOD_FILES = ["H3sprite.lod", "H3ab_spr.lod", "H3bitmap.lod", "H3ab_bmp.lod"]
@@ -274,8 +274,7 @@ def read_vmap(path):
 def read_real(name):
     """Load from original .h3m file (full tile view/mirror data) + objects with animation."""
     h3m_path = f"{ROOT}/maps/{name}.h3m"
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    import h3m as H3M, faithful as FA
+    from vcmi_mapgen import h3m as H3M, faithful as FA
     hmap = H3M.parse_file(h3m_path)
     # build tile strings from the parsed Tile objects (terrain, view, mirror)
     surf = []

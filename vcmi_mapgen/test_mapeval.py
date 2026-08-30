@@ -5,11 +5,9 @@ reachability term, relational-pair completeness, and feature-vector stability. S
 bit-exact identity / render tests (untouched).
 """
 import os
-import sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import obj_resolve as OR
-import mapeval as ME
+from vcmi_mapgen import obj_resolve as OR
+from vcmi_mapgen import mapeval as ME
 
 GRASS = 2
 
@@ -82,7 +80,7 @@ def test_traverse_monolith_network():
     """Two-way monoliths of one subtype form a teleport network for the reachability
     walk — a rock-severed area counts as reachable iff BOTH ends exist (this is how
     pp_map rescues unreachable zones as guarded portal reward zones)."""
-    import traverse as TR
+    from vcmi_mapgen import traverse as TR
 
     def wall_fm(objects):
         fm = _fm(objects)
@@ -102,6 +100,6 @@ def test_traverse_monolith_network():
     assert lone["unreachable_mines"] == [(40, 40, 0)], \
         "a single monolith end must NOT teleport anywhere"
 
-    import mapeval as ME
+    from vcmi_mapgen import mapeval as ME
     assert ME.relational_complete(wall_fm([town, mine, near])) is False
     assert ME.relational_complete(wall_fm([town, mine, near, far])) is True

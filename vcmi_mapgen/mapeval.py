@@ -24,15 +24,14 @@ import collections
 import json
 import math
 import os
-import sys
+import pathlib
 
 import numpy as np
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import obj_resolve as OR
-import traverse as TR
+from vcmi_mapgen import obj_resolve as OR
+from vcmi_mapgen import traverse as TR
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = pathlib.Path(__file__).parent.parent
 WATER, ROCK = 8, 9
 MIN_AREA = 12                       # match generate_map's default min zone area
 LAND_TERRAINS = list(range(8))     # ids 0..7 are land; 8=water, 9=rock
@@ -50,7 +49,7 @@ RELATIONAL_SELF = ["monolithTwoWay"]   # ≥2 ends sharing the same subtype
 # Score weights (tunable — documented so the leaderboard is interpretable).
 W_REACH, W_DIST, W_BAL = 0.4, 0.4, 0.2
 _STD_FLOOR = 1e-6
-_CACHE_PATH = os.path.join(ROOT, "out", "corpus_features.json")
+_CACHE_PATH = str(ROOT / "out" / "corpus_features.json")
 _CORPUS = None                     # in-memory memo of (names, mean, std)
 
 
@@ -65,7 +64,7 @@ def _purpose(o):
 
 def _segment(level_grid):
     """zones, zone_label for one terrain level (lazy import avoids a cycle with zone_engine)."""
-    import terrain_segment as TS
+    from vcmi_mapgen import terrain_segment as TS
     return TS.segment(level_grid, subdivide=False)
 
 

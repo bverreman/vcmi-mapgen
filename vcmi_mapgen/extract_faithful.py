@@ -5,13 +5,14 @@ representation to <repo>/maps_json/<name>.json (object identity + exact mask +
 writer-ready terrain). Run: `uv run python -m vcmi_mapgen.extract_faithful`.
 """
 
-import glob, os, sys, re, json
+import glob, os, re, json
+import pathlib
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import h3m, vcmi_ids, h3m2vmap as HV
+from vcmi_mapgen import h3m, vcmi_ids
+from vcmi_mapgen import h3m2vmap as HV
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-OUT = f"{ROOT}/maps_json"
+ROOT = pathlib.Path(__file__).parent.parent
+OUT = str(ROOT / "maps_json")
 os.makedirs(OUT, exist_ok=True)
 maps = sorted(glob.glob(f"{ROOT}/maps/*.h3m"))
 ok = 0

@@ -3,12 +3,12 @@ the writer. A map is terrain (per-tile structured) + objects (authoritative ids 
 animation + mask). Anything in this shape round-trips to an editor-valid .vmap.
 """
 
-import json, re, glob, sys, os
+import json, re, glob, os
+import pathlib
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import vmapwrite
-import ontology
-import vcmi_paths
+from vcmi_mapgen import vmapwrite
+from vcmi_mapgen import ontology
+from vcmi_mapgen import vcmi_paths
 
 TCODE = {
     0: "dt",
@@ -129,15 +129,14 @@ def to_vmap(fm, out_path, name=None):
     if _rmg:
         header, _, _, _ = vmapwrite.read_raw(_rmg[0])
     else:
-        _tpl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                            "data", "vmap_header_template.json")
+        _tpl = str(pathlib.Path(__file__).parent.parent / "data" / "vmap_header_template.json")
         header = json.load(open(_tpl))
     # Wire EACH player slot to its own starting town so the map is actually playable.
     # VCMI links a player to a town via mainTown = town_anchor - (2,2) (verified against
     # the random-map template); the town object itself stays owner=None. Earlier we
     # only gave player 0 a town, leaving every other player town-less => not playable.
     # Surface towns first, then put the start town (fm["main_town"]) on player 0.
-    import traverse as TR
+    from vcmi_mapgen import traverse as TR
     towns = [o for o in fm["objects"] if TR.TYPE2PURPOSE.get(o.get("type")) == "TOWN"]
     towns.sort(key=lambda o: (o.get("l", 0), o["y"], o["x"]))
     mt = fm.get("main_town")

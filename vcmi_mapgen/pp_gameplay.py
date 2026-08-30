@@ -19,19 +19,18 @@ reachable through the protected web).
 import collections
 import json
 import os
-import sys
+import pathlib
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import obj_resolve as OR  # noqa: E402
-import ontology as ON  # noqa: E402
-import zone_engine as ZE  # noqa: E402
-import zone_field as ZF  # noqa: E402
+from vcmi_mapgen import obj_resolve as OR
+from vcmi_mapgen import ontology as ON
+from vcmi_mapgen import zone_engine as ZE
+from vcmi_mapgen import zone_field as ZF
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-STATS_PATH = os.path.join(ROOT, "data", "pp", "gameplay_stats.json")
-STATS_PATH_UNDERGROUND = os.path.join(ROOT, "data", "pp", "gameplay_stats_underground.json")
+ROOT = pathlib.Path(__file__).parent.parent
+STATS_PATH = str(ROOT / "data" / "pp" / "gameplay_stats.json")
+STATS_PATH_UNDERGROUND = str(ROOT / "data" / "pp" / "gameplay_stats_underground.json")
 STATS_VERSION = 5  # v5: border open fraction + full-front gate distances
-GATE_STATS_PATH = os.path.join(ROOT, "data", "pp", "gate_stats.json")
+GATE_STATS_PATH = str(ROOT / "data" / "pp" / "gate_stats.json")
 GATE_STATS_VERSION = 1
 MIN_AREA_STATS = 60
 TOWN_MIN_AREA = 150  # a town needs a real zone

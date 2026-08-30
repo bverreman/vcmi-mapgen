@@ -34,14 +34,15 @@ import sys
 
 import numpy as np
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import terrain_segment as TS
-import obj_resolve as OR
-import ontology as ON
-import faithful as FA
-import render as RD
+import pathlib
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+from vcmi_mapgen import terrain_segment as TS
+from vcmi_mapgen import obj_resolve as OR
+from vcmi_mapgen import ontology as ON
+from vcmi_mapgen import faithful as FA
+from vcmi_mapgen import render as RD
+
+ROOT = pathlib.Path(__file__).parent.parent
 
 # terrain code -> human name (for labels); water/rock never form a zone.
 TNAME = {0: "dirt", 1: "sand", 2: "grass", 3: "snow", 4: "swamp",
@@ -3290,7 +3291,7 @@ def _pick_main_town(objects, terrain, W, H):
     the start (markov terrain scatters zones across many water-separated islands; a start stranded
     on a 30-tile island reaches almost nothing). Returns ``{"x","y"}`` in the main_town convention
     (town anchor minus (2,2)), or None. Picks the town whose reachable passable land is biggest."""
-    import traverse as TR
+    from vcmi_mapgen import traverse as TR
     blocked, _W, _H = TR.passable_grid({"terrain": [terrain], "objects": objects}, 0)
     NB4 = [(1, 0), (-1, 0), (0, 1), (0, -1)]
     towns = [o for o in objects if o.get("l", 0) == 0 and TR.TYPE2PURPOSE.get(o.get("type")) == "TOWN"]
@@ -3372,7 +3373,7 @@ def generate_map(terrain, W, H, seed=0, min_area=12, name=None, grammar=None, pl
     # GLOBAL reachability: the dense per-zone obstacle fill can leave zones sealed from each other;
     # carve the minimal obstacle lines so every gameplay object sits in one connected open network.
     objects = _global_reachability_carve(objects, terrain, W, H, grow=not strict_terrain)
-    import traverse as TR
+    from vcmi_mapgen import traverse as TR
     n_towns = sum(1 for o in objects if TR.TYPE2PURPOSE.get(o.get("type")) == "TOWN")
     fm = {"name": name or f"Generated-s{seed}", "width": W, "height": H,
           "twoLevel": False, "players": max(1, n_towns), "terrain": [terrain],
@@ -3441,7 +3442,7 @@ def editor_render(vmap_path: str, out_path: str, compare_vmap: str | None = None
                   labels=("SOURCE (faithful)", "REBUILT")):
     """Realistic editor-sprite render. With compare_vmap, render both via the SAME
     read_vmap path (surface, object-identical => visually identical)."""
-    import render_editor as RE
+    from vcmi_mapgen import render_editor as RE
     from PIL import Image
     surf, objs = RE.read_vmap(vmap_path)
     gen = RE.render_map(surf, _paint_sort(objs), title=labels[1])
@@ -3465,7 +3466,7 @@ def render_fm(fm, out_path, title=""):
     using the same banded paint order as the patch panels so flat terrain overlays and
     stacked objects don't hide gameplay. Surface level only. Avoids the vmap round-trip
     (read_vmap drops purpose), so this is the correct render path for generated maps."""
-    import render_editor as RE
+    from vcmi_mapgen import render_editor as RE
     from PIL import Image, ImageDraw
     T = RE.TILE
     terr = fm["terrain"][0]
@@ -3497,7 +3498,7 @@ def render_fm(fm, out_path, title=""):
 def _render_panel(pan, title=None):
     """Render ONE zone panel (cropped to the zone) with REAL H3 sprites at editor
     resolution (32px), only the zone's own tiles, transparent elsewhere. RGBA."""
-    import render_editor as RE
+    from vcmi_mapgen import render_editor as RE
     from PIL import Image, ImageDraw
     T = RE.TILE  # 32
     terr, tiles, W, H = pan["terr"], pan["tiles"], pan["W"], pan["H"]
@@ -3804,7 +3805,7 @@ def cmd_render_ontology(args):
     """
     import csv
     import shutil
-    import render_editor as RE
+    from vcmi_mapgen import render_editor as RE
     import ontology as ON
 
     out_root = args.out or os.path.join(ROOT, "out", "ontology")
@@ -4140,7 +4141,7 @@ def _generate_one(kind, args, grammar):
 def cmd_generate(args):
     if args.layout == "pp":                          # marked-point-process pipeline (spec M6)
         import pp_map
-        import render_editor as RED
+        from vcmi_mapgen import render_editor as RED
         players = getattr(args, "players", 2)
         wmode = getattr(args, "water_mode", None) or ("none" if args.no_water else "normal")
         subterrain = getattr(args, "subterrain", False)
@@ -4169,7 +4170,7 @@ def cmd_generate(args):
                 teams = list(range(len(ptowns)))
             pp_map.apply_playability(vmap, ptowns, teams)
             print(f"  playable: {len(ptowns)} players, teams={teams}, victory=defeat-all")
-        import render_zone_overlay as RZO
+        from vcmi_mapgen import render_zone_overlay as RZO
         from PIL import Image, ImageDraw
         H0, W0 = len(levels[0]), len(levels[0][0])
         zone_fill, zone_border, draw_labels, _zones, zone_label = \

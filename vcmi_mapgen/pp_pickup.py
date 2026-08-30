@@ -20,13 +20,11 @@ Everything is deterministic in `seed`.
 """
 import collections
 import os
-import sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import obj_resolve as OR        # noqa: E402
-import ontology as ON           # noqa: E402
-import pp_gameplay as PG        # noqa: E402
-import zone_field as ZF         # noqa: E402
+from vcmi_mapgen import obj_resolve as OR
+from vcmi_mapgen import ontology as ON
+from vcmi_mapgen import pp_gameplay as PG
+from vcmi_mapgen import zone_field as ZF
 
 CAPS = {"RESOURCE_PILE": 16, "REWARD_PICKUP": 8}   # base floors; caps scale (scatter only --
                                 # pocket guards/caches are deterministic, see place_pickups)

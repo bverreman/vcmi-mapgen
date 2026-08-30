@@ -13,12 +13,10 @@ import argparse
 import collections
 import glob
 import os
-import sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import obj_resolve as OR        # noqa: E402
-import zone_engine as ZE        # noqa: E402
-import zone_skeleton as SK      # noqa: E402
+from vcmi_mapgen import obj_resolve as OR
+from vcmi_mapgen import zone_engine as ZE
+from vcmi_mapgen import zone_skeleton as SK
 
 R = 8          # cap on run-length feature
 EBINS = 6      # edge-distance bins (0..4, 5+)
@@ -832,11 +830,10 @@ def render_markov_sprites(seed=3, W=72, H=72, out=None, min_area=60,
     source of object identity; we only choose WHERE (blocked tiles) and pick among its native pool."""
     import random
     import collections as _C
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    import markov_terrain as MT
-    import ontology as ON
-    import obj_resolve as _OR
-    import render_editor as RED
+    from vcmi_mapgen import markov_terrain as MT
+    from vcmi_mapgen import ontology as ON
+    from vcmi_mapgen import obj_resolve as _OR
+    from vcmi_mapgen import render_editor as RED
 
     name2id = {v: k for k, v in ZE.TNAME.items()}
 

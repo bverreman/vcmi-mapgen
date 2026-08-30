@@ -12,11 +12,9 @@ whether real zones actually carve into sensible hub+pocket structure.
 import argparse
 import collections
 import os
-import sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import obj_resolve as OR        # noqa: E402
-import zone_engine as ZE        # noqa: E402
+from vcmi_mapgen import obj_resolve as OR
+from vcmi_mapgen import zone_engine as ZE
 
 WATER, ROCK = 8, 9
 NB4 = [(1, 0), (-1, 0), (0, 1), (0, -1)]

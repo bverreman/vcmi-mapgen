@@ -31,14 +31,12 @@ import argparse
 import collections
 import math
 import os
-import sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import obj_resolve as OR        # noqa: E402
-import ontology as ON           # noqa: E402
-import pp_stats as PS           # noqa: E402
-import zone_engine as ZE        # noqa: E402
-import zone_field as ZF         # noqa: E402
+from vcmi_mapgen import obj_resolve as OR
+from vcmi_mapgen import ontology as ON
+from vcmi_mapgen import pp_stats as PS
+from vcmi_mapgen import zone_engine as ZE
+from vcmi_mapgen import zone_field as ZF
 
 EBINS = PS.EBINS
 RINT = 2                        # local-interaction range (Chebyshev rings 0..RINT)

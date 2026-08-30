@@ -5,17 +5,14 @@ on a synthetic zone; sampling and macro generation are checked for determinism a
 acceptance gates. Tests needing the fitted corpus stats skip when data/pp is absent.
 """
 import os
-import sys
 
 import pytest
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import pp_stats as PS           # noqa: E402
+from vcmi_mapgen import pp_stats as PS
+from vcmi_mapgen import vcmi_paths
 
 HAVE_STATS = os.path.exists(os.path.join(PS.PP_DIR, "veg_grass.json"))
 needs_stats = pytest.mark.skipif(not HAVE_STATS, reason="data/pp stats not mined")
-
-import vcmi_paths  # noqa: E402
 
 RANDOMMAPS_GLOB = os.path.join(vcmi_paths.vcmi_home(), "Maps", "RandomMaps", "*.vmap")
 
@@ -45,7 +42,7 @@ def test_ring_offsets_partition_window():
 
 @needs_stats
 def test_model_and_sampler_deterministic():
-    import pp_sample as PP
+    from vcmi_mapgen import pp_sample as PP
     model = PP.build_model("grass")
     assert model["cats"], "grass model has categories"
     assert 0 < model["target"] < 1
@@ -57,7 +54,7 @@ def test_model_and_sampler_deterministic():
     assert a1 == a2 and b1 == b2, "same seed must reproduce bit-exactly"
     assert a1, "some vegetation sampled"
     # every mask comes from the ontology and coverage is sane
-    import ontology as ON
+    from vcmi_mapgen import ontology as ON
     for o in a1:
         assert ON.has_animation(o["template"]["animation"])
     assert 0.1 < len(b1) / len(ts) < 0.95
@@ -66,8 +63,8 @@ def test_model_and_sampler_deterministic():
 @needs_stats
 def test_protected_web_stays_open():
     """No blocking cell may land on the protected walkable web (the hard zero)."""
-    import obj_resolve as OR
-    import pp_sample as PP
+    from vcmi_mapgen import obj_resolve as OR
+    from vcmi_mapgen import pp_sample as PP
     model = PP.build_model("grass")
     ts = {(x, y) for x in range(20) for y in range(16)}
     zones = {1: {"tiles_set": sorted(ts), "centroid": (9.5, 7.5), "area": len(ts),
@@ -83,7 +80,7 @@ def test_protected_web_stays_open():
 
 @needs_stats
 def test_gameplay_layer_legal_and_deterministic():
-    import pp_gameplay as PG
+    from vcmi_mapgen import pp_gameplay as PG
     if not os.path.exists(PG.STATS_PATH):
         pytest.skip("gameplay stats not mined")
     ts = {(x, y) for x in range(30) for y in range(24)}
@@ -131,7 +128,7 @@ def test_gameplay_layer_legal_and_deterministic():
 
 def test_select_player_zones_far_apart():
     """Player zones must be big AND mutually far apart — never all clustered together."""
-    import pp_map as PM
+    from vcmi_mapgen import pp_map as PM
 
     def zone(zid, cx, cy, area):
         return {"tiles_set": [], "centroid": (cx, cy), "area": area, "terrain_type": 2}
@@ -157,7 +154,7 @@ def test_select_player_zones_far_apart():
 @needs_stats
 def test_forced_town_sits_on_zone_centroid():
     """A designated player zone gets its town ON the centroid (footprint-centered)."""
-    import pp_gameplay as PG
+    from vcmi_mapgen import pp_gameplay as PG
     if not os.path.exists(PG.STATS_PATH):
         pytest.skip("gameplay stats not mined")
     ts = {(x, y) for x in range(30) for y in range(24)}
@@ -180,8 +177,8 @@ def test_forced_town_sits_on_zone_centroid():
 
 @needs_stats
 def test_pickup_layer_legal_and_deterministic():
-    import pp_gameplay as PG
-    import pp_pickup as PK
+    from vcmi_mapgen import pp_gameplay as PG
+    from vcmi_mapgen import pp_pickup as PK
     if not os.path.exists(PG.STATS_PATH):
         pytest.skip("gameplay stats not mined")
     ts = {(x, y) for x in range(30) for y in range(24)}
@@ -194,7 +191,7 @@ def test_pickup_layer_legal_and_deterministic():
     o2 = PK.place_pickups(ts, zones, 1, "grass", open_set, prot, seed=6)
     assert o1 == o2, "pickup layer must be seed-deterministic"
     assert o1, "a 720-tile grass zone should hold pickups"
-    import obj_resolve as OR
+    from vcmi_mapgen import obj_resolve as OR
     used = set()
     for o in o1:
         if o["purpose"] == "GUARD":
@@ -222,8 +219,8 @@ def test_find_pockets_drawn_shapes():
     1-2 tile nook in a FLAT wall face has three entrance tiles, so the old single-tile
     test could never detect it (it only worked when the flanking walls happened to
     protrude past the face and block the diagonals)."""
-    import pp_pickup as PK
-    import zone_field as ZF
+    from vcmi_mapgen import pp_pickup as PK
+    from vcmi_mapgen import zone_field as ZF
 
     def best_mouths(reach, pocket_tiles):
         """canonical (deduped, ranked) mouth candidates whose pocket covers the nook"""
@@ -281,7 +278,7 @@ def test_find_pockets_drawn_shapes():
 
 def test_g2_repair_carves_vegetation_only():
     """A vegetation wall between two pickups gets carved; gameplay walls do not."""
-    import pp_map as PM
+    from vcmi_mapgen import pp_map as PM
     size = 12
     grid = [[2] * size for _ in range(size)]         # all grass
     veg_wall = [{"x": 6, "y": y, "l": 0, "type": "pineTrees", "subtype": "pineTrees",
@@ -311,9 +308,9 @@ def test_vmap_export_roundtrip():
     import zipfile
     if not glob.glob(RANDOMMAPS_GLOB):
         pytest.skip("VCMI template .vmap not available")
-    import ontology as ON
-    import pp_map as PM
-    import zone_engine as ZE
+    from vcmi_mapgen import ontology as ON
+    from vcmi_mapgen import pp_map as PM
+    from vcmi_mapgen import zone_engine as ZE
     grid = [[2] * 16 for _ in range(16)]
     cells = ZE.tile_terrain(grid, 16, 16)
     town = ON.gameplay_pool("grass", "TOWN")[0]
@@ -352,10 +349,10 @@ def test_vmap_export_game_contracts():
     import zipfile
     if not glob.glob(RANDOMMAPS_GLOB):
         pytest.skip("VCMI template .vmap not available")
-    import ontology as ON
-    import pp_gameplay as PG
-    import pp_map as PM
-    import zone_engine as ZE
+    from vcmi_mapgen import ontology as ON
+    from vcmi_mapgen import pp_gameplay as PG
+    from vcmi_mapgen import pp_map as PM
+    from vcmi_mapgen import zone_engine as ZE
     # orientation: internal footprint un-mirrored, export mask == the mask VCMI's own RMG
     # writes for the same sawmill sprite (ground truth from Maps/RandomMaps). mask_of is
     # windowed identically to vmap_mask_of (same V-padding) so a guard's approach tile always
@@ -409,7 +406,7 @@ def test_vmap_export_game_contracts():
 
 
 def test_parse_teams():
-    import pp_map as PM
+    from vcmi_mapgen import pp_map as PM
     assert PM.parse_teams("ffa", 3) == [0, 1, 2]
     assert PM.parse_teams("2v2", 4) == [0, 0, 1, 1]
     assert PM.parse_teams("1v3", 4) == [0, 1, 1, 1]
@@ -426,9 +423,9 @@ def test_playability_overlay():
     import zipfile
     if not glob.glob(RANDOMMAPS_GLOB):
         pytest.skip("VCMI template .vmap not available")
-    import ontology as ON
-    import pp_map as PM
-    import zone_engine as ZE
+    from vcmi_mapgen import ontology as ON
+    from vcmi_mapgen import pp_map as PM
+    from vcmi_mapgen import zone_engine as ZE
     grid = [[2] * 24 for _ in range(24)]
     cells = ZE.tile_terrain(grid, 24, 24)
     town = ON.gameplay_pool("grass", "TOWN")[0]
@@ -472,9 +469,9 @@ def test_playability_overlay_alliance_grouping():
     import zipfile
     if not glob.glob(RANDOMMAPS_GLOB):
         pytest.skip("VCMI template .vmap not available")
-    import ontology as ON
-    import pp_map as PM
-    import zone_engine as ZE
+    from vcmi_mapgen import ontology as ON
+    from vcmi_mapgen import pp_map as PM
+    from vcmi_mapgen import zone_engine as ZE
     grid = [[2] * 24 for _ in range(24)]
     cells = ZE.tile_terrain(grid, 24, 24)
     town = ON.gameplay_pool("grass", "TOWN")[0]
@@ -503,9 +500,9 @@ def test_playability_overlay_random_town_shows_random_in_lobby():
     import zipfile
     if not glob.glob(RANDOMMAPS_GLOB):
         pytest.skip("VCMI template .vmap not available")
-    import pp_gameplay as PG
-    import pp_map as PM
-    import zone_engine as ZE
+    from vcmi_mapgen import pp_gameplay as PG
+    from vcmi_mapgen import pp_map as PM
+    from vcmi_mapgen import zone_engine as ZE
     rnd = PG.ON.identity_of(PG.RND_TOWN)
     grid = [[2] * 24 for _ in range(24)]
     cells = ZE.tile_terrain(grid, 24, 24)
@@ -532,7 +529,7 @@ def test_playability_overlay_random_town_shows_random_in_lobby():
 def test_zone_gate_bands_wide_and_protected():
     """Zone gates are corpus-wide BANDS of the contact front, and the protected web keeps
     the whole band vegetation-free — borders must never collapse to a 1-tile corridor."""
-    import zone_field as ZF
+    from vcmi_mapgen import zone_field as ZF
     # two 12x10 zones side by side: the contact front is the full 10-tile column
     ts1 = {(x, y) for x in range(12) for y in range(10)}
     ts2 = {(x, y) for x in range(12, 24) for y in range(10)}
@@ -556,8 +553,8 @@ def test_zone_gate_bands_wide_and_protected():
 
 @needs_stats
 def test_protected_web_covers_gate_bands():
-    import pp_sample as PP
-    import zone_field as ZF
+    from vcmi_mapgen import pp_sample as PP
+    from vcmi_mapgen import zone_field as ZF
     ts1 = {(x, y) for x in range(14) for y in range(12)}
     ts2 = {(x, y) for x in range(14, 28) for y in range(12)}
     zones = {1: {"tiles_set": sorted(ts1), "centroid": (6.5, 5.5), "area": 168,
@@ -573,7 +570,7 @@ def test_protected_web_covers_gate_bands():
 @needs_stats
 def test_town_zone_gets_wood_and_ore_next_to_town():
     """A zone with a town ALWAYS holds a sawmill + ore pit, anchored near the town."""
-    import pp_gameplay as PG
+    from vcmi_mapgen import pp_gameplay as PG
     if not os.path.exists(PG.STATS_PATH):
         pytest.skip("gameplay stats not mined")
     ts = {(x, y) for x in range(30) for y in range(24)}
@@ -596,7 +593,7 @@ def test_town_zone_gets_wood_and_ore_next_to_town():
 def test_mine_ledger_covers_basics_and_rations_gold():
     """The map-level ledger drives zones to cover all six basic resources and blocks gold
     mines until the map holds several towns."""
-    import pp_gameplay as PG
+    from vcmi_mapgen import pp_gameplay as PG
     if not os.path.exists(PG.STATS_PATH):
         pytest.skip("gameplay stats not mined")
     ts = {(x, y) for x in range(40) for y in range(30)}
@@ -623,7 +620,7 @@ def test_mine_ledger_covers_basics_and_rations_gold():
 def test_banks_placed_on_land_and_legal():
     """Creature banks (utopias, conservatories, crypts...) place on land like visitables:
     full footprint in-zone, approach standable, no extra approach guard."""
-    import pp_gameplay as PG
+    from vcmi_mapgen import pp_gameplay as PG
     if not os.path.exists(PG.STATS_PATH):
         pytest.skip("gameplay stats not mined")
     ts = {(x, y) for x in range(45) for y in range(40)}
@@ -644,8 +641,8 @@ def test_banks_placed_on_land_and_legal():
 def test_scatter_rewards_are_mostly_loot():
     """Unguarded reward scatter favours the fixed LOOT pool (treasure chests dominate the
     corpus mix) over random artifacts, and a real zone always yields some loot."""
-    import pp_gameplay as PG
-    import pp_pickup as PK
+    from vcmi_mapgen import pp_gameplay as PG
+    from vcmi_mapgen import pp_pickup as PK
     if not os.path.exists(PG.STATS_PATH):
         pytest.skip("gameplay stats not mined")
     ts = {(x, y) for x in range(30) for y in range(24)}
@@ -672,7 +669,7 @@ def test_mine_sprites_match_terrain():
     """Mine DEFs carry a baked-in terrain apron; placed mines must use variants the corpus
     actually uses on that terrain (no dirt-apron gold mine on grass)."""
     import json
-    import pp_gameplay as PG
+    from vcmi_mapgen import pp_gameplay as PG
     if not os.path.exists(PG.STATS_PATH):
         pytest.skip("gameplay stats not mined")
     st = json.load(open(PG.STATS_PATH))
@@ -695,7 +692,7 @@ def test_audit_variety_green():
     """Every corpus (purpose, animation) on land must be reachable through the generator
     (identity via the ontology, placement via a pool) — the acceptance check for corpus
     visitable variety."""
-    import pp_gameplay as PG
+    from vcmi_mapgen import pp_gameplay as PG
     if not os.path.exists(PG.STATS_PATH):
         pytest.skip("gameplay stats not mined")
     gaps = PG.audit_variety()
@@ -703,7 +700,7 @@ def test_audit_variety_green():
 
 
 def test_macro_generate_deterministic_and_coarse():
-    import macro_topo as MT
+    from vcmi_mapgen import macro_topo as MT
     g1 = MT.generate(48, 48, seed=1)
     g2 = MT.generate(48, 48, seed=1)
     assert g1 == g2, "macro terrain must be seed-deterministic"
@@ -716,7 +713,7 @@ def test_despeckle_absorbs_tiny_zones():
     """Shape-aware sliver rule: a terrain patch (= future zone) survives despeckle only when
     it has >4 tiles or is a compact 2x2 square; narrow 4-tile shapes and anything smaller are
     absorbed into the dominant LAND neighbour (water/rock only when no land borders it)."""
-    import zone_engine as ZE
+    from vcmi_mapgen import zone_engine as ZE
 
     GRASS, DIRT, WATER = 2, 0, 8
     W, H = 24, 14
@@ -775,7 +772,7 @@ def test_despeckle_absorbs_tiny_zones():
 def test_plan_entrances_aligned_and_few():
     """Entrance plan: 1 crossing for a short front, 2 for a long one, both sides' bands
     aligned (4-adjacent across the border), <=ENTRANCE_W tiles per side, deterministic."""
-    import zone_field as ZF
+    from vcmi_mapgen import zone_field as ZF
 
     # short front: two 12x10 zones -> exactly ONE entrance for the pair
     ts1 = {(x, y) for x in range(12) for y in range(10)}
@@ -814,8 +811,8 @@ def test_border_bias_densifies_front():
     """Zone isolation: with BOTH zones sampling under the `border=` bias, the only aligned
     open crossings left between them are the planned entrance band — each single side is
     only a partial ridge (Geyer saturation caps clumping), but the seal is 2-thick."""
-    import pp_sample as PP
-    import zone_field as ZF
+    from vcmi_mapgen import pp_sample as PP
+    from vcmi_mapgen import zone_field as ZF
 
     ts1 = {(x, y) for x in range(14) for y in range(12)}
     ts2 = {(x, y) for x in range(14, 28) for y in range(12)}
@@ -862,8 +859,8 @@ def test_border_bias_densifies_front():
 def test_entrance_guard_single_side():
     """With an entrance plan, only the LOWER zid of a pair emits the crossing guard, and it
     sits on the planned rep/band (a genuine chokepoint), not on a random pocket mouth."""
-    import pp_gameplay as PG
-    import zone_field as ZF
+    from vcmi_mapgen import pp_gameplay as PG
+    from vcmi_mapgen import zone_field as ZF
 
     ts1 = {(x, y) for x in range(14) for y in range(12)}
     ts2 = {(x, y) for x in range(14, 28) for y in range(12)}
@@ -894,9 +891,9 @@ def test_portal_reward_zone():
     pair bridges it (far end inside, near end in the reachable host zone with a hostile
     guard adjacent), cache-tagged loot fills it, traverse counts it reachable, and
     fill_open_islands no longer buries it in decoration."""
-    import pp_map as PM
-    import traverse as TR
-    import mapeval as ME
+    from vcmi_mapgen import pp_map as PM
+    from vcmi_mapgen import traverse as TR
+    from vcmi_mapgen import mapeval as ME
 
     S = 40
     GRASS, ROCK = 2, 9
@@ -966,8 +963,8 @@ def test_seal_zone_borders_closes_or_guards():
     """Every cross-zone 8-adjacent open crossing outside the planned entrance bands is
     either SEALED with a blocking decoration or contested by a back-path GUARD's zone of
     control — an unguardable-and-unsealable free crossing must not survive."""
-    import pp_map as PM
-    import zone_field as ZF
+    from vcmi_mapgen import pp_map as PM
+    from vcmi_mapgen import zone_field as ZF
 
     S, GRASS = 20, 2
     grid = [[GRASS] * S for _ in range(S)]

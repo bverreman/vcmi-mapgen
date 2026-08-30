@@ -5,12 +5,12 @@ in raster order with back-off. This reproduces the real LOCAL texture (patch siz
 coastlines, how terrains border each other) instead of arbitrary noise blobs.
 """
 
-import json, glob, random, collections, sys, os
+import json, glob, random, collections, os
+import pathlib
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import render
+from vcmi_mapgen import render
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = pathlib.Path(__file__).parent.parent
 
 
 def learn(level_index):

@@ -20,22 +20,21 @@ Pipeline:  macro_topo.generate (capacity-constrained zones, textured borders)
 import argparse
 import collections
 import os
-import sys
+import pathlib
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import faithful as FA           # noqa: E402
-import macro_topo as MTOPO      # noqa: E402
-import obj_resolve as OR        # noqa: E402
-import ontology as ON           # noqa: E402
-import pp_gameplay as PG        # noqa: E402
-import pp_pickup as PK          # noqa: E402
-import pp_sample as PP          # noqa: E402
-import terrain_segment as TSG   # noqa: E402
-import vcmi_paths as VPATH      # noqa: E402
-import zone_engine as ZE        # noqa: E402
-import zone_field as ZF         # noqa: E402
+from vcmi_mapgen import faithful as FA
+from vcmi_mapgen import macro_topo as MTOPO
+from vcmi_mapgen import obj_resolve as OR
+from vcmi_mapgen import ontology as ON
+from vcmi_mapgen import pp_gameplay as PG
+from vcmi_mapgen import pp_pickup as PK
+from vcmi_mapgen import pp_sample as PP
+from vcmi_mapgen import terrain_segment as TSG
+from vcmi_mapgen import vcmi_paths as VPATH
+from vcmi_mapgen import zone_engine as ZE
+from vcmi_mapgen import zone_field as ZF
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = pathlib.Path(__file__).parent.parent
 MIN_AREA = 25          # vegetate even smallish zones (the stats floor stays 60 in pp_stats)
 
 
@@ -50,7 +49,7 @@ def g2_repair(size, grid, objs, targets, costly=frozenset()):
     through the isolation ridge (still carvable as a last resort — repair never fails).
     Returns (objs, removed_count)."""
     import heapq
-    import obj_resolve as OR
+    from vcmi_mapgen import obj_resolve as OR
     W = H = size
     land = {(x, y) for y in range(H) for x in range(W) if grid[y][x] < 8}
 
@@ -1754,7 +1753,7 @@ def gen_one(seed, size, water=None, water_mode="normal", players=2, teams_spec="
                                               players=players, water_mode=water_mode,
                                               subterrain=subterrain)
     print(info)
-    import render_editor as RED
+    from vcmi_mapgen import render_editor as RED
     stem = f"ppmap_s{seed}{tag}"
     png = os.path.join(ROOT, "out", "render", "pp", f"{stem}.png")
     os.makedirs(os.path.dirname(png), exist_ok=True)

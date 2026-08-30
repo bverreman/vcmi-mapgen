@@ -27,15 +27,14 @@ import heapq
 import json
 import math
 import os
+import pathlib
 import random
-import sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import zone_engine as ZE        # noqa: E402
+from vcmi_mapgen import zone_engine as ZE
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-STATS_PATH = os.path.join(ROOT, "data", "pp", "macro_stats.json")
-STATS_PATH_UNDERGROUND = os.path.join(ROOT, "data", "pp", "macro_stats_underground.json")
+ROOT = pathlib.Path(__file__).parent.parent
+STATS_PATH = str(ROOT / "data" / "pp" / "macro_stats.json")
+STATS_PATH_UNDERGROUND = str(ROOT / "data" / "pp" / "macro_stats_underground.json")
 WATER, ROCK = 8, 9
 MIN_ZONE_AREA = 40              # floor for sampled target areas
 JITTER = 1.4                    # growth-cost noise amplitude (0 = pure Voronoi-like fronts)
@@ -52,7 +51,7 @@ def mine_macro(level=0, force=False):
     maps — real underground zone areas/adjacency/barrier fraction are statistically distinct
     from the surface (rock, not subterr, is the dominant barrier terrain there; see corpus
     histograms in the design notes), so it is never derived from or blended with level-0 stats."""
-    import obj_resolve as OR
+    from vcmi_mapgen import obj_resolve as OR
     path = STATS_PATH if level == 0 else STATS_PATH_UNDERGROUND
     if not force and os.path.exists(path):
         return json.load(open(path))
@@ -312,7 +311,7 @@ def _texture_boundaries(grid, rng, sweeps=3, level=0, protect=frozenset()):
     cells (e.g. underground tunnel corridors, which are thin enough to sit entirely inside
     the band on both sides) are excluded from resampling so a rock-heavy corpus conditional
     can't erode a load-bearing connection back into barrier."""
-    import markov_terrain as MT
+    from vcmi_mapgen import markov_terrain as MT
     H = len(grid); W = len(grid[0])
     M4 = MT.learn4(level)
     M = MT.learn(level)
@@ -437,10 +436,10 @@ def main():
           f"median {barrier_name} frac {st['barrier_fracs'][len(st['barrier_fracs']) // 2]:.2f}")
     grid = generate(args.size, args.size, seed=args.seed, water=args.water, level=args.level)
     print("generated:", report(grid))
-    import render as RND
+    from vcmi_mapgen import render as RND
     lvl = [[{"t": t, "river": False, "road": False} for t in row] for row in grid]
     img = RND.render_level(lvl, [], args.size, args.size)
-    out = os.path.join(ROOT, "out", "render", "pp", f"macro_s{args.seed}.png")
+    out = str(ROOT / "out" / "render" / "pp" / f"macro_s{args.seed}.png")
     os.makedirs(os.path.dirname(out), exist_ok=True)
     img.save(out)
     print("->", out)

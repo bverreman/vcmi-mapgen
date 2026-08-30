@@ -6,11 +6,10 @@ PURPOSE. Decoration is drawn faintly so the gameplay skeleton stands out -- this
 a STRUCTURAL view for comparing 'does this look human', not an art-faithful render.
 """
 
-import json, sys, os
+import json, os
 from PIL import Image, ImageDraw
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import ontology as ON
+from vcmi_mapgen import ontology as ON
 
 TILE = 9  # px per map tile
 
