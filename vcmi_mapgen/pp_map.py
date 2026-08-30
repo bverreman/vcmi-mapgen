@@ -1789,6 +1789,53 @@ def gen_one(seed, size, water=None, water_mode="normal", players=2, teams_spec="
     return png, vp
 
 
+def _pipeline_gen_one(seed, size, water=None, water_mode="normal", players=2,
+                      teams_spec="ffa", vmap=True, install=False, tag="",
+                      name=None, subterrain=False):
+    """Generate one map using VcmiMapGenPipeline + renderers."""
+    from vcmi_mapgen.pipeline import VcmiMapGenPipeline
+    from vcmi_mapgen.steps import (TerrainGenStep, TileStep, SegmentStep,
+                                   GateStep, GameplayStep, PickupStep,
+                                   VegetationStep, RepairStep)
+    from vcmi_mapgen.renderers import PngRenderer, VmapRenderer
+
+    pipeline = VcmiMapGenPipeline(ontology=None)
+    pipeline.add_step(TerrainGenStep(size=size, seed=seed, water=water,
+                                     water_mode=water_mode, subterrain=subterrain))
+    pipeline.add_step(TileStep())
+    pipeline.add_step(SegmentStep())
+    if subterrain:
+        pipeline.add_step(GateStep(seed=seed))
+    pipeline.add_step(GameplayStep(seed=seed, players=players))
+    pipeline.add_step(PickupStep(seed=seed))
+    pipeline.add_step(VegetationStep(seed=seed))
+    pipeline.add_step(RepairStep(seed=seed))
+    state = pipeline.run()
+
+    stem = f"ppmap_s{seed}{tag}"
+    png_renderer = PngRenderer()
+    png = png_renderer.save(state, f"{stem}.png", level=0)
+    print("->", png)
+    if subterrain:
+        png1 = png_renderer.save(state, f"{stem}_L1.png", level=1)
+        print("->", png1)
+
+    if not vmap:
+        return png, None
+
+    label = f"{name}{tag}" if name else f"pp {stem} {water_mode} {players}p"
+    vmap_renderer = VmapRenderer()
+    vp = vmap_renderer.render(state, f"{stem}.vmap", name=label,
+                              teams_spec=teams_spec)
+    if install:
+        import shutil
+        os.makedirs(VCMI_MAPS_DIR, exist_ok=True)
+        shutil.copy2(vp, os.path.join(VCMI_MAPS_DIR, os.path.basename(vp)))
+        print(f"   installed -> {VCMI_MAPS_DIR}/{os.path.basename(vp)}")
+    print("->", vp)
+    return png, vp
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--seed", type=int, default=3)
@@ -1816,7 +1863,11 @@ def main():
     ap.add_argument("--subterrain", action="store_true",
                     help="add a second, underground level connected to the surface by "
                          "Subterranean Gate pairs (classic-sparse scope, corpus-mined stats)")
+    ap.add_argument("--use-pipeline", action="store_true",
+                    help="use VcmiMapGenPipeline instead of the legacy build() function")
     args = ap.parse_args()
+
+    gen_fn = _pipeline_gen_one if args.use_pipeline else gen_one
 
     if args.batch:
         modes = [args.water_mode] if args.water_mode else ["normal", "islands", "none"]
@@ -1824,15 +1875,15 @@ def main():
             seed = args.seed + i
             mode = modes[i % len(modes)]
             print(f"=== batch {i + 1}/{args.batch}: seed={seed} water={mode} ===")
-            gen_one(seed, args.size, water=args.water, water_mode=mode,
-                    players=args.players, teams_spec=args.teams, vmap=True,
-                    install=args.install, tag=f"_{mode}", name=args.name,
-                    subterrain=args.subterrain)
+            gen_fn(seed, args.size, water=args.water, water_mode=mode,
+                   players=args.players, teams_spec=args.teams, vmap=True,
+                   install=args.install, tag=f"_{mode}", name=args.name,
+                   subterrain=args.subterrain)
         return
-    gen_one(args.seed, args.size, water=args.water,
-            water_mode=args.water_mode or "normal", players=args.players,
-            teams_spec=args.teams, vmap=args.vmap or args.install, install=args.install,
-            name=args.name, subterrain=args.subterrain)
+    gen_fn(args.seed, args.size, water=args.water,
+           water_mode=args.water_mode or "normal", players=args.players,
+           teams_spec=args.teams, vmap=args.vmap or args.install, install=args.install,
+           name=args.name, subterrain=args.subterrain)
 
 
 if __name__ == "__main__":

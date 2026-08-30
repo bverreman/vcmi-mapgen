@@ -4140,7 +4140,7 @@ def _generate_one(kind, args, grammar):
 
 def cmd_generate(args):
     if args.layout == "pp":                          # marked-point-process pipeline (spec M6)
-        import pp_map
+        from vcmi_mapgen import pp_map
         from vcmi_mapgen import render_editor as RED
         players = getattr(args, "players", 2)
         wmode = getattr(args, "water_mode", None) or ("none" if args.no_water else "normal")
