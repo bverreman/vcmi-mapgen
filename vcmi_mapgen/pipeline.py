@@ -59,6 +59,11 @@ class MapState:
     # --- cross-step economy tracking ---
     ledger: dict = field(default_factory=dict)
 
+    # --- untyped bag for step-specific inter-step handoff data ---
+    # Steps may store implementation-specific data here (e.g. ridge, border_guards)
+    # to pass it to a downstream step without coupling MapState to that step pair.
+    extras: dict = field(default_factory=dict)
+
     # --- diagnostic messages appended by steps ---
     log: list = field(default_factory=list)
 
