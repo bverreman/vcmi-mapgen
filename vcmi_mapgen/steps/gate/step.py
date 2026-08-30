@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from vcmi_mapgen.pipeline import MapState, PipelineStep
-from vcmi_mapgen import pp_gameplay as PG
+from vcmi_mapgen.steps.gate import gates as PG
 
 
 def _land_tiles(zones):
