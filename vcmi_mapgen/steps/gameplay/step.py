@@ -179,13 +179,11 @@ class GameplayStep(PipelineStep):
 
     Writes: ``state.objs`` (all levels, underground tagged ``l=1``),
             ``state.targets``, ``state.zone_records`` (empty per level — populated by
-            VegetationStep/PickupStep in later phases), ``state.player_zids``,
-            ``state.player_towns``, ``state.ledger``, and ``self.workspace.levels[level]``
-            (a ``LevelWorkspace`` with a ``ZoneWorkspace`` per zone).
-
-    Stores in ``state.extras``: ``"gameplay.ridge"`` and ``"gameplay.town_of_zone"`` for
-    RepairStep's still-legacy consumption (``"gameplay.border_guards"`` is not available
-    until RepairStep's own border-seal pass runs — Phase 5).
+            VegetationStep/PickupStep), ``state.player_zids``, ``state.player_towns``,
+            ``state.ledger``, and ``self.workspace.levels[level]`` (a ``LevelWorkspace``
+            with a ``ZoneWorkspace`` per zone, ``ridge``, and ``town_of_zone`` for
+            RepairStep — ``guard_tiles``/``seal_avoid``/``hard_avoid`` come from later
+            steps' own border-seal pass, not from here).
     """
 
     def __init__(self, seed: int = 3, players: int = 0,
@@ -264,7 +262,7 @@ class GameplayStep(PipelineStep):
                 self.workspace.levels[level] = LevelWorkspace(
                     zones=zone_workspaces, entrance_plan=entrance_plan, ridge=ridge,
                     seaport_blk=seaport_blk, seaport_appr=seaport_appr,
-                    water_tiles=water_tiles,
+                    water_tiles=water_tiles, town_of_zone=town_of_zone,
                 )
 
         state.objs = all_objs
@@ -272,12 +270,6 @@ class GameplayStep(PipelineStep):
         state.zone_records = {level: [] for level in state.grids}
         state.player_zids = player_zids
         state.ledger = ledger
-
-        # store inter-step handoff data for RepairStep (until Phase 5 moves it to the
-        # workspace); border_guards isn't known yet — border sealing hasn't run.
-        state.extras["gameplay.ridge"] = all_ridge
-        state.extras["gameplay.border_guards"] = {level: frozenset() for level in state.grids}
-        state.extras["gameplay.town_of_zone"] = all_town_of_zone
 
         # resolve player towns from town_of_zone
         player_towns = []

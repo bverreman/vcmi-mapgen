@@ -104,6 +104,7 @@ class LevelWorkspace:
     seaport_blk: frozenset = frozenset()
     seaport_appr: frozenset = frozenset()
     water_tiles: frozenset = frozenset()   # set by GameplayStep — needed by place_loot_zones
+    town_of_zone: dict = field(default_factory=dict)   # set by GameplayStep — zid -> town obj
 
 
 class PlacementWorkspace:
