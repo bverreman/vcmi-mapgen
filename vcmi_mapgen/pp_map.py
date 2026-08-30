@@ -26,7 +26,7 @@ from vcmi_mapgen import obj_resolve as OR
 from vcmi_mapgen import ontology as ON
 from vcmi_mapgen import pp_gameplay as PG
 from vcmi_mapgen import pp_pickup as PK
-from vcmi_mapgen import pp_sample as PP
+from vcmi_mapgen.steps.vegetation import sample as PP
 from vcmi_mapgen import terrain_segment as TSG
 from vcmi_mapgen import vcmi_paths as VPATH
 from vcmi_mapgen import zone_engine as ZE
@@ -1452,7 +1452,7 @@ def _pipeline_gen_one(seed, size, water=None, water_mode="normal", players=2,
         pipeline.add_step(GateStep(seed=seed))
     pipeline.add_step(GameplayStep(seed=seed, players=players, workspace=workspace))
     pipeline.add_step(PickupStep(seed=seed))
-    pipeline.add_step(VegetationStep(seed=seed))
+    pipeline.add_step(VegetationStep(seed=seed, workspace=workspace))
     pipeline.add_step(RepairStep(seed=seed))
     state = pipeline.run()
 

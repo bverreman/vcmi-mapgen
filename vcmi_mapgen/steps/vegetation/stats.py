@@ -16,7 +16,7 @@ Categories are the ontology's decoration types (`veg_categories`); water feature
 (`zone_engine.EXCLUDE_DECOR_TYPES`) are dropped everywhere. Cached per terrain in
 ``data/pp/veg_<terrain>.json``.
 
-    uv run python -m vcmi_mapgen.pp_stats --report grass
+    uv run python -m vcmi_mapgen.steps.vegetation.stats --report grass
 """
 import argparse
 import collections

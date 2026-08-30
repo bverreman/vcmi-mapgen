@@ -25,7 +25,7 @@ Samples a zone's decoration configuration from the Gibbs marked point process fi
 The blocked mask is EMERGENT (union of sampled footprints) — run-length stats become the
 validation metric, per the M1 experiment:
 
-    uv run python -m vcmi_mapgen.pp_sample --map "All for One" --zone 11
+    uv run python -m vcmi_mapgen.steps.vegetation.sample --map "All for One" --zone 11
 """
 import argparse
 import collections
@@ -34,7 +34,7 @@ import os
 
 from vcmi_mapgen import obj_resolve as OR
 from vcmi_mapgen import ontology as ON
-from vcmi_mapgen import pp_stats as PS
+from vcmi_mapgen.steps.vegetation import stats as PS
 from vcmi_mapgen import zone_engine as ZE
 from vcmi_mapgen import zone_field as ZF
 

@@ -8,7 +8,7 @@ import os
 
 import pytest
 
-from vcmi_mapgen import pp_stats as PS
+from vcmi_mapgen.steps.vegetation import stats as PS
 from vcmi_mapgen import vcmi_paths
 
 HAVE_STATS = os.path.exists(os.path.join(PS.PP_DIR, "veg_grass.json"))
@@ -42,7 +42,7 @@ def test_ring_offsets_partition_window():
 
 @needs_stats
 def test_model_and_sampler_deterministic():
-    from vcmi_mapgen import pp_sample as PP
+    from vcmi_mapgen.steps.vegetation import sample as PP
     model = PP.build_model("grass")
     assert model["cats"], "grass model has categories"
     assert 0 < model["target"] < 1
@@ -64,7 +64,7 @@ def test_model_and_sampler_deterministic():
 def test_protected_web_stays_open():
     """No blocking cell may land on the protected walkable web (the hard zero)."""
     from vcmi_mapgen import obj_resolve as OR
-    from vcmi_mapgen import pp_sample as PP
+    from vcmi_mapgen.steps.vegetation import sample as PP
     model = PP.build_model("grass")
     ts = {(x, y) for x in range(20) for y in range(16)}
     zones = {1: {"tiles_set": sorted(ts), "centroid": (9.5, 7.5), "area": len(ts),
@@ -553,7 +553,7 @@ def test_zone_gate_bands_wide_and_protected():
 
 @needs_stats
 def test_protected_web_covers_gate_bands():
-    from vcmi_mapgen import pp_sample as PP
+    from vcmi_mapgen.steps.vegetation import sample as PP
     from vcmi_mapgen import zone_field as ZF
     ts1 = {(x, y) for x in range(14) for y in range(12)}
     ts2 = {(x, y) for x in range(14, 28) for y in range(12)}
@@ -811,7 +811,7 @@ def test_border_bias_densifies_front():
     """Zone isolation: with BOTH zones sampling under the `border=` bias, the only aligned
     open crossings left between them are the planned entrance band — each single side is
     only a partial ridge (Geyer saturation caps clumping), but the seal is 2-thick."""
-    from vcmi_mapgen import pp_sample as PP
+    from vcmi_mapgen.steps.vegetation import sample as PP
     from vcmi_mapgen import zone_field as ZF
 
     ts1 = {(x, y) for x in range(14) for y in range(12)}

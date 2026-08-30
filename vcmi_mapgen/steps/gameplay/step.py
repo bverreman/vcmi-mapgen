@@ -4,7 +4,7 @@ from __future__ import annotations
 import collections
 
 from vcmi_mapgen import obj_resolve as OR
-from vcmi_mapgen import pp_sample as PP  # protected_web — moves to steps/vegetation in Phase 3
+from vcmi_mapgen.steps.vegetation import sample as PP  # protected_web
 from vcmi_mapgen import zone_engine as ZE
 from vcmi_mapgen import zone_field as ZF
 from vcmi_mapgen.pipeline import LevelWorkspace, MapState, PipelineStep, PlacementWorkspace, ZoneWorkspace
