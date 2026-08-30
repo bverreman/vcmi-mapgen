@@ -67,9 +67,19 @@ def _parse_teams(spec: str, n: int) -> list[int]:
 
 
 def _apply_playability(vmap_path: str, player_towns: list, teams: list[int]) -> None:
-    """Write player slots, team assignments, and victory condition into the .vmap."""
+    """Deterministic playability overlay on an exported .vmap:
+
+      1. exactly len(player_towns) playable slots, slot i wired to its designated town
+         (any faction allowed — the towns are usually randomTown) — AND the town OBJECT
+         itself gets `options.owner = <player>` (the header's mainTown alone does NOT
+         assign ownership; without the owner the town stays neutral),
+      2. the team matrix (`teams[i]` = team id of player i; VCMI allies equal ids),
+      3. victory = DEFEAT ALL (the canonical standardWin triggered event; standardDefeat =
+         7 days without town), any special victory conditions stripped.
+    """
     import json
     import zipfile
+    from collections import defaultdict
 
     with zipfile.ZipFile(vmap_path) as z:
         files = {n: z.read(n) for n in z.namelist()}
@@ -87,37 +97,62 @@ def _apply_playability(vmap_path: str, player_towns: list, teams: list[int]) -> 
             pl["canPlay"] = "PlayerOrAI"
             pl["team"] = int(teams[i])
             if t.get("type") == "town":
+                # concrete start town (spare-neutral top-up): the lobby must not offer
+                # factions the map cannot honour — restrict to the authored one, exactly
+                # like VCMI's own RMG maps do
                 pl["allowedFactions"] = {"anyOf": [f"core:{t['subtype']}"]}
                 pl.pop("randomFaction", None)
             else:
+                # randomTown start: any faction; VCMI resolves the OWNED random town to
+                # the lobby pick (CGTownInstance::randomizeFaction). PlayerInfo::defaultCastle()
+                # only returns RANDOM when isFactionRandom is set — an absent/permissive
+                # allowedFactions alone still defaults the lobby dropdown to the first
+                # faction (Castle) sorted by id. Field name from MapFormatJson.cpp's
+                # serializePlayerInfo: handler.serializeBool("randomFaction", ...).
                 pl.pop("allowedFactions", None)
                 pl["randomFaction"] = True
-            for vo in vobjs:
+            for vo in vobjs:                         # ownership lives on the town object
                 if (vo["x"] == t["x"] and vo["y"] == t["y"]
                         and vo.get("l", 0) == t.get("l", 0)
                         and vo.get("type") in ("town", "randomTown")):
                     vo.setdefault("options", {})["owner"] = pid
                     break
         else:
-            pl["canPlay"] = "AIOnly"
-            pl.pop("mainTown", None)
+            pl["mainTown"] = None
+            pl["canPlay"] = "false"
+            pl.pop("team", None)
+    # VCMI's lobby/map-select screen reads alliances from this top-level grouping —
+    # not from each player's individual "team" int above — so it must be set for
+    # the UI to show teams at all. Real VCMI RMG maps omit the key entirely for FFA.
+    groups = defaultdict(list)
+    for i, pid in enumerate(pids[:len(player_towns)]):
+        groups[int(teams[i])].append(pid)
+    allied = [members for members in groups.values() if len(members) > 1]
+    if allied:
+        h["teams"] = allied
+    else:
+        h.pop("teams", None)
+    files["objects.json"] = json.dumps(vobjs, indent=1).encode()
+    MSG = {"exactStrings": None, "localStrings": None, "message": [2], "numbers": None}
+    h["triggeredEvents"] = {
+        "standardVictory": {
+            "condition": ["standardWin", {"type": "", "value": -1}],
+            "effect": {"messageToSend": {"exactStrings": None, "localStrings": None,
+                                         "message": None, "numbers": None,
+                                         "stringsTextID": None}, "type": "victory"},
+            "message": dict(MSG, stringsTextID=["core.genrltxt.659"])},
+        "standardDefeat": {
+            "condition": ["daysWithoutTown", {"type": "", "value": 7}],
+            "effect": {"messageToSend": {"exactStrings": None, "localStrings": None,
+                                         "message": None, "numbers": None,
+                                         "stringsTextID": None}, "type": "defeat"},
+            "message": dict(MSG, stringsTextID=["core.genrltxt.7"])}}
+    h["victoryIconIndex"] = 11                       # "defeat all enemies"
+    h["victoryMessage"] = dict(MSG, stringsTextID=["core.vcdesc.0"])
+    h["defeatIconIndex"] = 3
+    h["defeatMessage"] = dict(MSG, stringsTextID=["core.lcdesc.0"])
+    files["header.json"] = json.dumps(h, indent=1).encode()
 
-    # strip special victory conditions; keep standardWin / standardDefeat
-    h.pop("triggeredEvents", None)
-    h["victoryIconIndex"] = 11
-    h["victoryMessage"] = ""
-    h["defeatIconIndex"] = 0
-    h["defeatMessage"] = ""
-
-    import io
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zout:
+    with zipfile.ZipFile(vmap_path, "w", zipfile.ZIP_DEFLATED) as zo:
         for name, data in files.items():
-            if name == "header.json":
-                zout.writestr(name, json.dumps(h, indent=2))
-            elif name == "objects.json":
-                zout.writestr(name, json.dumps(vobjs, indent=2))
-            else:
-                zout.writestr(name, data)
-    with open(vmap_path, "wb") as f:
-        f.write(buf.getvalue())
+            zo.writestr(name, data)
