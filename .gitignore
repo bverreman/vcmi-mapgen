@@ -10,6 +10,10 @@ __pycache__/
 .ruff_cache/
 .venv
 
-/.agents/*
-!/.agents/agents.mk
-!/.agents/flavors/
+.agents/runs/
+.agents/worktrees/
+.agents/workflows/
+.agents/operator/
+.agents/local.compose.yaml
+.agents/agents-context.json
+.agents/agents-context.*.json

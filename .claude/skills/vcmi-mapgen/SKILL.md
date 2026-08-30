@@ -6,6 +6,7 @@ metadata:
   source: library/skills/projects/vcmi-mapgen/vcmi-mapgen/SKILL.md
   resolve: "farrier source .claude/skills/vcmi-mapgen/SKILL.md"
   do_not_edit: "generated — run the `resolve` command below for this machine's editable source path, edit that, then `make agent-install` to regenerate"
+  tags: [python, backend, standards, entrypoint]
 ---
 
 # VCMI map-generator — repository root

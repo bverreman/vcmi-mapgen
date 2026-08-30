@@ -4,6 +4,8 @@ repo:
   name: vcmi-mapgen
 agents:
   claude: true
+includes:
+  - python
 # No packs — this repo's selections are all direct (packs are for bundles
 # reused by ≥2 repos; see the library's agents/packs/CLAUDE.md).
 skills:

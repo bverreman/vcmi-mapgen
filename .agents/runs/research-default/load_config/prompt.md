@@ -1,1 +1,0 @@
-python3 /mnt/data/workspace/vcmi-mapgen/.agents/workflows/research/scripts/load_config.py vcmi-mapgen

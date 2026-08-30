@@ -1,9 +1,0 @@
-{
-  "gate_selection": {
-    "gate_id": "none",
-    "gate_doc_path": "none",
-    "depends_on_satisfied": true,
-    "program_killed": false,
-    "rationale": "All reachable gates are PASS/WEAK_PASS: G0 PASS (harness), G1 PASS (coverage +1.04), G2 PASS (validity 1.0), G3 WEAK_PASS (reconstruction +0.76); no kill criteria triggered"
-  }
-}

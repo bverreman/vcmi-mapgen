@@ -1,0 +1,35 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(timeout 60 uv run python -m vcmi_mapgen.pp_map --help)",
+      "Bash(uv run *)",
+      "Bash(pip show *)",
+      "Bash(python3 -c \"import uv\")",
+      "Bash(conda run *)",
+      "Bash(curl -LsSf https://astral.sh/uv/install.sh)",
+      "Bash(sh)",
+      "Bash(~/.local/bin/uv run *)",
+      "Bash(wait)",
+      "Read(//mnt/c/Program Files/**)",
+      "Read(//mnt/c/Program Files \\(x86\\)/**)",
+      "Read(//mnt/c/**)",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(list\\(d.keys\\(\\)\\)[:20]\\)\")",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(json.dumps\\(d, indent=2\\)[:2000]\\)\")",
+      "Bash(python3 *)",
+      "Bash(xargs '-I{}' python3 -c ' *)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)",
+      "Bash(git restore *)",
+      "Skill(run)",
+      "Bash(mkdir -p \"/mnt/c/Users/bverreman/Documents/My Games/vcmi/Maps/pp-gen\")",
+      "Bash(cp \"/mnt/c/Users/bverreman/Documents/My Games/vcmi-mapgen/out/vmap/ppmap_s42.vmap\" \"/mnt/c/Users/bverreman/Documents/My Games/vcmi/Maps/pp-gen/ppmap_s42.vmap\")",
+      "Bash(git stash *)",
+      "Bash(git *)",
+      "Skill(loop)",
+      "Bash(grep -v \"^$\")",
+      "Bash(echo \"exit: $?\")"
+    ]
+  }
+}
