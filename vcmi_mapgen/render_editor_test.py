@@ -9,7 +9,7 @@ the pixel level).
 They require the local H3 sprite LOD files; the whole module is skipped when those
 are absent (e.g. CI without a VCMI install).
 
-Run: `uv run pytest vcmi_mapgen/test_render_editor.py -q`
+Run: `uv run pytest vcmi_mapgen/render_editor_test.py -q`
 """
 import os
 import struct

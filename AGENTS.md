@@ -33,7 +33,7 @@ Load `vcmi-mapgen-maps` for the domain details (formats, segmentation, rendering
     `render.py` — schematic PNGs.
   - `markov_terrain.py` — the terrain generator (Markov chain learned from the corpus).
   - `h3m.py`, `vcmi_ids.py`, `h3m2vmap.py`, `extract_faithful.py` — `.h3m` → faithful pipeline.
-  - `test_render_editor.py` — rendering-engine reliability tests.
+  - `render_editor_test.py` — rendering-engine reliability tests.
 - **`maps/`** — the `.h3m` corpus (159 maps), the source data.
 - **`maps_json/`** — faithful JSON per map (the engine's input; regenerable from `maps/`).
 - **`data/`** — corpus-derived priors (`objlib.json`).

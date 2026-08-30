@@ -68,7 +68,7 @@ recording when the shape is unchanged.
 Inspection uses **real editor sprites**, not dots — `render_editor.py` composites 32px H3
 sprites from the local LOD files. Its `_decode_frame` handles all four H3 DEF formats; format
 3 (one uint16 offset per 32-px block, row-major) is the subtle one — getting it wrong mangles
-every mountain/town/monster. `vcmi_mapgen/test_render_editor.py` guards this: every format
+every mountain/town/monster. `vcmi_mapgen/render_editor_test.py` guards this: every format
 decodes to its header dimensions with real content, all terrain tiles decode, a corpus-wide
 sprite sweep passes, the renderer is deterministic, and a golden check confirms the rebuilt
 map renders **pixel-identical** to the source (the identity guarantee at the pixel level).
@@ -81,7 +81,7 @@ map renders **pixel-identical** to the source (the identity guarantee at the pix
 | Segment | `terrain_segment.py` |
 | Record / replay / stretch | `zone_engine.py` (the CLI), `obj_resolve.py`, `ontology.py` |
 | Emit | `faithful.py`, `vmapwrite.py`, `traverse.py` |
-| Render & inspect | `render_editor.py`, `render.py`, `test_render_editor.py` |
+| Render & inspect | `render_editor.py`, `render.py`, `render_editor_test.py` |
 | Terrain generation | `markov_terrain.py` (Markov chain learned from the corpus) |
 
 The `.h3m` corpus is in `maps/`; the format reference is in `vcmi-h3m-format-reference/`

@@ -35,5 +35,5 @@ ignore = ["E401", "E402", "F401", "E741", "F841", "E731", "E722", "F821", "F601"
 
 [tool.pytest.ini_options]
 testpaths = ["vcmi_mapgen"]
-python_files = ["test_*.py"]
+python_files = ["*_test.py"]
 python_functions = ["test_*"]

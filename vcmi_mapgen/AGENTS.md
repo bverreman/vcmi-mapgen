@@ -53,7 +53,7 @@
   handles all four H3 DEF formats: 0 (raw), 1 (per-line RLE), 2 (per-line typed RLE),
   **3 (one uint16 offset per 32-px block, row-major)** — getting format 3 wrong mangles every
   mountain/town/monster, so it is the key thing the tests guard.
-- `vcmi_mapgen/test_render_editor.py` is the reliability suite: every DEF format decodes to its
+- `vcmi_mapgen/render_editor_test.py` is the reliability suite: every DEF format decodes to its
   header dimensions and non-empty content, all terrain tiles decode, a corpus-wide sprite
   decode sweep, renderer determinism, and a golden **rebuilt == source** pixel-identical check.
   Run `uv run pytest`; tests skip when the H3 LOD files are absent.
