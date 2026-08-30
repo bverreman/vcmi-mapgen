@@ -103,6 +103,7 @@ class LevelWorkspace:
     # seaport blocking/approach cells (set by GameplayStep) — vegetation must forbid them
     seaport_blk: frozenset = frozenset()
     seaport_appr: frozenset = frozenset()
+    water_tiles: frozenset = frozenset()   # set by GameplayStep — needed by place_loot_zones
 
 
 class PlacementWorkspace:

@@ -1451,8 +1451,8 @@ def _pipeline_gen_one(seed, size, water=None, water_mode="normal", players=2,
     if subterrain:
         pipeline.add_step(GateStep(seed=seed))
     pipeline.add_step(GameplayStep(seed=seed, players=players, workspace=workspace))
-    pipeline.add_step(PickupStep(seed=seed))
     pipeline.add_step(VegetationStep(seed=seed, workspace=workspace))
+    pipeline.add_step(PickupStep(seed=seed, workspace=workspace))
     pipeline.add_step(RepairStep(seed=seed))
     state = pipeline.run()
 

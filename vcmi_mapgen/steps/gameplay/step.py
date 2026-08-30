@@ -227,7 +227,7 @@ class GameplayStep(PipelineStep):
             tunnel_protect = frozenset(state.tunnel_protect) if level == 1 else frozenset()
 
             (objs, zone_cache, entrance_plan, _has_water, town_of_zone, ridge,
-             seaport_blk, seaport_appr, _water_tiles) = _run_level_gameplay(
+             seaport_blk, seaport_appr, water_tiles) = _run_level_gameplay(
                 level, W, H, grid, zones, zids_by_level[level],
                 ledger, gstats, self.seed, state.subterrain,
                 gate_occ=gate_occ, gate_blk=gate_blk, gate_appr=gate_appr,
@@ -264,6 +264,7 @@ class GameplayStep(PipelineStep):
                 self.workspace.levels[level] = LevelWorkspace(
                     zones=zone_workspaces, entrance_plan=entrance_plan, ridge=ridge,
                     seaport_blk=seaport_blk, seaport_appr=seaport_appr,
+                    water_tiles=water_tiles,
                 )
 
         state.objs = all_objs
