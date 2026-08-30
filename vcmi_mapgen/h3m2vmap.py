@@ -4,11 +4,11 @@ opened in the editor and confirmed faithful, then trusted as the reference.
 """
 
 import json, glob, os, sys, re, collections
-import pathlib
 
 from vcmi_mapgen import h3m, vcmi_ids, vmapwrite, vcmi_paths
+from vcmi_mapgen.vcmi_paths import project_root
 
-ROOT = pathlib.Path(__file__).parent.parent
+ROOT = project_root()
 
 TCODE = {
     0: "dt",

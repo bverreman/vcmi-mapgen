@@ -12,9 +12,10 @@ town and asserts every zone, every town and every mine is reachable. Wired into
 """
 
 import os, json, collections
-import pathlib
 
-ROOT = pathlib.Path(__file__).parent.parent
+from vcmi_mapgen.vcmi_paths import project_root
+
+ROOT = project_root()
 OBJ = json.load(open(str(ROOT / "data" / "objlib.json")))
 TYPE2PURPOSE = {it["type"]: p for p, terr in OBJ.items() for items in terr.values() for it in items}
 WATER = 8

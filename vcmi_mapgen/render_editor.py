@@ -13,11 +13,10 @@ Usage:
 import sys, os, struct, zlib, zipfile, re, json, argparse, collections
 from PIL import Image
 
-import pathlib
-ROOT = pathlib.Path(__file__).parent.parent
-from vcmi_mapgen import vcmi_paths
+from vcmi_mapgen.vcmi_paths import project_root, vcmi_home, vcmi_config_dirs
+ROOT = project_root()
 
-LOD_DIR = os.path.join(vcmi_paths.vcmi_home(), "Data")
+LOD_DIR = os.path.join(vcmi_home(), "Data")
 LOD_FILES = ["H3sprite.lod", "H3ab_spr.lod", "H3bitmap.lod", "H3ab_bmp.lod"]
 
 # terrain code (first 2 chars of tile string) -> terrain .def filename

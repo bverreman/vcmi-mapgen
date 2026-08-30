@@ -20,8 +20,6 @@ Pipeline:  macro_topo.generate (capacity-constrained zones, textured borders)
 import argparse
 import collections
 import os
-import pathlib
-
 from vcmi_mapgen import faithful as FA
 from vcmi_mapgen import macro_topo as MTOPO
 from vcmi_mapgen import obj_resolve as OR
@@ -33,8 +31,9 @@ from vcmi_mapgen import terrain_segment as TSG
 from vcmi_mapgen import vcmi_paths as VPATH
 from vcmi_mapgen import zone_engine as ZE
 from vcmi_mapgen import zone_field as ZF
+from vcmi_mapgen.vcmi_paths import project_root
 
-ROOT = pathlib.Path(__file__).parent.parent
+ROOT = project_root()
 MIN_AREA = 25          # vegetate even smallish zones (the stats floor stays 60 in pp_stats)
 
 

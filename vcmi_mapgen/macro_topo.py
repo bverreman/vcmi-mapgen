@@ -27,12 +27,12 @@ import heapq
 import json
 import math
 import os
-import pathlib
 import random
 
 from vcmi_mapgen import zone_engine as ZE
+from vcmi_mapgen.vcmi_paths import project_root
 
-ROOT = pathlib.Path(__file__).parent.parent
+ROOT = project_root()
 STATS_PATH = str(ROOT / "data" / "pp" / "macro_stats.json")
 STATS_PATH_UNDERGROUND = str(ROOT / "data" / "pp" / "macro_stats_underground.json")
 WATER, ROCK = 8, 9
@@ -436,9 +436,17 @@ def main():
           f"median {barrier_name} frac {st['barrier_fracs'][len(st['barrier_fracs']) // 2]:.2f}")
     grid = generate(args.size, args.size, seed=args.seed, water=args.water, level=args.level)
     print("generated:", report(grid))
-    from vcmi_mapgen import render as RND
+    from PIL import Image
+    from vcmi_mapgen.vcmi_ids import TERRAIN_RGB, TERRAIN_TILE_PX as _TILE
     lvl = [[{"t": t, "river": False, "road": False} for t in row] for row in grid]
-    img = RND.render_level(lvl, [], args.size, args.size)
+    img = Image.new("RGB", (args.size * _TILE, args.size * _TILE))
+    px = img.load()
+    for y, row in enumerate(lvl):
+        for x, cell in enumerate(row):
+            r, g, b = TERRAIN_RGB.get(cell["t"], (0, 0, 0))
+            for dy in range(_TILE):
+                for dx in range(_TILE):
+                    px[x * _TILE + dx, y * _TILE + dy] = (r, g, b)
     out = str(ROOT / "out" / "render" / "pp" / f"macro_s{args.seed}.png")
     os.makedirs(os.path.dirname(out), exist_ok=True)
     img.save(out)

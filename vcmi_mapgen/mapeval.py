@@ -24,14 +24,14 @@ import collections
 import json
 import math
 import os
-import pathlib
 
 import numpy as np
 
 from vcmi_mapgen import obj_resolve as OR
 from vcmi_mapgen import traverse as TR
+from vcmi_mapgen.vcmi_paths import project_root
 
-ROOT = pathlib.Path(__file__).parent.parent
+ROOT = project_root()
 WATER, ROCK = 8, 9
 MIN_AREA = 12                       # match generate_map's default min zone area
 LAND_TERRAINS = list(range(8))     # ids 0..7 are land; 8=water, 9=rock

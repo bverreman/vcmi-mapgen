@@ -6,12 +6,12 @@ writer-ready terrain). Run: `uv run python -m vcmi_mapgen.extract_faithful`.
 """
 
 import glob, os, re, json
-import pathlib
 
 from vcmi_mapgen import h3m, vcmi_ids
 from vcmi_mapgen import h3m2vmap as HV
+from vcmi_mapgen.vcmi_paths import project_root
 
-ROOT = pathlib.Path(__file__).parent.parent
+ROOT = project_root()
 OUT = str(ROOT / "maps_json")
 os.makedirs(OUT, exist_ok=True)
 maps = sorted(glob.glob(f"{ROOT}/maps/*.h3m"))

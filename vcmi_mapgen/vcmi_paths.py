@@ -1,10 +1,12 @@
 """Locate the local VCMI user-data directory (Data/, Maps/, Mods/) on any OS.
+Also provides project_root() for the vcmi-mapgen repository root.
 
 Priority: the VCMI_HOME environment variable, then the platform's standard VCMI
 locations (first existing wins), then the first candidate as a best-effort default
 so error messages still point at a sensible path.
 """
 import os
+import pathlib
 import sys
 
 
@@ -73,3 +75,8 @@ def vcmi_config_dirs():
     if win_home:
         candidates.append(os.path.join(win_home, "AppData", "Roaming", "VCMI", "config"))
     return [c for c in candidates if os.path.isdir(c)]
+
+
+def project_root() -> pathlib.Path:
+    """The vcmi-mapgen project root directory (parent of the vcmi_mapgen package)."""
+    return pathlib.Path(__file__).parent.parent

@@ -18,11 +18,11 @@ from __future__ import annotations
 
 import json
 import os
-import pathlib
 
 from vcmi_mapgen import ontology as ON
+from vcmi_mapgen.vcmi_paths import project_root
 
-ROOT = pathlib.Path(__file__).parent.parent
+ROOT = project_root()
 _OBJLIB = json.load(open(str(ROOT / "data" / "objlib.json")))
 
 # Identity fields a faithful object carries that the .vmap writer needs.

@@ -17,7 +17,7 @@ Reuses (no existing file modified):
   terrain_segment.segment / compute_static_features   (zones + interior-depth feature)
   obj_resolve.load_faithful / exact_identity / purpose_of / mask_cells
   faithful.save / faithful.to_vmap                     (artifacts)
-  render.TERRAIN_RGB, zone_structure.ZONE_TINT         (segmentation palette)
+  vcmi_ids.TERRAIN_RGB, zone_structure.ZONE_TINT        (segmentation palette)
   render_editor.read_vmap / read_real / render_map     (realistic sprite render)
 """
 from __future__ import annotations
@@ -34,15 +34,14 @@ import sys
 
 import numpy as np
 
-import pathlib
-
 from vcmi_mapgen import terrain_segment as TS
 from vcmi_mapgen import obj_resolve as OR
 from vcmi_mapgen import ontology as ON
 from vcmi_mapgen import faithful as FA
-from vcmi_mapgen import render as RD
+from vcmi_mapgen.vcmi_ids import TERRAIN_RGB as _TERRAIN_RGB
+from vcmi_mapgen.vcmi_paths import project_root
 
-ROOT = pathlib.Path(__file__).parent.parent
+ROOT = project_root()
 
 # terrain code -> human name (for labels); water/rock never form a zone.
 TNAME = {0: "dirt", 1: "sand", 2: "grass", 3: "snow", 4: "swamp",
@@ -3400,7 +3399,7 @@ def render_segmentation(name: str, out_path: str):
         px = img.load()
         for y in range(H):
             for x in range(W):
-                base = RD.TERRAIN_RGB.get(lvl[y][x]["t"], (0, 0, 0))
+                base = _TERRAIN_RGB.get(lvl[y][x]["t"], (0, 0, 0))
                 z = zone_label[y][x]
                 col = (tuple((b + t) // 2 for b, t in zip(base, ZONE_TINT[z % len(ZONE_TINT)]))
                        if z >= 0 else base)

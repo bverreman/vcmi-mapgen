@@ -19,14 +19,13 @@ reachable through the protected web).
 import collections
 import json
 import os
-import pathlib
-
 from vcmi_mapgen import obj_resolve as OR
 from vcmi_mapgen import ontology as ON
 from vcmi_mapgen import zone_engine as ZE
 from vcmi_mapgen import zone_field as ZF
+from vcmi_mapgen.vcmi_paths import project_root
 
-ROOT = pathlib.Path(__file__).parent.parent
+ROOT = project_root()
 STATS_PATH = str(ROOT / "data" / "pp" / "gameplay_stats.json")
 STATS_PATH_UNDERGROUND = str(ROOT / "data" / "pp" / "gameplay_stats_underground.json")
 STATS_VERSION = 5  # v5: border open fraction + full-front gate distances

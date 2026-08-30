@@ -763,7 +763,8 @@ def render_markov_field(seed=3, W=72, H=72, scale=9, out=None, min_area=60,
     import random
     from PIL import Image
     import markov_terrain as MT
-    import render as RND
+    from PIL import Image
+    from vcmi_mapgen.vcmi_ids import TERRAIN_RGB as _TRGB, TERRAIN_TILE_PX as _TILE
 
     rng = random.Random(seed)
     M, M4 = MT.learn(0), MT.learn4(0)
@@ -773,8 +774,14 @@ def render_markov_field(seed=3, W=72, H=72, scale=9, out=None, min_area=60,
     zones, zl, canon = ZE._segment_level(lvl)
 
     # terrain background
-    img = RND.render_level(lvl, [], W, H)
+    img = Image.new("RGB", (W * _TILE, H * _TILE))
     px = img.load()
+    for y, row in enumerate(lvl):
+        for x, cell in enumerate(row):
+            r, g, b = _TRGB.get(cell["t"], (0, 0, 0))
+            for dy in range(_TILE):
+                for dx in range(_TILE):
+                    px[x * _TILE + dx, y * _TILE + dy] = (r, g, b)
     model_cache = {}
     nfields = 0
     for zid, z in zones.items():
@@ -790,16 +797,16 @@ def render_markov_field(seed=3, W=72, H=72, scale=9, out=None, min_area=60,
         def _blend(a, b, t):                                   # a*(1-t)+b*t per channel
             return tuple(int(a[i] * (1 - t) + b[i] * t) for i in range(3))
         for (x, y) in ts:
-            base = px[x * RND.TILE, y * RND.TILE]
+            base = px[x * _TILE, y * _TILE]
             if (x, y) == seedt:
                 col = (40, 120, 240)
             elif (x, y) in O:                                  # open: passable -> lighten toward sand
                 col = _blend(base, (235, 232, 215), 0.32)
             else:                                              # blocked: obstacle -> darken toward forest
                 col = _blend(base, (24, 46, 20), 0.62)
-            for dy in range(RND.TILE):
-                for dx in range(RND.TILE):
-                    px[x * RND.TILE + dx, y * RND.TILE + dy] = col
+            for dy in range(_TILE):
+                for dx in range(_TILE):
+                    px[x * _TILE + dx, y * _TILE + dy] = col
     if out is None:
         out = os.path.join(ZE.ROOT, "out", "render", "field", f"markov_field_s{seed}.png")
     os.makedirs(os.path.dirname(out), exist_ok=True)

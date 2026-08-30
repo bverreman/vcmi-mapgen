@@ -6,11 +6,10 @@ coastlines, how terrains border each other) instead of arbitrary noise blobs.
 """
 
 import json, glob, random, collections, os
-import pathlib
 
-from vcmi_mapgen import render
+from vcmi_mapgen.vcmi_paths import project_root
 
-ROOT = pathlib.Path(__file__).parent.parent
+ROOT = project_root()
 
 
 def learn(level_index):
@@ -139,34 +138,8 @@ if __name__ == "__main__":
         f"  contexts: full={len(M['full'])} pair={len(M['pair'])}  marginal terrains={dict(M['marg'].most_common())}"
     )
     W = H = 72
-    os.makedirs(f"{ROOT}/out/render", exist_ok=True)
     gen = generate(M, W, H, rnd)  # raster init
-
-    def asmap(g, name):
-        return {
-            "name": name,
-            "width": W,
-            "height": H,
-            "terrain": [[[{"t": t, "river": False, "road": False} for t in row] for row in g]],
-            "objects": [],
-        }
-
-    render.render_map(asmap(gen, "raster"), f"{ROOT}/out/render/markov_terrain.png")
     geng = [row[:] for row in gen]
     gibbs(geng, M4, M["marg"], rnd, sweeps=6)  # isotropic smoothing
     hist = collections.Counter(t for row in geng for t in row)
     print("  post-Gibbs terrain histogram:", dict(hist.most_common()))
-    render.render_map(asmap(geng, "markov gibbs"), f"{ROOT}/out/render/markov_terrain_gibbs.png")
-    # a real map of similar size, terrain only, for side-by-side
-    real = None
-    for f in glob.glob(f"{ROOT}/maps_json/*.json"):
-        m = json.load(open(f))
-        if m["width"] <= margin if False else (60 <= m["width"] <= 90 and not m["twoLevel"]):
-            real = m
-            break
-    if real:
-        real_terronly = dict(real)
-        real_terronly["objects"] = []
-        render.render_map(real_terronly, f"{ROOT}/out/render/real_terrain_{real['width']}.png")
-        print(f"  real comparison: {real['name']} {real['width']}x{real['height']}")
-    print("wrote render/markov_terrain.png", "and real_terrain_*.png" if real else "")
