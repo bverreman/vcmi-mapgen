@@ -1,9 +1,9 @@
 """Loot-zone access mechanic (gate+keymaster / sealed+monolith) for small single-entrance
 zones — a global, per-level pass that runs once every zone's scatter is placed.
 
-Also owns `_solo_visit_pool`/`_shrine_spell_level`, needed by pp_pickup.place_pocket_caches
-too (which stays in pp_pickup.py until Repair's own caches.py move in a later phase) —
-Pickup is the first step in pipeline order to need them.
+Also owns `_solo_visit_pool`/`_shrine_spell_level`, needed by
+`steps.repair.caches.place_pocket_caches` too — Pickup is the first step in pipeline order
+to need them.
 """
 import collections
 

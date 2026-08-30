@@ -78,8 +78,8 @@ class PickupStep(PipelineStep):
                 seal_avoid |= zw.prot | forbid | sused | set(zw.approaches)
                 hard_avoid |= set(zw.occupied) | sused | set(zw.approaches)
 
-                # RepairStep (still legacy-delegating) mutates open_set/passable in place
-                # (.add/.discard) — these must be plain sets, not the workspace's frozensets.
+                # RepairStep mutates open_set/passable in place (.add/.discard) — these
+                # must be plain sets, not the workspace's frozensets.
                 zone_records.append({"zid": zid, "terrain": zw.terrain, "ts": zw.ts_full,
                                      "open_set": set(zw.open_set), "passable": set(zw.passable),
                                      "reach": reach, "used": sused})

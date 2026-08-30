@@ -5,10 +5,10 @@ applies: resource piles/artifacts lying in the open along routes are ALWAYS free
 (user-mandated: a guard only belongs at a genuine chokepoint, never planted beside loot
 that sits in open terrain and can be walked around).
 
-Also owns `_place_one` (the placement primitive shared with pp_pickup.place_pocket_caches/
-place_seer_hut_quests/place_loot_zones, which stay in pp_pickup.py until Repair's own
-caches.py move in a later phase — Pickup is the first step in pipeline order to need it)
-and its pandoraBox-reward helpers.
+Also owns `_place_one` (the placement primitive shared with
+`steps.repair.caches.place_pocket_caches`/`place_seer_hut_quests` and
+`steps.pickup.loot_zones.place_loot_zones` — Pickup is the first step in pipeline order to
+need it) and its pandoraBox-reward helpers.
 """
 import collections
 

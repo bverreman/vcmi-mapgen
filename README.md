@@ -8,8 +8,8 @@ treasure, vegetation — that you can open in the VCMI editor and play right awa
 ![Generated 72×72 island map](docs/img/pp-map-islands-s7.png)
 
 *A 72×72 two-player island map generated from a single seed
-(`pp_map --seed 7 --size 72 --water-mode islands --players 2`) and rendered with
-the real H3 sprites, exactly as the VCMI editor shows it.*
+(`zone_engine generate --layout pp --seed 7 --size 72 --water-mode islands --players 2`)
+and rendered with the real H3 sprites, exactly as the VCMI editor shows it.*
 
 The colored discs are the editor's genuine **random-object** sprites (random
 monster / artifact / resource / town, by level band) — VCMI rolls them when the
@@ -51,25 +51,20 @@ Everything is **learned from real maps** (`maps/`, 159 classic `.h3m` maps) and
 ## Generate maps
 
 ```bash
-# One 72x72 two-player island map -> PNG render in out/render/pp/
-uv run python -m vcmi_mapgen.pp_map --seed 7 --size 72 --water-mode islands --players 2
-
-# Also export a playable .vmap (out/vmap/), and install it into VCMI's Maps/pp-gen/
-uv run python -m vcmi_mapgen.pp_map --seed 7 --size 72 --players 2 --vmap --install
-
-# A batch of 10 maps (seeds 1..10, water modes cycle for diversity; implies --vmap)
-uv run python -m vcmi_mapgen.pp_map --seed 1 --batch 10 --size 72
+# One 72x72 two-player island map -> PNG render in out/render/pp/, playable
+# .vmap in out/vmap/ (each player slot is wired to its own starting town, so
+# the map is playable immediately — victory: defeat all)
+uv run python -m vcmi_mapgen.zone_engine generate --layout pp \
+    --seed 7 --size 72 --water-mode islands --players 2
 
 # Two levels: surface + underground, linked by subterranean gates
-uv run python -m vcmi_mapgen.pp_map --seed 3 --size 72 --subterrain --vmap
+uv run python -m vcmi_mapgen.zone_engine generate --layout pp \
+    --seed 3 --size 72 --subterrain
 
 # 4 players in two teams
-uv run python -m vcmi_mapgen.pp_map --seed 5 --size 108 --players 4 --teams 2v2 --vmap
+uv run python -m vcmi_mapgen.zone_engine generate --layout pp \
+    --seed 5 --size 108 --players 4 --teams 2v2
 ```
-
-`--install` copies the `.vmap` into `<VCMI_HOME>/Maps/pp-gen/` so it shows up in
-the VCMI map selector; each player slot is wired to its own starting town, so
-the maps are playable immediately (victory: defeat all).
 
 ## The zone-rebuilding engine
 
@@ -95,13 +90,21 @@ uv run python -m vcmi_mapgen.markov_terrain                       # learned terr
 
 ```
 vcmi_mapgen/        the Python package (generator + engine + renderer + data pipeline)
-  pp_map.py           map generator CLI (terrain + gameplay + vegetation + pickups)
-  macro_topo.py       macro zone layout: capacity-constrained growth, water, borders
-  pp_gameplay.py      towns/mines/dwellings placement (corpus densities)
-  pp_sample.py        vegetation: corpus-fitted Gibbs marked point process
-  pp_pickup.py        loot: guarded caches + unguarded scatter
-  pp_stats.py         mines the corpus statistics the generator samples from
-  zone_engine.py      zone-rebuild CLI: extract / inspect / reconstruct / rebuild / run
+  pipeline.py         MapState / PipelineStep / VcmiMapGenPipeline / PlacementWorkspace
+  steps/              the generator, as 8 pipeline steps run in order — each a folder
+                      with its own step.py + private logic modules + *_test.py:
+    terrain_gen/        macro zone layout: capacity-constrained growth, water, borders
+    tile/               corpus-learned autotiling (despeckle + H3-correct transition views)
+    segment/            same-terrain flood-fill zone segmentation
+    gate/               Subterranean Gate pairs (--subterrain)
+    gameplay/           towns/mines/dwellings placement (corpus densities) + water bodies
+    vegetation/         corpus-fitted Gibbs marked point process (trees, rocks, lakes)
+    pickup/             loot: unguarded scatter + the loot-zone access mechanic
+    repair/             G2 repair, island fill, portal rescue, pocket caches, border seal
+  renderers/          PngRenderer (H3 sprites) / VmapRenderer (playable .vmap export)
+  readers/            VmapReader (read back a generated/authored .vmap)
+  zone_engine.py      zone-rebuild + generate CLI: extract / inspect / reconstruct /
+                      rebuild / run / generate (--layout pp = the pipeline above)
   terrain_segment.py  same-terrain flood-fill segmentation + interior-depth features
   ontology.py         object identity, footprints, terrain coupling (single source of truth)
   obj_resolve.py      faithful-map loader, footprint mask expansion

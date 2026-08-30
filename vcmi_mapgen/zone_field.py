@@ -485,8 +485,8 @@ def find_pockets(reach, max_dim=POCKET_MAX_DIM, max_tiles=POCKET_MAX_TILES):
     ≤2-tile entry cluster (ZoC-interior nook tiles ∪ first outside-ZoC layer adjacent
     to the ZoC), and the dict is deduped so each distinct pocket keeps a single
     canonical entry (best `mouth_key`). Distinct-but-overlapping candidates for the
-    same physical nook still come out as separate entries — `pp_pickup._dedupe_pockets`
-    blob-merges those."""
+    same physical nook still come out as separate entries — `steps.repair.caches.
+    _dedupe_pockets` blob-merges those."""
     best = {}
     for g in sorted(reach):
         # a guard in fully open ground seals nothing and touches no nook: without a

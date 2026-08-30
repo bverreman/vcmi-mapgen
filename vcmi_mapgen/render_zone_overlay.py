@@ -421,7 +421,8 @@ _LOOT_ZONE_MAX_TILES = 80
 
 def _loot_zone_tiles(zones, zone_label, objs0, H, W):
     """Identify all tiles belonging to loot zones (area ≤ 80, no town, single
-    terrain-tile boundary cluster) using the same detection logic as pp_pickup."""
+    terrain-tile boundary cluster) using the same detection logic as
+    steps.pickup.loot_zones."""
     zone_ts = collections.defaultdict(set)
     for y in range(H):
         for x in range(W):

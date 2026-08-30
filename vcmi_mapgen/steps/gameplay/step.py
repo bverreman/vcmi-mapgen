@@ -29,11 +29,11 @@ def _rim8(zones):
 def _run_level_gameplay(level, W, H, grid, zones, player_zids, ledger, gstats, seed,
                         has_subterrain, gate_occ=frozenset(), gate_blk=frozenset(),
                         gate_appr=(), tunnel_protect=frozenset()):
-    """Gameplay-only half of the legacy ``pp_map._run_level``: water-body population
-    (surface only), per-zone ``mines.place_zone`` + protected web, and the seaport
-    guarantee. Split out so both the legacy ``pp_map.build()`` path and this step call the
-    identical logic. See ``pp_map._run_level``'s (pre-split) docstring for the parameter
-    contract — unchanged here.
+    """Gameplay-only half of the map-generation pass: water-body population (surface only),
+    per-zone ``mines.place_zone`` + protected web, and the seaport guarantee. Originally
+    split out of the (now-retired) legacy ``pp_map._run_level``/``build()`` so both paths
+    called the identical logic during the migration (pipeline-refactor-v2-folders.md);
+    ``GameplayStep.run()`` is its only caller now that path is gone.
 
     Returns (objs, zone_cache, entrance_plan, has_water, town_of_zone, ridge, seaport_blk,
     seaport_appr, water_tiles): ``zone_cache`` is ``{zid: {...}}`` with the same keys

@@ -79,7 +79,7 @@ def test_value_gradient_sign():
 def test_traverse_monolith_network():
     """Two-way monoliths of one subtype form a teleport network for the reachability
     walk — a rock-severed area counts as reachable iff BOTH ends exist (this is how
-    pp_map rescues unreachable zones as guarded portal reward zones)."""
+    steps.repair.geometry rescues unreachable zones as guarded portal reward zones)."""
     from vcmi_mapgen import traverse as TR
 
     def wall_fm(objects):
