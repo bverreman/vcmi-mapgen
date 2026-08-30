@@ -19,7 +19,7 @@ handful of LARGE designed regions. This module plans the macro structure first:
                   RESTRICTED to a 2-tile band around zone borders (interiors clamped), so
                   boundaries get corpus transition texture and interiors can never fragment.
 
-    uv run python -m vcmi_mapgen.macro_topo --seed 3 --size 72
+    uv run python -m vcmi_mapgen.steps.terrain_gen.macro_topo --seed 3 --size 72
 """
 import argparse
 import collections

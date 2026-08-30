@@ -68,6 +68,47 @@ class MapState:
     log: list = field(default_factory=list)
 
 
+@dataclass
+class ZoneWorkspace:
+    """One zone's handoff data, mutated in place as Gameplay -> Vegetation -> Pickup ->
+    Repair each run. Not a MapState field: this is step-collaboration bookkeeping, not a
+    map-level fact anything outside these four steps needs to read."""
+
+    terrain: str = ""
+    ts: frozenset = frozenset()          # set by GameplayStep
+    ts_full: frozenset = frozenset()
+    occupied: frozenset = frozenset()
+    gblocked: frozenset = frozenset()
+    approaches: tuple = ()
+    prot: frozenset = frozenset()         # protected web
+    rim8: frozenset = frozenset()
+    ent_bands: frozenset = frozenset()
+    blocked: frozenset = frozenset()      # set by VegetationStep
+    open_set: frozenset = frozenset()
+    passable: frozenset = frozenset()
+    reach: frozenset = frozenset()        # set by PickupStep
+    used: frozenset = frozenset()
+
+
+@dataclass
+class LevelWorkspace:
+    zones: dict = field(default_factory=dict)          # zid -> ZoneWorkspace
+    entrance_plan: dict = field(default_factory=dict)
+    ridge: frozenset = frozenset()
+    seal_avoid: set = field(default_factory=set)
+    hard_avoid: set = field(default_factory=set)
+    guard_tiles: frozenset = frozenset()
+
+
+class PlacementWorkspace:
+    """Inter-step collaboration object for Gameplay/Vegetation/Pickup/Repair. Shared by
+    reference, injected via constructor — not threaded through ``state.extras`` and not a
+    raw dict. ``MapState`` stays generic map-layer truth only."""
+
+    def __init__(self) -> None:
+        self.levels: dict = {}   # level -> LevelWorkspace
+
+
 class PipelineStep:
     """Base class for all map-generation steps.
 
@@ -86,8 +127,8 @@ class VcmiMapGenPipeline:
 
         from vcmi_mapgen.ontology import Ontology
         from vcmi_mapgen.pipeline import VcmiMapGenPipeline, MapState
-        from vcmi_mapgen.steps.terrain_gen import TerrainGenStep
-        from vcmi_mapgen.steps.tile import TileStep
+        from vcmi_mapgen.steps.terrain_gen.step import TerrainGenStep
+        from vcmi_mapgen.steps.tile.step import TileStep
         # … add more steps …
 
         ont = Ontology()

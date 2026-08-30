@@ -700,7 +700,7 @@ def test_audit_variety_green():
 
 
 def test_macro_generate_deterministic_and_coarse():
-    from vcmi_mapgen import macro_topo as MT
+    from vcmi_mapgen.steps.terrain_gen import macro_topo as MT
     g1 = MT.generate(48, 48, seed=1)
     g2 = MT.generate(48, 48, seed=1)
     assert g1 == g2, "macro terrain must be seed-deterministic"

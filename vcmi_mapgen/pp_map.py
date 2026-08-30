@@ -21,7 +21,7 @@ import argparse
 import collections
 import os
 from vcmi_mapgen import faithful as FA
-from vcmi_mapgen import macro_topo as MTOPO
+from vcmi_mapgen.steps.terrain_gen import macro_topo as MTOPO
 from vcmi_mapgen import obj_resolve as OR
 from vcmi_mapgen import ontology as ON
 from vcmi_mapgen import pp_gameplay as PG

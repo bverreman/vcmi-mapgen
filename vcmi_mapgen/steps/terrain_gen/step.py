@@ -4,7 +4,7 @@ from __future__ import annotations
 import collections
 
 from vcmi_mapgen.pipeline import MapState, PipelineStep
-from vcmi_mapgen import macro_topo as MTOPO
+from vcmi_mapgen.steps.terrain_gen import macro_topo as MTOPO
 from vcmi_mapgen import terrain_segment as TSG
 
 
