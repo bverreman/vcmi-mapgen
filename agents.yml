@@ -4,14 +4,26 @@ repo:
   name: vcmi-mapgen
 agents:
   claude: true
-includes:
-  - python
-# No packs — this repo's selections are all direct (packs are for bundles
-# reused by ≥2 repos; see the library's agents/packs/CLAUDE.md).
 skills:
+  # cross-language architecture + testing contracts (no ui/*)
+  - architecture/*
+  - testing/*
+  - vertical-slicing
+  - diagnosing-bugs
+  - code-review
+  # python stack (no python-htmx-accessibility)
+  - stacks/python/python-architecture
+  - stacks/python/python-cli
+  - stacks/python/python-pypi-release
+  - stacks/python/python-testing
+  # repo-specific
   - projects/vcmi-mapgen/*   # repo root + maps domain
   - infra/infra-cli-writer   # CLI/Makefile command-timeout conventions
 prompts:
+  - grill
+  - brainstorm
+  - implement-plan-worktree
+  - implement-plan-here
   # /update-skill-from-conversation — fold a session's learnings back into the
   # agent library (skills, commands, root instructions).
   - agent-library/update-skill-from-conversation
