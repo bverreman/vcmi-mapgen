@@ -2,15 +2,22 @@
 from __future__ import annotations
 
 from vcmi_mapgen.pipeline import MapState, PipelineStep
+from vcmi_mapgen import zone_engine as ZE
 from vcmi_mapgen.steps.gate import gates as PG
+
+MIN_AREA = 25  # matches GameplayStep's own zone floor — a gate must land on a tile a
+#                zone's own gameplay pass would actually consider (pipeline-refactor-v2-
+#                folders.md Phase 2 found this filter missing here: pre-existing, not a
+#                Phase 2 regression, but required for GameplayStep's gate-object parity).
 
 
 def _land_tiles(zones):
-    WATER, ROCK = 8, 9
     ts = set()
     for z in zones.values():
-        if z["terrain_type"] not in (WATER, ROCK):
-            ts.update(z["tiles_set"])
+        terrain = ZE.TNAME.get(z["terrain_type"])
+        if terrain in (None, "water", "rock") or z["area"] < MIN_AREA:
+            continue
+        ts.update(z["tiles_set"])
     return ts
 
 
