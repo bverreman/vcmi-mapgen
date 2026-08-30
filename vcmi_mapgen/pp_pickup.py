@@ -25,6 +25,9 @@ from vcmi_mapgen import obj_resolve as OR
 from vcmi_mapgen import ontology as ON
 from vcmi_mapgen import pp_gameplay as PG
 from vcmi_mapgen import zone_field as ZF
+# _pick/_legal/place_water now live in steps/gameplay/water.py (Gameplay is the first step
+# in pipeline order to need them); re-exported here for this module's own remaining callers.
+from vcmi_mapgen.steps.gameplay.water import _legal, _pick, place_water
 
 CAPS = {"RESOURCE_PILE": 16, "REWARD_PICKUP": 8}   # base floors; caps scale (scatter only --
                                 # pocket guards/caches are deterministic, see place_pickups)
@@ -114,27 +117,6 @@ def _reach8(open_set, seed):
     return d
 
 
-def _pick(pool, purpose, st_t, rng, allow_random=True, art_share=0.45):
-    """Identity for a pickup. The H3 convention (user-mandated): favour the editor's RANDOM
-    classes — random resource, tiered random artifacts — over fixed ones. `art_share` is
-    the random-artifact probability for REWARD_PICKUP: high for guarded caches, low for
-    unguarded scatter (which draws the fixed LOOT pool — treasure chests, campfires —
-    weighted by the corpus mix, where the chest dominates)."""
-    if allow_random and purpose == "RESOURCE_PILE" and rng.random() < 0.6:
-        return ON.identity_of(PG.RND_RES)
-    if allow_random and purpose == "REWARD_PICKUP" and rng.random() < art_share:
-        anim = rng.choices([a for a, w, v in PG.RND_ART],
-                           weights=[w for a, w, v in PG.RND_ART], k=1)[0]
-        return ON.identity_of(anim)
-    pool = sorted((i for i in pool if "random" not in str(i.get("type", "")).lower()),
-                  key=lambda i: i["animation"])
-    if not pool:
-        return None
-    w = st_t["anim_w"].get(purpose, {})
-    return rng.choices(pool, weights=[w.get(i["animation"].lower(), 0) + 0.2
-                                      for i in pool], k=1)[0]
-
-
 def _dedupe_pockets(pockets, reach=frozenset()):
     """Collapse near-duplicate mouth candidates into one CANDIDATE LIST per genuine physical
     nook. `ZF.find_pockets` returns one entry per candidate MOUTH tile, but several nearby
@@ -177,28 +159,6 @@ def _dedupe_pockets(pockets, reach=frozenset()):
     blobs = [sorted(cands, key=lambda kv: ZF.mouth_key(reach, kv[0], kv[1]))
              for cands in groups.values()]
     return sorted(blobs, key=lambda cands: ZF.mouth_key(reach, cands[0][0], cands[0][1]))
-
-
-def _legal(ident, x, y, open_set, used, bounds=None, interactive_only=False):
-    """A pickup/guard placement is legal if its INTERACTIVE cell(s) sit on an unused,
-    placement-eligible tile.  V-overlay cells (sprite bleed) may overlap terrain/walls.
-
-    interactive_only=True: only the interactive (A/X) cell is checked against `used` and
-    bounds, and only that cell is returned for claiming.  Use this for dense fill passes
-    where adjacent pickups' V-cells would otherwise falsely block each other — V cells are
-    cosmetic in H3/VCMI and two objects sharing V-cell space is legal."""
-    cells = [(tx, ty) for tx, ty, _b in OR.mask_cells(ident["mask"], x, y)]
-    interactive = OR.mask_interactive_cells(ident["mask"], x, y) or cells
-    check = interactive if interactive_only else cells
-    if bounds is not None:
-        bw, bh = bounds
-        if any(not (0 <= tx < bw and 0 <= ty < bh) for tx, ty in check):
-            return None
-    if any(c in used for c in check):
-        return None
-    if all(c in open_set and c not in used for c in interactive):
-        return check
-    return None
 
 
 PANDORA_CREATURES = ("pikeman", "centaur", "gremlin", "imp", "skeleton",
@@ -905,50 +865,6 @@ def place_pickups(ts, zones, zid, terrain, open_set, prot, seed=1, bounds=None):
                      "open_set": open_set, "reach": reach, "used": sused}]
     cobjs, _n = place_pocket_caches(zone_records, seed=seed, bounds=bounds)
     return sobjs + cobjs
-
-
-def place_water(ts, zones, zid, seed=1):
-    """Populate a WATER zone (spec point: water must not be empty): flotsam/sea chests
-    (pickups), buoys/mermaids/sirens (bonus), boats + whirlpools (navigability), shipwrecks/
-    derelicts (banks), ocean bottles, and random sea guards. Densities and animation mix come
-    from the corpus water pass; identities from the ontology's water pools."""
-    import random
-    st = PG.mine_gameplay().get("water")
-    if not st or not st.get("tiles"):
-        return []
-    rng = random.Random(seed ^ (zid * 55313) ^ 0x5EA)
-    area = len(ts)
-    objs, used = [], set()
-    for p in PG.WATER_PURPOSES:
-        x = st["counts"].get(p, 0) / st["tiles"] * area
-        n = min(int(x) + (1 if rng.random() < x - int(x) else 0), 14)
-        if not n:
-            continue
-        pool = ON.gameplay_pool("water", p)
-        cands = sorted(ts)
-        placed = []
-        for t in rng.choices(cands, k=50 * n):
-            if len(placed) >= n:
-                break
-            if any(max(abs(t[0] - q[0]), abs(t[1] - q[1])) < 4 for q in placed):
-                continue
-            ident = (PG.rnd_monster(rng.choices((2, 3, 4, 5), (30, 30, 25, 15))[0])
-                     if p == "GUARD" else _pick(pool, p, st, rng, allow_random=False))
-            if ident is None:
-                break
-            cells = _legal(ident, t[0], t[1], ts, used)
-            if cells is None:
-                continue
-            used.update(cells)
-            o = {"x": t[0], "y": t[1], "l": 0, "purpose": p,
-                 "type": ident.get("type"), "subtype": ident.get("subtype"),
-                 "animation": ident["animation"], "mask": ident["mask"],
-                 "template": {"animation": ident["animation"], "mask": ident["mask"]}}
-            if p == "GUARD":
-                o["options"] = {"character": "hostile"}
-            objs.append(o)
-            placed.append(t)
-    return objs
 
 
 def place_loot_zones(zone_records, entrance_plan, objs_existing, seed=1, bounds=None,
