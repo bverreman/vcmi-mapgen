@@ -32,7 +32,6 @@ import colorsys
 import json
 import os
 from vcmi_mapgen import obj_resolve as OR
-from vcmi_mapgen import pp_map
 from vcmi_mapgen import render_editor as RED
 from vcmi_mapgen import terrain_segment as TS
 from vcmi_mapgen.vcmi_paths import project_root
@@ -544,13 +543,27 @@ def main(seed=42, size=72, water_mode="normal", players=2):
         plain_path = _plain_path
         print(f"  (overlay-only — loaded from cache, skipping map build)")
     else:
-        levels, surfs, objs, info, _ = pp_map.build(
-            seed=seed, size=size, water_mode=water_mode, players=players,
-        )
-        print(info)
+        from vcmi_mapgen.pipeline import VcmiMapGenPipeline, PlacementWorkspace
+        from vcmi_mapgen.steps import (TerrainGenStep, TileStep, SegmentStep, GameplayStep,
+                                       VegetationStep, PickupStep, RepairStep)
+
+        workspace = PlacementWorkspace()
+        pipeline = VcmiMapGenPipeline(ontology=None)
+        pipeline.add_step(TerrainGenStep(size=size, seed=seed, water_mode=water_mode))
+        pipeline.add_step(TileStep())
+        pipeline.add_step(SegmentStep())
+        pipeline.add_step(GameplayStep(seed=seed, players=players, workspace=workspace))
+        pipeline.add_step(VegetationStep(seed=seed, workspace=workspace))
+        pipeline.add_step(PickupStep(seed=seed, workspace=workspace))
+        pipeline.add_step(RepairStep(seed=seed, workspace=workspace))
+        state = pipeline.run()
+        for line in state.log:
+            print(f"  {line}")
+
+        objs = state.objs
         objs0 = [o for o in objs if o.get("l", 0) == 0]
-        levels0 = levels[0]
-        base_img = RED.render_map(surfs[0], objs0)
+        levels0 = state.cells[0]
+        base_img = RED.render_map(state.surfs[0], objs0)
         plain_path = os.path.join(out_dir, f"ppmap_s{seed}_plain.png")
         base_img.save(plain_path)
         print(f"\n[1/2] plain   -> {plain_path}")

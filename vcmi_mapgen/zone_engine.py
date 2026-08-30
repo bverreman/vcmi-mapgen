@@ -4139,36 +4139,52 @@ def _generate_one(kind, args, grammar):
 
 def cmd_generate(args):
     if args.layout == "pp":                          # marked-point-process pipeline (spec M6)
-        from vcmi_mapgen import pp_map
-        from vcmi_mapgen import render_editor as RED
+        from vcmi_mapgen.pipeline import VcmiMapGenPipeline, PlacementWorkspace
+        from vcmi_mapgen.steps import (TerrainGenStep, TileStep, SegmentStep, GateStep,
+                                       GameplayStep, VegetationStep, PickupStep, RepairStep)
+        from vcmi_mapgen.renderers import PngRenderer, VmapRenderer
         players = getattr(args, "players", 2)
         wmode = getattr(args, "water_mode", None) or ("none" if args.no_water else "normal")
         subterrain = getattr(args, "subterrain", False)
-        levels, surfs, objs, info, ptowns = pp_map.build(seed=args.seed, size=args.size,
-                                                         players=players, water_mode=wmode,
-                                                         subterrain=subterrain)
-        print(info)
+
+        workspace = PlacementWorkspace()
+        pipeline = VcmiMapGenPipeline(ontology=None)
+        pipeline.add_step(TerrainGenStep(size=args.size, seed=args.seed, water_mode=wmode,
+                                         subterrain=subterrain))
+        pipeline.add_step(TileStep())
+        pipeline.add_step(SegmentStep())
+        if subterrain:
+            pipeline.add_step(GateStep(seed=args.seed))
+        pipeline.add_step(GameplayStep(seed=args.seed, players=players, workspace=workspace))
+        pipeline.add_step(VegetationStep(seed=args.seed, workspace=workspace))
+        pipeline.add_step(PickupStep(seed=args.seed, workspace=workspace))
+        pipeline.add_step(RepairStep(seed=args.seed, workspace=workspace))
+        state = pipeline.run()
+        for line in state.log:
+            print(f"  {line}")
+
+        levels = [state.cells[lvl] for lvl in sorted(state.cells)]
+        objs = state.objs
+        ptowns = state.player_towns
+        veg_n = sum(1 for o in objs if not o.get("purpose"))
+        print(f"pp-map s{args.seed} {args.size}x{args.size}: "
+              f"{len(objs) - veg_n} gameplay+pickups, {veg_n} vegetation objects, "
+              f"towns={len(state.player_zids)}")
+
+        png_renderer = PngRenderer()
+        objs0 = [o for o in objs if o.get("l", 0) == 0]
+        base_img = png_renderer.render(state, level=0)
         png = os.path.join(ROOT, "out", "render", "pp", f"ppmap_s{args.seed}.png")
         os.makedirs(os.path.dirname(png), exist_ok=True)
-        objs0 = [o for o in objs if o.get("l", 0) == 0]
-        base_img = RED.render_map(surfs[0], objs0, title="")
         base_img.save(png)
         if subterrain:
-            png1 = os.path.join(ROOT, "out", "render", "pp", f"ppmap_s{args.seed}_L1.png")
-            objs1 = [dict(o, l=0) for o in objs if o.get("l", 0) == 1]
-            RED.render_map(surfs[1], objs1, title="").save(png1)
+            png1 = png_renderer.save(state, f"ppmap_s{args.seed}_L1.png", level=1)
             print(f"  {png1}")
-        vmap = pp_map.export_vmap(levels, objs,
-                                  os.path.join(ROOT, "out", "vmap", f"ppmap_s{args.seed}.vmap"),
-                                  name=f"pp-map s{args.seed}")
+        vmap_renderer = VmapRenderer()
+        vmap = vmap_renderer.render(state, f"ppmap_s{args.seed}.vmap", name=f"pp-map s{args.seed}",
+                                    teams_spec=getattr(args, "teams", "ffa"))
         if ptowns:
-            try:
-                teams = pp_map.parse_teams(getattr(args, "teams", "ffa"), len(ptowns))
-            except ValueError as e:
-                print(f"  WARNING: {e} — falling back to ffa")
-                teams = list(range(len(ptowns)))
-            pp_map.apply_playability(vmap, ptowns, teams)
-            print(f"  playable: {len(ptowns)} players, teams={teams}, victory=defeat-all")
+            print(f"  playable: {len(ptowns)} players, victory=defeat-all")
         from vcmi_mapgen import render_zone_overlay as RZO
         from PIL import Image, ImageDraw
         H0, W0 = len(levels[0]), len(levels[0][0])
