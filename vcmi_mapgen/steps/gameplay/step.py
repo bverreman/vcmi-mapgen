@@ -271,12 +271,18 @@ class GameplayStep(PipelineStep):
         state.player_zids = player_zids
         state.ledger = ledger
 
-        # resolve player towns from town_of_zone
+        # resolve player towns from town_of_zone; top up from surplus neutral towns if a
+        # forced placement failed (rare: no legal anchor in the zone) — matches legacy
+        # build()'s fallback so a player is never left without a start town.
         player_towns = []
         for lvl, zid in player_zids:
             t = all_town_of_zone.get(lvl, {}).get(zid)
             if t is not None:
                 player_towns.append(t)
+        if self.players:
+            spare = [o for o in all_objs if o.get("purpose") == "TOWN" and o not in player_towns]
+            player_towns += spare[:max(0, self.players - len(player_towns))]
+            player_towns = player_towns[:self.players]
         state.player_towns = player_towns
 
         if ledger["missing"]:

@@ -187,6 +187,8 @@ def place_scatter(ts, zones, zid, terrain, open_set, prot, seed=1, bounds=None,
             return
         wmap = PG._intensity_weights(reach, purpose, st, ed, gd, op=op)
         cands = sorted(reach)
+        if not cands:                                 # zone has no reachable open tile
+            return
         weights = [wmap[t] for t in cands]
         placed = []
         for t in rng.choices(cands, weights=weights, k=60 * n):

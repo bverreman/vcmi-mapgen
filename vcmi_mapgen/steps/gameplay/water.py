@@ -7,6 +7,7 @@ Also owns `_pick`/`_legal`, the low-level identity-pick/footprint-legality helpe
 which need the exact same helpers) imports them from here rather than duplicating them.
 """
 import collections
+import zlib
 
 from vcmi_mapgen import obj_resolve as OR
 from vcmi_mapgen import ontology as ON
@@ -174,7 +175,10 @@ def _ensure_water_seaports(W, H, grid, zones, objs, seed):
         """Try to place a shipyard. cand_tiles = anchor candidates (coastal tiles first).
         Prefers positions ≥20 tiles from existing seaports; when force=True (required
         placement) falls back to any valid position if no spaced candidate exists."""
-        rng = _rnd.Random(seed ^ hash(label) ^ 0x53A9)
+        # NOTE: Python's built-in hash() is salted per-process for str (PYTHONHASHSEED),
+        # so seeding from hash(label) would make this non-reproducible across runs even
+        # for the identical seed — crc32 is a plain, stable string->int hash.
+        rng = _rnd.Random(seed ^ zlib.crc32(label.encode()) ^ 0x53A9)
         shuffled = list(cand_tiles)
         rng.shuffle(shuffled)
         cap = shuffled[:300]

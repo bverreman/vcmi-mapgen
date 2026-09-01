@@ -1346,7 +1346,7 @@ def _learn_terrain_tiler():
     exact = collections.defaultdict(collections.Counter)   # (t, sig8)        -> (view,m)
     four = collections.defaultdict(collections.Counter)    # (t, N,W,E,S)     -> (view,m)
     clean = collections.defaultdict(collections.Counter)   # t (all-same nbrs)-> (view,m)
-    for f in glob.glob(os.path.join(ROOT, "maps_json", "*.json")):
+    for f in sorted(glob.glob(os.path.join(ROOT, "maps_json", "*.json"))):
         m = json.load(open(f))
         for g in m["terrain"]:
             H = len(g)

@@ -87,12 +87,25 @@ class PickupStep(PipelineStep):
                 print(f"  L{level} zone {zid:>3} {zw.terrain:<8} {len(zw.ts_full):>5} tiles: "
                       f"scatter res={pk.get('RESOURCE_PILE', 0)} art={pk.get('REWARD_PICKUP', 0)}")
 
+            # place_loot_zones clears every object under a newly-sealed loot zone by
+            # (x, y) alone (see loot_zones.py), which would sweep a pre-placed
+            # Subterranean Gate (+ its approach guard) if one falls inside the zone's
+            # tile set — a Gate pair shares its (x, y) with its OTHER-level counterpart.
+            # Legacy build() only appended gate_objs to `objs` AFTER this pass ran, so
+            # they were physically absent here and immune; this pipeline merges them in
+            # earlier (GameplayStep, so downstream forbid/occupied sets see them), so we
+            # must shield them from the sweep by pulling them out and restoring them.
+            gate_ids = {id(o) for o in state.gate_objs if o.get("l", 0) == level}
+            shielded = [o for o in level_objs if id(o) in gate_ids]
+            level_objs[:] = [o for o in level_objs if id(o) not in gate_ids]
+
             loot_objs, n_loot, loot_zids = LZ.place_loot_zones(
                 zone_records, lvl_ws.entrance_plan, level_objs, seed=self.seed,
                 bounds=(W, H), water_tiles=lvl_ws.water_tiles)
             if level == 1:   # place_loot_zones always tags l=0; retag the underground level
                 for o in loot_objs:
                     o["l"] = 1
+            level_objs.extend(shielded)
             level_objs.extend(loot_objs)
             # Only add EXTERIOR loot zone objects to targets (keymaster, exterior monolith).
             # Interior objects (gate, interior monolith) are reachable via teleportation/

@@ -18,7 +18,7 @@ def learn(level_index):
     pair = collections.defaultdict(collections.Counter)  # (l,u)->center
     one = collections.defaultdict(collections.Counter)  # (l,)->center
     marg = collections.Counter()
-    for f in glob.glob(f"{ROOT}/maps_json/*.json"):
+    for f in sorted(glob.glob(f"{ROOT}/maps_json/*.json")):
         m = json.load(open(f))
         if level_index >= len(m["terrain"]):
             continue
@@ -86,7 +86,7 @@ def learn4(level_index):
     )  # frozenset-ish (sorted 2 of nbrs) backoff via opposite pairs
     horiz = collections.defaultdict(collections.Counter)  # (l,r)->c
     vert = collections.defaultdict(collections.Counter)  # (u,d)->c
-    for f in glob.glob(f"{ROOT}/maps_json/*.json"):
+    for f in sorted(glob.glob(f"{ROOT}/maps_json/*.json")):
         m = json.load(open(f))
         if level_index >= len(m["terrain"]):
             continue
