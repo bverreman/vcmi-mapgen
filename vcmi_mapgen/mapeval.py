@@ -27,8 +27,8 @@ import os
 
 import numpy as np
 
-from vcmi_mapgen import obj_resolve as OR
-from vcmi_mapgen import traverse as TR
+from vcmi_mapgen.kit import objects as OR
+from vcmi_mapgen.kit import reachability as TR
 from vcmi_mapgen.kit.paths import project_root
 
 ROOT = project_root()
@@ -59,7 +59,7 @@ _CORPUS = None                     # in-memory memo of (names, mean, std)
 
 def _purpose(o):
     """Purpose that works on BOTH corpus objects (cls/sub) and generated ones (type only)."""
-    return o.get("_purpose") or TR.TYPE2PURPOSE.get(o.get("type"), "UNKNOWN")
+    return o.get("_purpose") or OR.type_to_purpose(o.get("type")) or "UNKNOWN"
 
 
 def _segment(level_grid):
@@ -133,7 +133,7 @@ def features(fm) -> dict:
     # --- object purpose density (per land tile) ---
     surf = [o for o in fm["objects"] if o.get("l", 0) == 0]
     pcount = collections.Counter(_purpose(o) for o in surf)
-    for p in sorted(TR.OBJ.keys()):
+    for p in sorted(OR._OBJLIB.keys()):
         f[f"obj_{p}"] = pcount.get(p, 0) / land_area
     # --- connectivity ---
     deg = [len(adj.get(z, ())) for z in big]
@@ -253,7 +253,7 @@ def _reach_score(fm):
     if rep["start"] is None or not rep["passable_tiles"]:
         return 0.0, rep
     frac_tiles = rep["reached_tiles"] / rep["passable_tiles"]
-    towns_total = sum(1 for o in fm["objects"] if TR.TYPE2PURPOSE.get(o.get("type")) == "TOWN")
+    towns_total = sum(1 for o in fm["objects"] if OR.type_to_purpose(o.get("type")) == "TOWN")
     town_frac = 1.0
     if towns_total:
         town_frac = (towns_total - len(rep["unreachable_towns"])) / towns_total

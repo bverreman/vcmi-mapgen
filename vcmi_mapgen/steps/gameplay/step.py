@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import collections
 
-from vcmi_mapgen import obj_resolve as OR
+from vcmi_mapgen.kit import objects as OR
 from vcmi_mapgen.steps.vegetation import sample as PP  # protected_web
 from vcmi_mapgen import zone_engine as ZE
 from vcmi_mapgen import zone_field as ZF

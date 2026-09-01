@@ -6,7 +6,7 @@ bit-exact identity / render tests (untouched).
 """
 import os
 
-from vcmi_mapgen import obj_resolve as OR
+from vcmi_mapgen.kit import objects as OR
 from vcmi_mapgen import mapeval as ME
 
 GRASS = 2
@@ -80,7 +80,7 @@ def test_traverse_monolith_network():
     """Two-way monoliths of one subtype form a teleport network for the reachability
     walk — a rock-severed area counts as reachable iff BOTH ends exist (this is how
     steps.repair.geometry rescues unreachable zones as guarded portal reward zones)."""
-    from vcmi_mapgen import traverse as TR
+    from vcmi_mapgen.kit import reachability as TR
 
     def wall_fm(objects):
         fm = _fm(objects)

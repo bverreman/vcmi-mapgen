@@ -15,7 +15,7 @@ Pipeline, all in this module:
 
 Reuses (no existing file modified):
   terrain_segment.segment / compute_static_features   (zones + interior-depth feature)
-  obj_resolve.load_faithful / exact_identity / purpose_of / mask_cells
+  kit.objects.load_faithful / exact_identity / purpose_of / mask_cells
   faithful.save / faithful.to_vmap                     (artifacts)
   vcmi_ids.TERRAIN_RGB, zone_structure.ZONE_TINT        (segmentation palette)
   render_editor.read_vmap / read_real / render_map     (realistic sprite render)
@@ -35,7 +35,7 @@ import sys
 import numpy as np
 
 from vcmi_mapgen import terrain_segment as TS
-from vcmi_mapgen import obj_resolve as OR
+from vcmi_mapgen.kit import objects as OR
 from vcmi_mapgen import ontology as ON
 from vcmi_mapgen import faithful as FA
 from vcmi_mapgen.vcmi_ids import TERRAIN_RGB as _TERRAIN_RGB
@@ -3290,10 +3290,10 @@ def _pick_main_town(objects, terrain, W, H):
     the start (markov terrain scatters zones across many water-separated islands; a start stranded
     on a 30-tile island reaches almost nothing). Returns ``{"x","y"}`` in the main_town convention
     (town anchor minus (2,2)), or None. Picks the town whose reachable passable land is biggest."""
-    from vcmi_mapgen import traverse as TR
+    from vcmi_mapgen.kit import reachability as TR
     blocked, _W, _H = TR.passable_grid({"terrain": [terrain], "objects": objects}, 0)
     NB4 = [(1, 0), (-1, 0), (0, 1), (0, -1)]
-    towns = [o for o in objects if o.get("l", 0) == 0 and TR.TYPE2PURPOSE.get(o.get("type")) == "TOWN"]
+    towns = [o for o in objects if o.get("l", 0) == 0 and OR.type_to_purpose(o.get("type")) == "TOWN"]
     if not towns:
         return None
 
@@ -3372,8 +3372,7 @@ def generate_map(terrain, W, H, seed=0, min_area=12, name=None, grammar=None, pl
     # GLOBAL reachability: the dense per-zone obstacle fill can leave zones sealed from each other;
     # carve the minimal obstacle lines so every gameplay object sits in one connected open network.
     objects = _global_reachability_carve(objects, terrain, W, H, grow=not strict_terrain)
-    from vcmi_mapgen import traverse as TR
-    n_towns = sum(1 for o in objects if TR.TYPE2PURPOSE.get(o.get("type")) == "TOWN")
+    n_towns = sum(1 for o in objects if OR.type_to_purpose(o.get("type")) == "TOWN")
     fm = {"name": name or f"Generated-s{seed}", "width": W, "height": H,
           "twoLevel": False, "players": max(1, n_towns), "terrain": [terrain],
           "objects": objects}
@@ -3749,7 +3748,7 @@ def _mask_overlay(full_sprite, grid, tile):
     tile.) Validated against art: pine `B` on the trunk, wood pile `A` on the logs, seer hut
     centred, town gate at the sprite centre. '.' grid cells are outside the footprint and not drawn.
     Cropped to the union of sprite content + footprint. (This sprite-canvas frame is distinct from
-    the map-placement bottom-RIGHT anchor in render_editor/obj_resolve -- do not conflate them.)"""
+    the map-placement bottom-RIGHT anchor in render_editor/kit.objects -- do not conflate them.)"""
     from PIL import Image, ImageDraw
 
     base = full_sprite.convert("RGBA")

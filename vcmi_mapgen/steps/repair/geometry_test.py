@@ -31,7 +31,7 @@ def test_portal_reward_zone():
     guard adjacent), cache-tagged loot fills it, traverse counts it reachable, and
     fill_open_islands no longer buries it in decoration."""
     from vcmi_mapgen.steps.repair import geometry as GEO
-    from vcmi_mapgen import traverse as TR
+    from vcmi_mapgen.kit import reachability as TR
     from vcmi_mapgen import mapeval as ME
 
     S = 40

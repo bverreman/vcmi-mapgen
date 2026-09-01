@@ -1,7 +1,7 @@
 """Residual border-leak seal — Repair-only (structural/guard fixes, no content placement)."""
 import collections
 
-from vcmi_mapgen import obj_resolve as OR
+from vcmi_mapgen.kit import objects as OR
 from vcmi_mapgen import ontology as ON
 from vcmi_mapgen import zone_engine as ZE
 from vcmi_mapgen.steps.gate.gates import rnd_monster

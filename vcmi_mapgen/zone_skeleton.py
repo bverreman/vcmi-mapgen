@@ -13,7 +13,7 @@ import argparse
 import collections
 import os
 
-from vcmi_mapgen import obj_resolve as OR
+from vcmi_mapgen.kit import objects as OR
 from vcmi_mapgen import zone_engine as ZE
 
 WATER, ROCK = 8, 9

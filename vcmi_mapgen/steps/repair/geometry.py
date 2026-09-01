@@ -4,7 +4,7 @@ These were always pp_map-private helpers (not addressed through any pp_* layer m
 """
 import collections
 
-from vcmi_mapgen import obj_resolve as OR
+from vcmi_mapgen.kit import objects as OR
 from vcmi_mapgen import ontology as ON
 from vcmi_mapgen import zone_engine as ZE
 from vcmi_mapgen.steps.gate.gates import GAP, _fits, rnd_monster

@@ -32,7 +32,7 @@ import collections
 import math
 import os
 
-from vcmi_mapgen import obj_resolve as OR
+from vcmi_mapgen.kit import objects as OR
 from vcmi_mapgen import ontology as ON
 from vcmi_mapgen.steps.vegetation import stats as PS
 from vcmi_mapgen import zone_engine as ZE

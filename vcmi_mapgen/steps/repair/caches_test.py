@@ -26,7 +26,7 @@ def test_pickup_layer_legal_and_deterministic():
     o2 = CA.place_pickups(ts, zones, 1, "grass", open_set, prot, seed=6)
     assert o1 == o2, "pickup layer must be seed-deterministic"
     assert o1, "a 720-tile grass zone should hold pickups"
-    from vcmi_mapgen import obj_resolve as OR
+    from vcmi_mapgen.kit import objects as OR
     used = set()
     for o in o1:
         if o["purpose"] == "GUARD":

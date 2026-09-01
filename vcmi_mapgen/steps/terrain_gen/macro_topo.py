@@ -51,7 +51,7 @@ def mine_macro(level=0, force=False):
     maps — real underground zone areas/adjacency/barrier fraction are statistically distinct
     from the surface (rock, not subterr, is the dominant barrier terrain there; see corpus
     histograms in the design notes), so it is never derived from or blended with level-0 stats."""
-    from vcmi_mapgen import obj_resolve as OR
+    from vcmi_mapgen.kit import objects as OR
     path = STATS_PATH if level == 0 else STATS_PATH_UNDERGROUND
     if not force and os.path.exists(path):
         return json.load(open(path))

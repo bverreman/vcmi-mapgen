@@ -14,7 +14,7 @@ import collections
 import glob
 import os
 
-from vcmi_mapgen import obj_resolve as OR
+from vcmi_mapgen.kit import objects as OR
 from vcmi_mapgen import zone_engine as ZE
 from vcmi_mapgen import zone_skeleton as SK
 
@@ -839,7 +839,7 @@ def render_markov_sprites(seed=3, W=72, H=72, out=None, min_area=60,
     import collections as _C
     from vcmi_mapgen import markov_terrain as MT
     from vcmi_mapgen import ontology as ON
-    from vcmi_mapgen import obj_resolve as _OR
+    from vcmi_mapgen.kit import objects as _OR
     from vcmi_mapgen import render_editor as RED
 
     name2id = {v: k for k, v in ZE.TNAME.items()}

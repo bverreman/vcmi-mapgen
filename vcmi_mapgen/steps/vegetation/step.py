@@ -1,7 +1,7 @@
 """VegetationStep — place terrain-matched decorative vegetation per zone."""
 from __future__ import annotations
 
-from vcmi_mapgen import obj_resolve as OR
+from vcmi_mapgen.kit import objects as OR
 from vcmi_mapgen.pipeline import MapState, PipelineStep, PlacementWorkspace
 from vcmi_mapgen.steps.vegetation import sample as PP
 

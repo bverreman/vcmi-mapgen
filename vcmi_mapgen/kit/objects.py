@@ -1,16 +1,15 @@
-"""Object identity & subtype catalog for the deterministic template engine.
+"""Object identity & faithful-map catalog — the shared, generic lookup layer.
 
 Two sources of truth, both already byte-exact:
 
-  * ``out/faithful/<name>.json``  — every corpus object carries its EXACT
+  * ``maps_json/<name>.json``  — every corpus object carries its EXACT
     ``type, subtype, animation, mask`` (built from the real .h3m template). Use
     :func:`exact_identity` to reproduce a corpus object identically.
-  * ``out/objlib.json`` — ``purpose -> terrain_id -> [ {type, subtype, animation,
+  * ``data/objlib.json`` — ``purpose -> terrain_id -> [ {type, subtype, animation,
     mask, weight}, ... ]`` — the catalog of interchangeable concrete objects per
-    purpose+terrain, harvested from the corpus. Use :func:`pick_variant` to choose
-    one (argmax for the deterministic structure, seeded sample for subtype variety).
+    purpose+terrain, harvested from the corpus.
 
-The terrain cells in ``out/faithful`` ({t,view,rt,rd,ot,od,m}) are already what
+The terrain cells in a faithful map ({t,view,rt,rd,ot,od,m}) are already what
 ``faithful.to_vmap`` / ``faithful.tile_string`` expect, so a generated map can pass
 faithful terrain straight through.
 """
@@ -52,8 +51,23 @@ def all_map_names() -> list[str]:
 # ---------------------------------------------------------------------------
 
 def purpose_of(obj: dict) -> str:
-    """Purpose of a faithful object (uses its raw cls/sub via the ontology)."""
+    """Purpose of a faithful (corpus) object — uses its raw cls/sub via the ontology.
+    Only corpus objects (loaded via load_faithful) carry cls/sub; a GENERATED map's
+    objects carry type/subtype/purpose instead (purpose is set directly at construction
+    time) — use :func:`type_to_purpose` for a type-keyed lookup that works on either."""
     return ON.resolve(obj["cls"], obj["sub"]).get("purpose", "UNKNOWN")
+
+
+_TYPE2PURPOSE = {it["type"]: p for p, terr in _OBJLIB.items()
+                 for items in terr.values() for it in items}
+
+
+def type_to_purpose(type_name: str) -> str | None:
+    """Purpose for an object TYPE alone (no cls/sub needed) — built from the same
+    objlib.json catalog as :func:`purpose_of`, and verified byte-equivalent to it across
+    the full corpus (every type's purpose_of() result agrees with this table). The only
+    lookup that works for a generated map's objects, which don't carry cls/sub."""
+    return _TYPE2PURPOSE.get(type_name)
 
 
 def cluster_of(obj: dict) -> str:
@@ -118,42 +132,6 @@ def mask_interactive_cells(mask: list[str], x: int, y: int):
     return out
 
 
-# ---------------------------------------------------------------------------
-# Subtype catalog (objlib) — for seed-driven variety
-# ---------------------------------------------------------------------------
-
-def variants(purpose: str, terrain_id: int) -> list[dict]:
-    """Interchangeable concrete objects for (purpose, terrain), any-terrain fallback."""
-    by_terr = _OBJLIB.get(purpose)
-    if not by_terr:
-        return []
-    cands = by_terr.get(str(terrain_id))
-    if not cands:
-        for v in by_terr.values():
-            if v:
-                cands = v
-                break
-    return cands or []
-
-
-def pick_variant(purpose: str, terrain_id: int, rng=None) -> dict | None:
-    """Pick a concrete object for (purpose, terrain).
-
-    rng is None  -> argmax weight (deterministic structure; seed=0 path).
-    rng given    -> weighted sample (subtype variety; seed!=0 path).
-
-    Positions/counts are decided elsewhere; this only varies *which* concrete
-    object (e.g. which dwelling/mine resource/treasure) fills a planned slot.
-    """
-    cands = variants(purpose, terrain_id)
-    if not cands:
-        return None
-    if rng is None:
-        return max(cands, key=lambda e: e.get("weight", 0))
-    weights = [max(e.get("weight", 1), 1) for e in cands]
-    return rng.choices(cands, weights=weights, k=1)[0]
-
-
 if __name__ == "__main__":
     names = all_map_names()
     print(f"faithful maps: {len(names)}  objlib purposes: {sorted(_OBJLIB)}")
@@ -163,4 +141,3 @@ if __name__ == "__main__":
     print("All for One purposes:", dict(pc.most_common()))
     o = m["objects"][0]
     print("exact identity sample:", exact_identity(o), "blocking=", is_blocking(o["mask"]))
-    print("pick MINE on grass argmax:", pick_variant("MINE", 2))

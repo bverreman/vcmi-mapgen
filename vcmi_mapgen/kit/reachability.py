@@ -11,32 +11,14 @@ town and asserts every zone, every town and every mine is reachable. Wired into
 `ralph/verify.sh`, an unreachable map FAILS the gate.
 """
 
-import os, json, collections
+import collections
 
-from vcmi_mapgen.kit.paths import project_root
+from vcmi_mapgen.kit import objects as OBJ
 
-ROOT = project_root()
-OBJ = json.load(open(str(ROOT / "data" / "objlib.json")))
-TYPE2PURPOSE = {it["type"]: p for p, terr in OBJ.items() for items in terr.values() for it in items}
 WATER = 8
 ROCK = 9
 NB4 = [(1, 0), (-1, 0), (0, 1), (0, -1)]
 NB8 = [(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)]
-
-
-def _mask_cells(x, y, mask):
-    # anchor (x,y) = bottom-right tile; mask rows are stored left-to-right (sprite-aligned) so
-    # col 0 is the leftmost tile -> tx = x - (ww-1-c). Matches obj_resolve.mask_cells.
-    h = len(mask)
-    for r, row in enumerate(mask):
-        w = len(row)
-        for c, ch in enumerate(row):
-            yield (x - (w - 1 - c), y - (h - 1 - r), ch)
-
-
-def _dims(fm):
-    terr = fm["terrain"][0]
-    return len(terr[0]), len(terr)
 
 
 def passable_grid(fm, l=0):
@@ -50,8 +32,8 @@ def passable_grid(fm, l=0):
     for o in fm["objects"]:
         if o.get("l", 0) != l:
             continue
-        for cx, cy, ch in _mask_cells(o["x"], o["y"], o["mask"]):
-            if 0 <= cx < W and 0 <= cy < H and ch in ("B", "X"):
+        for cx, cy, blk in OBJ.mask_cells(o["mask"], o["x"], o["y"]):
+            if 0 <= cx < W and 0 <= cy < H and blk:
                 blocked[cy][cx] = True
     return blocked, W, H
 
@@ -59,7 +41,7 @@ def passable_grid(fm, l=0):
 def _a_cells(o):
     # visitable anchors: 'A' (stand on) and 'X' (blocked building tile, visited from adjacent — its
     # own tile is blocked so `_approaches` will yield its passable neighbours, not the tile itself).
-    return [(cx, cy) for cx, cy, ch in _mask_cells(o["x"], o["y"], o["mask"]) if ch in ("A", "X")]
+    return OBJ.mask_interactive_cells(o["mask"], o["x"], o["y"])
 
 
 def _approaches(o, blocked, W, H):
@@ -80,7 +62,7 @@ def _start_seed(fm, blocked, W, H):
     """Passable tiles next to the player's starting town. main_town is stored at
     (anchor-2, anchor-2); the town object's anchor is therefore main_town+(2,2)."""
     mt = fm.get("main_town")
-    towns = [o for o in fm["objects"] if TYPE2PURPOSE.get(o["type"]) == "TOWN"]
+    towns = [o for o in fm["objects"] if OBJ.type_to_purpose(o["type"]) == "TOWN"]
     start = None
     if mt is not None:
         ax, ay = mt["x"] + 2, mt["y"] + 2
@@ -159,7 +141,7 @@ def traverse(fm, em=None):
 
     bad_towns, bad_mines = [], []
     for o in fm["objects"]:
-        pp = TYPE2PURPOSE.get(o["type"])
+        pp = OBJ.type_to_purpose(o["type"])
         if pp == "TOWN" and not obj_reachable(o):
             bad_towns.append((o["x"], o["y"], o.get("l", 0)))
         elif pp == "MINE" and not obj_reachable(o):

@@ -32,7 +32,7 @@ def test_model_and_sampler_deterministic():
 @needs_stats
 def test_protected_web_stays_open():
     """No blocking cell may land on the protected walkable web (the hard zero)."""
-    from vcmi_mapgen import obj_resolve as OR
+    from vcmi_mapgen.kit import objects as OR
     from vcmi_mapgen.steps.vegetation import sample as PP
     model = PP.build_model("grass")
     ts = {(x, y) for x in range(20) for y in range(16)}

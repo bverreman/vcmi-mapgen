@@ -1096,7 +1096,7 @@ TAXONOMY = {
 
 # Per-animation placement metadata (footprint mask + class/subclass) so the ontology is
 # self-sufficient for tile placement and `.vmap` writing — no corpus needed. Keyed by the
-# (lowercase) animation DEF; mask is the B/A/V row-strings (obj_resolve.mask_cells semantics),
+# (lowercase) animation DEF; mask is the B/A/V row-strings (kit.objects.mask_cells semantics),
 # decoded from the authoritative objects.txt passability/triggers bitfields. Regenerate with
 # `python -m vcmi_mapgen.ontology --regen`.
 # === BEGIN GENERATED LEAF_META ===
@@ -2485,7 +2485,7 @@ def has_animation(animation):
 
 
 def mask_of(animation):
-    """B/A/V footprint rows for an animation (`obj_resolve.mask_cells` semantics: rows are
+    """B/A/V footprint rows for an animation (`kit.objects.mask_cells` semantics: rows are
     stored LEFT-TO-RIGHT, sprite-aligned, so column 0 is the LEFTMOST tile and the anchor is
     the last column, `tx = ax - (ww - 1 - c)`; case-insensitive), V-padded to the sprite's full
     tile extent (see :func:`_decode_mask_full`) — the same extent AND column order `.vmap`
@@ -2665,7 +2665,7 @@ def category_terrain_matrix():
 
 def _decode_mask(passability, triggers):
     """Decode the objects.txt passability(48)+triggers(48) bitfields into the B/A/V footprint
-    mask rows (`obj_resolve.mask_cells` semantics: B=blocking, A=visitable anchor, V=visible
+    mask rows (`kit.objects.mask_cells` semantics: B=blocking, A=visitable anchor, V=visible
     overlay). This reproduces `h3m2vmap.build_mask` (the corpus mask source) bit-for-bit: the
     6x8 grid defaults to 'V', a cell is 'A' if its trigger bit is set else 'B' if its
     passability bit is clear (H3: clear=blocked); rows/cols that are all-'V' are trimmed. The
@@ -2777,7 +2777,7 @@ def _decode_mask_full(passability, triggers, tile_dims):
     .vmaps V-fill to the sprite extent, so this is the ground truth for :func:`mask_of` as well
     as :func:`vmap_mask_of` — both in the same LEFT-TO-RIGHT column order as this function's
     output and the corpus's `h3m2vmap.build_mask` masks (col 0 = leftmost tile, anchor is the
-    last column: `tx = ax - (ww - 1 - c)`, see `obj_resolve.mask_cells`'s docstring); no column
+    last column: `tx = ax - (ww - 1 - c)`, see `kit.objects.mask_cells`'s docstring); no column
     reversal is needed anywhere in this decode chain — the v5.4 sawmill-guard-wrong-side bug
     turned out to be in the CONSUMER (`mask_cells`/`_cells` treating col 0 as the anchor instead
     of the leftmost tile), not in this decode chain."""

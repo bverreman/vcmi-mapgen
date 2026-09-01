@@ -8,7 +8,7 @@ import them from here rather than duplicating them or inventing a generic shared
 import json
 import os
 
-from vcmi_mapgen import obj_resolve as OR
+from vcmi_mapgen.kit import objects as OR
 from vcmi_mapgen import ontology as ON
 from vcmi_mapgen.kit.paths import project_root
 
@@ -108,7 +108,7 @@ def mine_gate_stats(force=False):
 
 def place_gates(ts0, ts1, occ0, occ1, appr0=frozenset(), appr1=frozenset(), seed=1):
     """Subterranean Gate pairs: one `avtcave` object at the IDENTICAL (x, y) on both levels —
-    `traverse.py`'s `_gate_links` already pairs gates by exact-(x, y) match, so no other
+    `kit/reachability.py`'s `_gate_links` already pairs gates by exact-(x, y) match, so no other
     linking is needed. Candidates are tiles walkable on BOTH levels (`ts0 & ts1`); footprint
     legality (`_fits`, reused unchanged) is checked against the UNION of both levels' already-
     placed gameplay footprints (`occ0`/`occ1`, GAP-inflated the same way `place_zone` does

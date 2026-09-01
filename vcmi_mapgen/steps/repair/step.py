@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import collections
 
-from vcmi_mapgen import obj_resolve as OR
+from vcmi_mapgen.kit import objects as OR
 from vcmi_mapgen import zone_engine as ZE
 from vcmi_mapgen import zone_field as ZF
 from vcmi_mapgen.pipeline import MapState, PipelineStep, PlacementWorkspace

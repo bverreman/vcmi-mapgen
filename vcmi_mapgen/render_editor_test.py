@@ -18,7 +18,7 @@ import collections
 import pytest
 
 import vcmi_mapgen.render_editor as RE
-import vcmi_mapgen.obj_resolve as OR
+import vcmi_mapgen.kit.objects as OR
 import vcmi_mapgen.faithful as FA
 import vcmi_mapgen.zone_engine as ZE
 

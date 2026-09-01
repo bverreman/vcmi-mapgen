@@ -19,7 +19,7 @@ The returned footprint cells + approach tiles feed vegetation's `sample_zone` as
 import collections
 import json
 import os
-from vcmi_mapgen import obj_resolve as OR
+from vcmi_mapgen.kit import objects as OR
 from vcmi_mapgen import ontology as ON
 from vcmi_mapgen import zone_engine as ZE
 from vcmi_mapgen import zone_field as ZF

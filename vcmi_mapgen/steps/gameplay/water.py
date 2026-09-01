@@ -9,7 +9,7 @@ which need the exact same helpers) imports them from here rather than duplicatin
 import collections
 import zlib
 
-from vcmi_mapgen import obj_resolve as OR
+from vcmi_mapgen.kit import objects as OR
 from vcmi_mapgen import ontology as ON
 from vcmi_mapgen import zone_engine as ZE
 from vcmi_mapgen.steps.gate.gates import rnd_monster

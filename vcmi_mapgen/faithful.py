@@ -136,8 +136,8 @@ def to_vmap(fm, out_path, name=None):
     # the random-map template); the town object itself stays owner=None. Earlier we
     # only gave player 0 a town, leaving every other player town-less => not playable.
     # Surface towns first, then put the start town (fm["main_town"]) on player 0.
-    from vcmi_mapgen import traverse as TR
-    towns = [o for o in fm["objects"] if TR.TYPE2PURPOSE.get(o.get("type")) == "TOWN"]
+    from vcmi_mapgen.kit import objects as _objects
+    towns = [o for o in fm["objects"] if _objects.type_to_purpose(o.get("type")) == "TOWN"]
     towns.sort(key=lambda o: (o.get("l", 0), o["y"], o["x"]))
     mt = fm.get("main_town")
     if mt is not None:  # start town first => player 0
