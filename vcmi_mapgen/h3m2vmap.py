@@ -8,29 +8,10 @@ import json, glob, os, sys, re, collections
 from vcmi_mapgen import h3m, vcmi_ids
 from vcmi_mapgen.kit import paths as vcmi_paths
 from vcmi_mapgen.kit import vmap_format as vmapwrite
+from vcmi_mapgen.kit.vmap_format import TCODE, RIVER, ROAD, _mir as mirror_suffix
 from vcmi_mapgen.kit.paths import project_root
 
 ROOT = project_root()
-
-TCODE = {
-    0: "dt",
-    1: "sa",
-    2: "gr",
-    3: "sn",
-    4: "sw",
-    5: "rg",
-    6: "sb",
-    7: "lv",
-    8: "wt",
-    9: "rc",
-}
-RIVER = {1: "clrv", 2: "icyrv", 3: "mudrv", 4: "lavrv"}
-ROAD = {1: "dirtrd", 2: "gravrd", 3: "cobbrd"}
-
-
-def mirror_suffix(m):
-    h, v = m & 1, m & 2
-    return "+" if (h and v) else "|" if v else "-" if h else "_"
 
 
 def tile_string(t):

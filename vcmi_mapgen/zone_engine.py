@@ -40,6 +40,7 @@ from vcmi_mapgen.kit.segmentation import _segment_level
 from vcmi_mapgen.kit.terrain_lookup import TNAME, EXCLUDE_DECOR_TYPES
 from vcmi_mapgen import ontology as ON
 from vcmi_mapgen import faithful as FA
+from vcmi_mapgen.kit import vmap_format as VF
 from vcmi_mapgen.vcmi_ids import TERRAIN_RGB as _TERRAIN_RGB
 from vcmi_mapgen.kit.paths import project_root
 
@@ -3429,7 +3430,7 @@ def render_fm(fm, out_path, title=""):
     canvas = Image.new("RGB", (W * T, H * T), (0, 0, 0))
     for y in range(H):
         for x in range(W):
-            canvas.paste(RE.terr_tile_img(FA.tile_string(terr[y][x])).convert("RGB"), (x * T, y * T))
+            canvas.paste(RE.terr_tile_img(VF.tile_string(terr[y][x])).convert("RGB"), (x * T, y * T))
     objs = [o for o in fm["objects"] if o.get("l", 0) == 0]
     miss = 0
     for o in sorted(objs, key=lambda o: (_paint_layer(o), o["y"], o["x"])):
@@ -3478,7 +3479,7 @@ def _render_panel(pan, title=None):
     for y in range(y0, y1):
         for x in range(x0, x1):
             if (x, y) in tiles:
-                img.paste(RE.terr_tile_img(FA.tile_string(terr[y][x])),
+                img.paste(RE.terr_tile_img(VF.tile_string(terr[y][x])),
                           ((x - x0) * T, (y - y0) * T))
     for (ox, oy, sp) in draw:
         img.paste(sp, ((ox - x0 + 1) * T - sp.size[0], (oy - y0 + 1) * T - sp.size[1]), sp)

@@ -3,90 +3,16 @@ the writer. A map is terrain (per-tile structured) + objects (authoritative ids 
 animation + mask). Anything in this shape round-trips to an editor-valid .vmap.
 """
 
-import json, re, glob, os
+import json, glob, os
 import pathlib
 
-from vcmi_mapgen.kit import vmap_format as vmapwrite
-from vcmi_mapgen import ontology
+from vcmi_mapgen.kit import vmap_format
 from vcmi_mapgen.kit import paths as vcmi_paths
-
-TCODE = {
-    0: "dt",
-    1: "sa",
-    2: "gr",
-    3: "sn",
-    4: "sw",
-    5: "rg",
-    6: "sb",
-    7: "lv",
-    8: "wt",
-    9: "rc",
-}
-RIVER = {1: "clrv", 2: "icyrv", 3: "mudrv", 4: "lavrv"}
-ROAD = {1: "dirtrd", 2: "gravrd", 3: "cobbrd"}
-
-
-def _mir(m):
-    h, v = m & 1, m & 2
-    return "+" if (h and v) else "|" if v else "-" if h else "_"
-
-
-def tile_string(c):
-    s = f"{TCODE.get(c['t'], 'gr')}{c['view']}{_mir(c.get('m', 0))}"
-    if c.get("rt"):
-        s += f"{RIVER.get(c['rt'], 'clrv')}{c.get('rd', 0)}_"
-    if c.get("ot"):
-        s += f"{ROAD.get(c['ot'], 'dirtrd')}{c.get('od', 0)}_"
-    return s
-
-
-def visitable_from(mask):
-    """The 3x3 approach grid VCMI needs for visitable templates. Buildings (have
-    blocked body) are entered from the sides/below; free-standing pickups/monsters
-    from all 8 directions. None for pure decoration (no visitable tile)."""
-    if not any(ch in "AX" for r in mask for ch in r):     # 'A' or 'X' = a visitable tile
-        return None
-    if any(ch in "BX" for r in mask for ch in r):         # has a blocked body -> a building
-        return ["---", "+-+", "+++"]
-    return ["+++", "+-+", "+++"]
-
-
-def vcmi_mask(mask):
-    """Translate an engine-internal mask to VCMI's template charset for .vmap export.
-
-    Our masks use 'X' for a blocked ENTRANCE cell (entered from below). VCMI's
-    ObjectTemplate parser only knows ' 0VBHAT' and logs "Unrecognized char X in template
-    mask", dropping the cell to FREE — which made every mine/town silently unvisitable
-    in-game (no VISITABLE cell survived). VCMI's 'A' = VISIBLE|BLOCKED|VISITABLE is the
-    exact semantic of our 'X' (and of our walk-on 'A' — monsters/pickups are
-    blocked-visitable in H3), so both map onto it."""
-    return [row.replace("X", "A") for row in mask]
-
-
-def _trim_v(mask):
-    """The mask minus its all-'V' border rows/columns — the footprint core two masks must
-    share to be the same object shape."""
-    rows = [i for i, r in enumerate(mask) if set(r) - {"V"}]
-    cols = [c for c in range(len(mask[0])) if any(row[c] != "V" for row in mask)]
-    if not rows or not cols:
-        return ["V"]
-    return [mask[i][min(cols):max(cols) + 1] for i in range(min(rows), max(rows) + 1)]
-
-
-def export_mask(o):
-    """The template mask written to the .vmap: the ontology's sprite-extent mask
-    (`vmap_mask_of` — VCMI draws an object only on mask-covered tiles, so the bbox-trimmed
-    internal mask truncates tall sprites in-game) when its footprint core agrees with the
-    instance mask; otherwise the instance mask translated to VCMI's charset (the editor
-    table and a map instance legitimately disagree for a handful of corpus dwellings)."""
-    inst = vcmi_mask(o["mask"])
-    vm = ontology.vmap_mask_of(o["animation"])
-    return vm if vm and _trim_v(vm) == _trim_v(inst) else inst
 
 
 def to_vmap(fm, out_path, name=None):
     """faithful map dict -> editor-valid .vmap via the proven writer."""
-    levels = [[[tile_string(c) for c in row] for row in lvl] for lvl in fm["terrain"]]
+    levels = [[[vmap_format.tile_string(c) for c in row] for row in lvl] for lvl in fm["terrain"]]
     objs = []
     n = 0
     for o in fm["objects"]:
@@ -94,8 +20,8 @@ def to_vmap(fm, out_path, name=None):
             continue
         n += 1
         tmpl = {"animation": o["animation"], "editorAnimation": "",
-                "mask": export_mask(o)}
-        vf = o.get("visitableFrom") or visitable_from(o["mask"])  # explicit override wins
+                "mask": vmap_format.export_mask(o)}
+        vf = o.get("visitableFrom") or vmap_format.visitable_from(o["mask"])  # explicit override wins
         if vf:
             tmpl["visitableFrom"] = vf
         vo = {
@@ -127,7 +53,7 @@ def to_vmap(fm, out_path, name=None):
                     del vo["options"]
     _rmg = glob.glob(os.path.join(vcmi_paths.vcmi_home(), "Maps", "RandomMaps", "*.vmap"))
     if _rmg:
-        header, _, _, _ = vmapwrite.read_raw(_rmg[0])
+        header, _, _, _ = vmap_format.read_raw(_rmg[0])
     else:
         _tpl = str(pathlib.Path(__file__).parent.parent / "data" / "vmap_header_template.json")
         header = json.load(open(_tpl))
@@ -154,7 +80,7 @@ def to_vmap(fm, out_path, name=None):
         else:                       # no town for this slot -> not a participant
             pl["mainTown"] = None
             pl["canPlay"] = "false"
-    vmapwrite.write_vmap(out_path, header, levels, objs, name=name or fm.get("name", "generated"))
+    vmap_format.write_vmap(out_path, header, levels, objs, name=name or fm.get("name", "generated"))
     return out_path
 
 

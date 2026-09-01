@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from vcmi_mapgen.pipeline import MapState, PipelineStep
 from vcmi_mapgen import zone_engine as ZE
-from vcmi_mapgen import faithful as FA
+from vcmi_mapgen.kit import vmap_format as FA
 
 
 class TileStep(PipelineStep):

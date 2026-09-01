@@ -273,7 +273,8 @@ def read_vmap(path):
 def read_real(name):
     """Load from original .h3m file (full tile view/mirror data) + objects with animation."""
     h3m_path = f"{ROOT}/maps/{name}.h3m"
-    from vcmi_mapgen import h3m as H3M, faithful as FA
+    from vcmi_mapgen import h3m as H3M
+    from vcmi_mapgen.kit import vmap_format as FA
     hmap = H3M.parse_file(h3m_path)
     # build tile strings from the parsed Tile objects (terrain, view, mirror)
     surf = []
