@@ -5,7 +5,8 @@ import collections
 
 from vcmi_mapgen.kit import objects as OR
 from vcmi_mapgen import ontology as ON
-from vcmi_mapgen import zone_field as ZF
+from vcmi_mapgen.kit.geometry import NB8
+from vcmi_mapgen.kit.topology import find_pockets, mouth_key
 from vcmi_mapgen.steps.gate.gates import rnd_monster
 from vcmi_mapgen.steps.gameplay.mines import mine_gameplay
 from vcmi_mapgen.steps.pickup.loot_zones import _FILL_EXCL_ANIMS, _solo_visit_pool
@@ -37,7 +38,7 @@ def _reach8(open_set, seed):
     q = collections.deque(d)
     while q:
         x, y = q.popleft()
-        for dx, dy in ZF.NB8:
+        for dx, dy in NB8:
             n = (x + dx, y + dy)
             if n in open_set and n not in d:
                 d.add(n)
@@ -47,7 +48,7 @@ def _reach8(open_set, seed):
 
 def _dedupe_pockets(pockets, reach=frozenset()):
     """Collapse near-duplicate mouth candidates into one CANDIDATE LIST per genuine physical
-    nook. `ZF.find_pockets` returns one entry per candidate MOUTH tile, but several nearby
+    nook. `find_pockets` returns one entry per candidate MOUTH tile, but several nearby
     tiles each independently qualify as "the" guard spot of the same nook (a ZoC-neck is 3x3,
     so a flat-face nook alone yields ~4 candidates) -- and in H3 a guard already threatens
     every adjacent tile (stepping next to a wandering monster forces combat), so one guard
@@ -55,9 +56,9 @@ def _dedupe_pockets(pockets, reach=frozenset()):
     guard_tile+pocket tiles into 4-connected blobs (union-find over shared tiles).
 
     `pockets` maps guard_tile -> (pocket_frozenset, mouth_frozenset) as returned by
-    `ZF.find_pockets`.
+    `find_pockets`.
 
-    Returns a list of candidate lists (one list per nook), each sorted by `ZF.mouth_key`
+    Returns a list of candidate lists (one list per nook), each sorted by `mouth_key`
     over `reach` (in-neck first, then largest pocket, then orthogonal-front), outer list
     sorted best-top-candidate first. Each candidate is a (guard_tile, pocket, mouth_fs)
     triple. The caller tries candidates within a blob in order and falls back to the next
@@ -84,9 +85,9 @@ def _dedupe_pockets(pockets, reach=frozenset()):
     groups = collections.defaultdict(list)
     for idx, (g, pocket, mouth_fs) in enumerate(items):
         groups[find(idx)].append((g, pocket, mouth_fs))
-    blobs = [sorted(cands, key=lambda kv: ZF.mouth_key(reach, kv[0], kv[1]))
+    blobs = [sorted(cands, key=lambda kv: mouth_key(reach, kv[0], kv[1]))
              for cands in groups.values()]
-    return sorted(blobs, key=lambda cands: ZF.mouth_key(reach, cands[0][0], cands[0][1]))
+    return sorted(blobs, key=lambda cands: mouth_key(reach, cands[0][0], cands[0][1]))
 
 
 def _seerhut_reward(rng):
@@ -152,7 +153,7 @@ def place_pocket_caches(zone_records, seed=1, bounds=None, border_guards=frozens
     User-mandated fix (2026-07-04): pocket detection must not run per zone against that
     zone's own `reach` alone — a tile absent from one zone's reach is NOT necessarily
     blocking, it may just be a NEIGHBOURING zone's open ground, and zone borders are wide
-    gate bands, not walls (see `zone_field._zone_gate_bands`). Fix #1: build one GLOBAL
+    gate bands, not walls (see `kit.topology._zone_gate_bands`). Fix #1: build one GLOBAL
     reachable set (union of every zone's remaining reach) instead of a per-zone one.
 
     Third fix, same day (user: "there is something wrong in the way you classify open tile,
@@ -227,7 +228,7 @@ def place_pocket_caches(zone_records, seed=1, bounds=None, border_guards=frozens
     global_reach8 = _reach8(global_true, global_reach)
     global_place = global_reach8 & global_open
 
-    raw = precomputed_pockets if precomputed_pockets is not None else ZF.find_pockets(global_true)
+    raw = precomputed_pockets if precomputed_pockets is not None else find_pockets(global_true)
     blobs = _dedupe_pockets(raw, global_true)
     guard_mask = rnd_monster(1)["mask"]  # uniform across levels 1-7; used to pre-check fit
     objs = []
@@ -424,7 +425,7 @@ def place_seer_hut_quests(zone_records, seed=1, bounds=None, used_artifacts=None
         _ptiles_global = pocket_tiles
     else:
         passable_all = set().union(*(zr.get("passable", zr["reach"]) for zr in zone_records))
-        raw_p = ZF.find_pockets(passable_all)
+        raw_p = find_pockets(passable_all)
         _ptiles_global = set()
         for _g, (pt, _mf) in raw_p.items():
             if len(pt) >= 3:

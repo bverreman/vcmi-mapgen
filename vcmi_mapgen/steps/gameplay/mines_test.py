@@ -218,7 +218,7 @@ def test_entrance_guard_single_side():
     """With an entrance plan, only the LOWER zid of a pair emits the crossing guard, and it
     sits on the planned rep/band (a genuine chokepoint), not on a random pocket mouth."""
     from vcmi_mapgen.steps.gameplay import mines as PG
-    from vcmi_mapgen import zone_field as ZF
+    from vcmi_mapgen.kit.topology import plan_entrances
 
     ts1 = {(x, y) for x in range(14) for y in range(12)}
     ts2 = {(x, y) for x in range(14, 28) for y in range(12)}
@@ -226,7 +226,7 @@ def test_entrance_guard_single_side():
                  "terrain_type": 2},
              2: {"tiles_set": sorted(ts2), "centroid": (20.5, 5.5), "area": 168,
                  "terrain_type": 2}}
-    plan = ZF.plan_entrances(zones)
+    plan = plan_entrances(zones)
     crossing1 = {t for r, b, _o in plan[1] for t in b | {r}}
     crossing2 = {t for r, b, _o in plan[2] for t in b | {r}}
 

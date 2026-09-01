@@ -5,7 +5,7 @@ import collections
 
 from vcmi_mapgen.kit import objects as OR
 from vcmi_mapgen.kit.terrain_lookup import TNAME
-from vcmi_mapgen import zone_field as ZF
+from vcmi_mapgen.kit.topology import find_pockets
 from vcmi_mapgen.pipeline import MapState, PipelineStep, PlacementWorkspace
 from vcmi_mapgen.steps.repair import border_seal as BS
 from vcmi_mapgen.steps.repair import caches as CA
@@ -103,7 +103,7 @@ def _repair_one_level(level, size, grid, objs, targets, zone_records, seed,
     _global_true_pkt = set()
     for _zr_pkt in zone_records:
         _global_true_pkt |= _zr_pkt.get("passable", _zr_pkt["open_set"])
-    _raw_pkt = ZF.find_pockets(_global_true_pkt)
+    _raw_pkt = find_pockets(_global_true_pkt)
     _pocket_tiles_pkt = set()
     for _g_pkt, (_pt_pkt, _mf_pkt) in _raw_pkt.items():
         if len(_pt_pkt) >= 3:

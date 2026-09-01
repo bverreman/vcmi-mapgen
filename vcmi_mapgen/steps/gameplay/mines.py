@@ -23,7 +23,8 @@ from vcmi_mapgen.kit import objects as OR
 from vcmi_mapgen import ontology as ON
 from vcmi_mapgen.kit.terrain_lookup import TNAME, EXCLUDE_DECOR_TYPES
 from vcmi_mapgen.kit.segmentation import _segment_level
-from vcmi_mapgen import zone_field as ZF
+from vcmi_mapgen.kit.geometry import NB8, edge_dist
+from vcmi_mapgen.kit.topology import _zone_fronts, _zone_gates, _zone_gate_bands, find_pockets
 from vcmi_mapgen.kit.paths import project_root
 # Gate is the first step in pipeline order to need footprint-fitting helpers
 # (_cells/_fits/GAP) and rnd_monster; Gameplay/Pickup/Repair import them from there rather
@@ -247,12 +248,12 @@ def mine_gameplay(level=0, force=False):
             a = acc[terr]
             ts = set(z["tiles_set"])
             a["tiles"] += len(ts)
-            ed = ZF.edge_dist(ts)
+            ed = edge_dist(ts)
             # corpus zone "gates" ARE the wide terrain borders — measure gate distance from
             # the FULL contact fronts, matching the generator's wide gate bands (v5)
-            fronts = ZF._zone_fronts(ts, zones, zid)
+            fronts = _zone_fronts(ts, zones, zid)
             front_union = set().union(*fronts.values()) if fronts else set()
-            gd = gate_dist(ts, front_union or ZF._zone_gates(ts, zones, zid))
+            gd = gate_dist(ts, front_union or _zone_gates(ts, zones, zid))
             veg_blocked, all_blocked = set(), set()
             zone_objs = [
                 o for o in fm["objects"] if o.get("l", 0) == level and (o["x"], o["y"]) in ts
@@ -414,7 +415,7 @@ def place_zone(ts, zones, zid, terrain, seed=1, coastal=frozenset(), force_town=
     this function returns — treats it exactly like a pre-existing mine or town: avoided by
     its footprint + the ordinary GAP buffer only, not a large separately-reserved clearing.
 
-    `entrances` (this zone's `zone_field.plan_entrances` entries, `[(rep, band, other_zid)]`)
+    `entrances` (this zone's `kit.topology.plan_entrances` entries, `[(rep, band, other_zid)]`)
     switches the border model from corpus-open gate bands to the map-level ISOLATION plan:
     the planned narrow bands replace `_zone_gate_bands` for the gate-distance covariate, no
     gameplay footprint may squat on a band (the crossing must stay walkable), and the
@@ -573,7 +574,7 @@ def place_zone(ts, zones, zid, terrain, seed=1, coastal=frozenset(), force_town=
     # anchor sampling from the fitted per-purpose intensity (the L3 fit applied).
     # Gates are corpus-wide BANDS of the contact front (not 1-tile corridors) — gate
     # distance is measured from the whole open band, matching the v5 corpus mining.
-    ed = ZF.edge_dist(ts)
+    ed = edge_dist(ts)
     if entrances is not None:
         gate_bands = [(rep, band) for rep, band, _other in entrances]
         band_union = set().union(*(b for _r, b in gate_bands)) if gate_bands else set()
@@ -586,10 +587,10 @@ def place_zone(ts, zones, zid, terrain, seed=1, coastal=frozenset(), force_town=
             if zz != zid:
                 others.update(z2["tiles_set"])
         rim8 = {t for t in ts
-                if any((t[0] + dx, t[1] + dy) in others for dx, dy in ZF.NB8)}
+                if any((t[0] + dx, t[1] + dy) in others for dx, dy in NB8)}
         ent_reserved = frozenset(rim8 | band_union)
     else:
-        gate_bands = ZF._zone_gate_bands(ts, zones, zid, open_frac=st.get("border_open_frac", 0.5))
+        gate_bands = _zone_gate_bands(ts, zones, zid, open_frac=st.get("border_open_frac", 0.5))
         band_union = set().union(*(b for _r, b in gate_bands)) if gate_bands else set()
         ent_reserved = frozenset()
     gd = gate_dist(ts, band_union)
@@ -778,15 +779,15 @@ def place_zone(ts, zones, zid, terrain, seed=1, coastal=frozenset(), force_town=
                 (tx, ty) for tx, ty, _b in OR.mask_cells(gident["mask"], target[0], target[1]))
     else:
         # zone-edge guards: gate bands are deliberately WIDE corpus-open borders (see
-        # ZF._zone_gate_bands), so most crossings have no real bottleneck at all — guarding an
+        # _zone_gate_bands), so most crossings have no real bottleneck at all — guarding an
         # arbitrary "least open" tile inside a wide band never actually blocks anything (the hero
         # just walks around it through the rest of the band). A crossing only deserves a guard
-        # when it is a genuine chokepoint: `ZF.find_pockets(ts)` finds every tile from which one
+        # when it is a genuine chokepoint: `find_pockets(ts)` finds every tile from which one
         # guard's zone of control seals a bounded (<=16-tile) pocket of this zone's own shape.
         # A gate band tile that is ALSO one of those mouths sits inside a narrow niche that
         # happens to open onto the neighbouring zone — that is worth guarding; a gate band tile
         # that is not is just open ground, and stays unguarded.
-        pocket_mouths = ZF.find_pockets(ts)
+        pocket_mouths = find_pockets(ts)
         for rep, band in sorted(gate_bands):
             cands = [t for t in band if t in ts and t not in occupied and t in pocket_mouths]
             if not cands:

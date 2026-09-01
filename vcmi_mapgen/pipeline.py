@@ -81,7 +81,7 @@ class ZoneWorkspace:
     occupied: frozenset = frozenset()
     gblocked: frozenset = frozenset()
     approaches: tuple = ()
-    entrances: list = field(default_factory=list)   # zone_field.plan_entrances entries
+    entrances: list = field(default_factory=list)   # kit.topology.plan_entrances entries
     prot: frozenset = frozenset()         # protected web
     rim8: frozenset = frozenset()
     ent_bands: frozenset = frozenset()

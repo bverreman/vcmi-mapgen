@@ -28,13 +28,12 @@ from vcmi_mapgen.kit import objects as OR
 from vcmi_mapgen import ontology as ON
 from vcmi_mapgen.kit.terrain_lookup import TNAME, EXCLUDE_DECOR_TYPES
 from vcmi_mapgen.kit.segmentation import _segment_level
-from vcmi_mapgen import zone_field as ZF
+from vcmi_mapgen.kit.geometry import EBINS, edge_dist, run_lengths
 from vcmi_mapgen.kit.paths import project_root
 
 ROOT = project_root()
 PP_DIR = str(ROOT / "data" / "pp")
 RMAX = 6                        # pair-correlation rings 0..RMAX (Chebyshev)
-EBINS = ZF.EBINS                # edge-distance bins, shared with the field module
 MIN_AREA = 60                   # same zone-size floor as the field learner
 CELL = 6                        # coarse-cell size for the overdispersion (Cox field) statistic
 LAND = ("dirt", "sand", "grass", "snow", "swamp", "rough", "subterr", "lava")
@@ -129,7 +128,7 @@ def mine(nmaps=159, force=False):
             a = acc[terr]
             ts = set(z["tiles_set"])
             anchors = _anchors_of_zone(fm, ts)
-            edist = ZF.edge_dist(ts)
+            edist = edge_dist(ts)
 
             a["nzones"] += 1
             a["tiles"] += len(ts)
@@ -180,7 +179,7 @@ def mine(nmaps=159, force=False):
                     if blk and (cx, cy) in ts:
                         blocked.add((cx, cy))
             a["blocked"] += len(blocked)
-            a["runs"].update(ZF.run_lengths(ts, ts - blocked))
+            a["runs"].update(run_lengths(ts, ts - blocked))
         if (i + 1) % 40 == 0:
             print(f"  mined {i + 1}/{len(names)} maps")
 

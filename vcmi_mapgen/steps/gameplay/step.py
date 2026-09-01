@@ -6,7 +6,8 @@ import collections
 from vcmi_mapgen.kit import objects as OR
 from vcmi_mapgen.steps.vegetation import sample as PP  # protected_web
 from vcmi_mapgen.kit.terrain_lookup import TNAME
-from vcmi_mapgen import zone_field as ZF
+from vcmi_mapgen.kit.geometry import NB8, edge_dist
+from vcmi_mapgen.kit.topology import plan_entrances
 from vcmi_mapgen.pipeline import LevelWorkspace, MapState, PipelineStep, PlacementWorkspace, ZoneWorkspace
 from vcmi_mapgen.steps.gameplay import mines as MN
 from vcmi_mapgen.steps.gameplay import water as WT
@@ -23,7 +24,7 @@ def _rim8(zones):
         for t in z["tiles_set"]:
             owner[t] = zid
     return {t for t, zid in owner.items()
-            if any(owner.get((t[0] + dx, t[1] + dy), zid) != zid for dx, dy in ZF.NB8)}
+            if any(owner.get((t[0] + dx, t[1] + dy), zid) != zid for dx, dy in NB8)}
 
 
 def _run_level_gameplay(level, W, H, grid, zones, player_zids, ledger, gstats, seed,
@@ -48,7 +49,7 @@ def _run_level_gameplay(level, W, H, grid, zones, player_zids, ledger, gstats, s
     # share of the front), and the vegetation sampler actively densifies the rest of the
     # border (`border=` bias) so zones read as isolated regions with a few real entrances.
     # `seal_zone_borders` below then closes whatever aligned holes the statistics left.
-    entrance_plan = ZF.plan_entrances(zones)
+    entrance_plan = plan_entrances(zones)
     ridge = set()                                    # all rim tiles minus entrance bands
     rim_all = _rim8(zones)                           # 8-connected inter-zone rim, both sides
 
@@ -118,7 +119,7 @@ def _run_level_gameplay(level, W, H, grid, zones, player_zids, ledger, gstats, s
 
         # protected walkable web: backbone + gates + gameplay approaches, routed around the
         # IMPASSABLE gameplay cells (approach tiles themselves are passable and stay nodes)
-        edist = ZF.edge_dist(ts)
+        edist = edge_dist(ts)
         zcx, zcy = z["centroid"]
         seedt = min(ts, key=lambda t: (t[0] - int(round(zcx))) ** 2
                     + (t[1] - int(round(zcy))) ** 2)

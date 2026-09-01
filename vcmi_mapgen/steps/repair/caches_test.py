@@ -55,11 +55,11 @@ def test_find_pockets_drawn_shapes():
     test could never detect it (it only worked when the flanking walls happened to
     protrude past the face and block the diagonals)."""
     from vcmi_mapgen.steps.repair import caches as CA
-    from vcmi_mapgen import zone_field as ZF
+    from vcmi_mapgen.kit.topology import find_pockets
 
     def best_mouths(reach, pocket_tiles):
         """canonical (deduped, ranked) mouth candidates whose pocket covers the nook"""
-        raw = {m: c for m, c in ZF.find_pockets(reach).items()
+        raw = {m: c for m, c in find_pockets(reach).items()
                if set(pocket_tiles) <= set(c)}
         return [cands[0] for cands in CA._dedupe_pockets(raw, reach)]
 
@@ -107,7 +107,7 @@ def test_find_pockets_drawn_shapes():
     # along its run (its two END corners against the map edge are genuine 1-tile corner
     # nooks and MAY be flagged -- that is accepted semantics, thinned by POCKET_MIN_SEP)
     reach = _field(12, 12, {(x, 6) for x in range(12)})
-    for m, c in ZF.find_pockets(reach).items():
+    for m, c in find_pockets(reach).items():
         assert all(t[0] in (0, 11) for t in c), f"mid-wall false positive {m}->{sorted(c)}"
 
 

@@ -6,7 +6,7 @@ def test_seal_zone_borders_closes_or_guards():
     either SEALED with a blocking decoration or contested by a back-path GUARD's zone of
     control — an unguardable-and-unsealable free crossing must not survive."""
     from vcmi_mapgen.steps.repair import border_seal as BS
-    from vcmi_mapgen import zone_field as ZF
+    from vcmi_mapgen.kit.topology import plan_entrances
 
     S, GRASS = 20, 2
     grid = [[GRASS] * S for _ in range(S)]
@@ -16,7 +16,7 @@ def test_seal_zone_borders_closes_or_guards():
                  "terrain_type": GRASS},
              2: {"tiles_set": sorted(ts2), "centroid": (14.5, 9.5), "area": len(ts2),
                  "terrain_type": GRASS}}
-    plan = ZF.plan_entrances(zones)
+    plan = plan_entrances(zones)
     bands = set()
     for ents in plan.values():
         for _r, b, _o in ents:

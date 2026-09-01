@@ -38,6 +38,10 @@ from vcmi_mapgen.steps.vegetation import stats as PS
 from vcmi_mapgen import zone_engine as ZE
 from vcmi_mapgen.kit.terrain_lookup import TNAME, EXCLUDE_DECOR_TYPES
 from vcmi_mapgen.kit.segmentation import _segment_level
+from vcmi_mapgen.kit.geometry import edge_dist, run_lengths
+from vcmi_mapgen.kit.topology import SPACING, _zone_fronts, _zone_gate_bands, _farthest_points, _geodesic_path
+# zone_field.py is research-only now (its production pieces moved to kit/geometry.py +
+# kit/topology.py) — this file's own m1_experiment() debug helper still calls its render_rw().
 from vcmi_mapgen import zone_field as ZF
 
 EBINS = PS.EBINS
@@ -46,7 +50,6 @@ KW = 2 * RINT + 1               # interaction window (5x5)
 STEPS_PER_TILE = 40             # MH proposals per zone tile
 SAT = 2                         # Geyer saturation: neighbour count cap per (category, ring)
 COX_CELL = 7                    # value-noise cell of the Cox log-field (~ the corpus CELL scale)
-SPACING = ZF.SPACING            # backbone node spacing for the protected web
 BASE_W = 0.3                    # base weight so native-but-corpus-rare sprites stay possible
 
 
@@ -100,7 +103,7 @@ def build_model(terrain):
 def protected_web(ts, zones, zid, edist, seedt, spacing=SPACING, extra_nodes=(),
                   avoid=frozenset(), open_frac=0.5, entrances=None, keep_off=frozenset()):
     """The PROTECTED walkable set: spanning backbone over farthest-point nodes + rim gate
-    BANDS (constructive global connectivity, reusing zone_field's helpers — spec §5).
+    BANDS (constructive global connectivity, reusing kit.topology's helpers — spec §5).
 
     Gates are corpus-wide bands of the zone-contact front (`open_frac` = the mined fraction
     of corpus zone-border tiles left passable): the whole band is protected, so vegetation
@@ -109,7 +112,7 @@ def protected_web(ts, zones, zid, edist, seedt, spacing=SPACING, extra_nodes=(),
     every placed object stays reachable); `avoid` tiles (gameplay footprints) are
     impassable, so corridors route AROUND towns/mines instead of through them.
 
-    `entrances` (this zone's `zone_field.plan_entrances` entries) switches the border model
+    `entrances` (this zone's `kit.topology.plan_entrances` entries) switches the border model
     from corpus-open to ISOLATED: only the planned narrow entrance bands are protected —
     the rest of the front is left plantable, and `sample_zone`'s border bias actively
     densifies it (the map-level isolation redesign). `keep_off` (the caller's 8-connected
@@ -126,16 +129,16 @@ def protected_web(ts, zones, zid, edist, seedt, spacing=SPACING, extra_nodes=(),
         # the isolation ridge. Entrance bands stay in the routing domain (a rep is reached
         # through its own band); fall back to the full zone if a node is only reachable
         # along the front.
-        fronts = ZF._zone_fronts(ts, zones, zid)
+        fronts = _zone_fronts(ts, zones, zid)
         front = set().union(*fronts.values()) if fronts else set()
         band_all = set().union(*(b for _r, b in gate_bands)) if gate_bands else set()
         path_ts = ts_free - ((front | set(keep_off)) - band_all)
     else:
-        gate_bands = ZF._zone_gate_bands(ts, zones, zid, open_frac=open_frac)
+        gate_bands = _zone_gate_bands(ts, zones, zid, open_frac=open_frac)
         path_ts = ts_free
     gates = [r for r, _b in gate_bands]
     interior = [t for t in ts_free if edist.get(t, 0) >= 2] or list(ts_free)
-    nodes = ZF._farthest_points(ts_free, seedt, spacing, cand=interior)
+    nodes = _farthest_points(ts_free, seedt, spacing, cand=interior)
     for g in list(gates) + [n for n in extra_nodes if n in ts_free]:
         if g in ts_free and g not in nodes:
             nodes.append(g)
@@ -150,9 +153,9 @@ def protected_web(ts, zones, zid, edist, seedt, spacing=SPACING, extra_nodes=(),
                 d = (r[0] - c[0]) ** 2 + (r[1] - c[1]) ** 2
                 if d < bd:
                     bd, best_r, best_c = d, r, c
-        path = (ZF._geodesic_path(best_c, best_r, path_ts)
-                or ZF._geodesic_path(best_c, best_r, ts_free)
-                or ZF._geodesic_path(best_c, best_r, ts))
+        path = (_geodesic_path(best_c, best_r, path_ts)
+                or _geodesic_path(best_c, best_r, ts_free)
+                or _geodesic_path(best_c, best_r, ts))
         prot.update(path)
         connected.append(best_r)
         remaining.remove(best_r)
@@ -201,7 +204,7 @@ def sample_zone(ts, zones, zid, model, seed=1, steps_per_tile=STEPS_PER_TILE, pr
     inz = np.zeros((H, W), dtype=bool)
     for (x, y) in ts:
         inz[y - y0, x - x0] = True
-    edist = ZF.edge_dist(ts)
+    edist = edge_dist(ts)
     eb = np.zeros((H, W), dtype=np.int8)
     for (x, y) in ts:
         eb[y - y0, x - x0] = min(edist[(x, y)], EBINS - 1)
@@ -364,7 +367,7 @@ def m1_experiment(map_name, zid, seed=1):
     print(f"zone {zid} ({terrain}, {len(ts)} tiles): {len(objs)} objects, "
           f"blocked frac gen={frac:.3f} corpus={model['target']:.3f}")
 
-    hg = ZF.run_lengths(ts, ts - blocked)
+    hg = run_lengths(ts, ts - blocked)
     sg = sum(hg.values()) or 1
     print("veg-only open run-length  k:  corpus%   gen%")
     for k in range(1, 9):

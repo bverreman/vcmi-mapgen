@@ -1,10 +1,11 @@
-"""Reliability tests for zone_field (gate bands, entrance planning, pocket geometry)."""
+"""Reliability tests for kit.topology (gate bands, entrance planning, pocket geometry)."""
+
+from vcmi_mapgen.kit import topology as ZF
 
 
 def test_zone_gate_bands_wide_and_protected():
     """Zone gates are corpus-wide BANDS of the contact front, and the protected web keeps
     the whole band vegetation-free — borders must never collapse to a 1-tile corridor."""
-    from vcmi_mapgen import zone_field as ZF
     # two 12x10 zones side by side: the contact front is the full 10-tile column
     ts1 = {(x, y) for x in range(12) for y in range(10)}
     ts2 = {(x, y) for x in range(12, 24) for y in range(10)}
@@ -29,8 +30,6 @@ def test_zone_gate_bands_wide_and_protected():
 def test_plan_entrances_aligned_and_few():
     """Entrance plan: 1 crossing for a short front, 2 for a long one, both sides' bands
     aligned (4-adjacent across the border), <=ENTRANCE_W tiles per side, deterministic."""
-    from vcmi_mapgen import zone_field as ZF
-
     # short front: two 12x10 zones -> exactly ONE entrance for the pair
     ts1 = {(x, y) for x in range(12) for y in range(10)}
     ts2 = {(x, y) for x in range(12, 24) for y in range(10)}

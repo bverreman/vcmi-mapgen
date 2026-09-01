@@ -14,7 +14,8 @@ import collections
 
 from vcmi_mapgen.kit import objects as OR
 from vcmi_mapgen import ontology as ON
-from vcmi_mapgen import zone_field as ZF
+from vcmi_mapgen.kit.geometry import edge_dist
+from vcmi_mapgen.kit.topology import _zone_gate_bands
 from vcmi_mapgen.steps.gameplay import mines as PG
 from vcmi_mapgen.steps.gameplay.water import _legal, _pick
 
@@ -168,11 +169,11 @@ def place_scatter(ts, zones, zid, terrain, open_set, prot, seed=1, bounds=None,
     dweb = _web_dist(open_set, prot)
     reach = set(dweb)                                # reachable open tiles only
     op = PG.openness(open_set)
-    ed = ZF.edge_dist(ts)
+    ed = edge_dist(ts)
     if entrances is not None:                        # isolation plan: gd measures from the
         bands = [(r, b) for r, b, _o in entrances]   # planned narrow crossings
     else:
-        bands = ZF._zone_gate_bands(ts, zones, zid,
+        bands = _zone_gate_bands(ts, zones, zid,
                                     open_frac=st.get("border_open_frac", 0.5))
     gd = PG.gate_dist(ts, set().union(*(b for _r, b in bands)) if bands else set())
 
