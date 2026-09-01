@@ -12,7 +12,7 @@ corpus's run-length/budget statistics? The production dependency this module use
 (edge_dist, run_lengths, the entrance/pocket/front topology helpers, NB8, EBINS, SPACING) has
 moved to kit/geometry.py and kit/topology.py — nothing here is imported by any step.
 
-    uv run python -m vcmi_mapgen.zone_field --map "All for One" --zone 11
+    uv run python -m vcmi_mapgen.research.zone_field --map "All for One" --zone 11
 """
 import argparse
 import collections
@@ -24,7 +24,7 @@ from vcmi_mapgen.kit.terrain_lookup import TNAME, EXCLUDE_DECOR_TYPES
 from vcmi_mapgen.kit.segmentation import _segment_level
 from vcmi_mapgen.kit.geometry import EBINS, edge_dist, run_lengths
 from vcmi_mapgen.kit.topology import SPACING, _zone_gates, _farthest_points, _geodesic_path
-from vcmi_mapgen import zone_skeleton as SK
+from vcmi_mapgen.research import zone_skeleton as SK
 
 R = 8          # cap on run-length feature
 NB4 = [(1, 0), (-1, 0), (0, 1), (0, -1)]

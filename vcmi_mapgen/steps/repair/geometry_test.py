@@ -32,7 +32,7 @@ def test_portal_reward_zone():
     fill_open_islands no longer buries it in decoration."""
     from vcmi_mapgen.steps.repair import geometry as GEO
     from vcmi_mapgen.kit import reachability as TR
-    from vcmi_mapgen import mapeval as ME
+    from vcmi_mapgen.research import mapeval as ME
 
     S = 40
     GRASS, ROCK = 2, 9

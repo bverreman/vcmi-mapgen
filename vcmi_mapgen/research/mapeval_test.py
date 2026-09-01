@@ -7,7 +7,7 @@ bit-exact identity / render tests (untouched).
 import os
 
 from vcmi_mapgen.kit import objects as OR
-from vcmi_mapgen import mapeval as ME
+from vcmi_mapgen.research import mapeval as ME
 
 GRASS = 2
 
@@ -100,6 +100,6 @@ def test_traverse_monolith_network():
     assert lone["unreachable_mines"] == [(40, 40, 0)], \
         "a single monolith end must NOT teleport anywhere"
 
-    from vcmi_mapgen import mapeval as ME
+    from vcmi_mapgen.research import mapeval as ME
     assert ME.relational_complete(wall_fm([town, mine, near])) is False
     assert ME.relational_complete(wall_fm([town, mine, near, far])) is True

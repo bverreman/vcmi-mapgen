@@ -5,9 +5,9 @@ This is the read-only extraction we argued for: it does NOT learn marginals -- i
 configuration (room shapes + relative layout + neck geometry) of a real zone intact. Run it to see
 whether real zones actually carve into sensible hub+pocket structure.
 
-    uv run python -m vcmi_mapgen.zone_skeleton --map "All for One" --zone 11      # render one zone
-    uv run python -m vcmi_mapgen.zone_skeleton --map "All for One"                 # all land zones
-    uv run python -m vcmi_mapgen.zone_skeleton --verdict 30                        # does-it-exist stats
+    uv run python -m vcmi_mapgen.research.zone_skeleton --map "All for One" --zone 11      # render one zone
+    uv run python -m vcmi_mapgen.research.zone_skeleton --map "All for One"                 # all land zones
+    uv run python -m vcmi_mapgen.research.zone_skeleton --verdict 30                        # does-it-exist stats
 """
 import argparse
 import collections

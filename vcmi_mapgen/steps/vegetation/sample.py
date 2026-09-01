@@ -42,7 +42,7 @@ from vcmi_mapgen.kit.geometry import edge_dist, run_lengths
 from vcmi_mapgen.kit.topology import SPACING, _zone_fronts, _zone_gate_bands, _farthest_points, _geodesic_path
 # zone_field.py is research-only now (its production pieces moved to kit/geometry.py +
 # kit/topology.py) — this file's own m1_experiment() debug helper still calls its render_rw().
-from vcmi_mapgen import zone_field as ZF
+from vcmi_mapgen.research import zone_field as ZF
 
 EBINS = PS.EBINS
 RINT = 2                        # local-interaction range (Chebyshev rings 0..RINT)
