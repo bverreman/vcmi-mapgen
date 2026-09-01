@@ -29,7 +29,7 @@ import math
 import os
 import random
 
-from vcmi_mapgen import zone_engine as ZE
+from vcmi_mapgen.kit.noise import _value_noise
 from vcmi_mapgen.kit.segmentation import _segment_level
 from vcmi_mapgen.kit.paths import project_root
 
@@ -108,7 +108,7 @@ def _water_mask(W, H, frac, rng, cell=None):
     noise wavelength — large (default) gives seas/lakes, small fragments land into islands."""
     if frac <= 0.01:
         return [[False] * W for _ in range(H)]
-    noise = ZE._value_noise(W, H, cell or max(6, min(W, H) // 5), rng)
+    noise = _value_noise(W, H, cell or max(6, min(W, H) // 5), rng)
     flat = sorted(v for row in noise for v in row)
     thr = flat[int(frac * (len(flat) - 1))]
     return [[noise[y][x] <= thr for x in range(W)] for y in range(H)]
@@ -165,7 +165,7 @@ def _tunnel_mask(W, H, land_frac, rng):
     while len(centers) < n_caverns:
         centers.append((rng.randint(margin, W - margin - 1), rng.randint(margin, H - margin - 1)))
 
-    noise = ZE._value_noise(W, H, 5, rng)
+    noise = _value_noise(W, H, 5, rng)
     land = [[False] * W for _ in range(H)]
     protect = set()
     avg_r = max(3.0, (budget / max(n_caverns, 1) / math.pi) ** 0.5 * 0.7)
@@ -268,7 +268,7 @@ def _assign_terrains(seeds, st, rng, iters=400):
 def _grow(W, H, land, seeds, caps, rng):
     """Multi-source Dijkstra with jittered costs; a zone stops claiming at its capacity.
     Leftover pockets (all reachable zones full) are attached to the nearest assigned zone."""
-    noise = ZE._value_noise(W, H, 5, rng)
+    noise = _value_noise(W, H, 5, rng)
     cost = [[1.0 + JITTER * (noise[y][x] + 1.0) / 2.0 for x in range(W)] for y in range(H)]
     label = [[-1] * W for _ in range(H)]
     count = [0] * len(seeds)
@@ -360,7 +360,7 @@ def generate(W, H, seed=3, water=None, texture=True, water_mode="normal", level=
     archipelago: rock is a wall a hero cannot swim past, so undergrounds must stay walkable
     between caverns the way real H3 maps do (tunnels leading to larger patches).
     `protect_out`, if given a set, is updated in-place with the tunnel-corridor cells that
-    downstream steps (notably `zone_engine.tile_terrain`'s despeckle merge) must never
+    downstream steps (notably `kit.tiling.tile_terrain`'s despeckle merge) must never
     reassign to a barrier code, or a thin corridor can be eroded back into rock after
     `generate()` already built it connected.
     Deterministic in `seed`."""

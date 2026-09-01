@@ -1,11 +1,11 @@
-"""Reliability tests for zone_engine (terrain despeckle / sliver absorption)."""
+"""Reliability tests for kit.tiling (terrain despeckle / sliver absorption)."""
 
 
 def test_despeckle_absorbs_tiny_zones():
     """Shape-aware sliver rule: a terrain patch (= future zone) survives despeckle only when
     it has >4 tiles or is a compact 2x2 square; narrow 4-tile shapes and anything smaller are
     absorbed into the dominant LAND neighbour (water/rock only when no land borders it)."""
-    from vcmi_mapgen import zone_engine as ZE
+    from vcmi_mapgen.kit import tiling as ZE
 
     GRASS, DIRT, WATER = 2, 0, 8
     W, H = 24, 14

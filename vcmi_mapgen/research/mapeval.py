@@ -33,7 +33,7 @@ from vcmi_mapgen.kit.paths import project_root
 
 ROOT = project_root()
 WATER, ROCK = 8, 9
-MIN_AREA = 12                       # match generate_map's default min zone area
+MIN_AREA = 12                       # skip zones smaller than this
 LAND_TERRAINS = list(range(8))     # ids 0..7 are land; 8=water, 9=rock
 COUPLE_R = 6                       # a reward is "guarded" if a GUARD sits within this radius
 

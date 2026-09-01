@@ -29,7 +29,7 @@ def test_vmap_export_roundtrip(tmp_path):
     """VmapRenderer writes an editor-shaped .vmap: reads back, visitables carry
     visitableFrom, and a playable slot is wired to the town."""
     from vcmi_mapgen import ontology as ON
-    from vcmi_mapgen import zone_engine as ZE
+    from vcmi_mapgen.kit import tiling as ZE
     grid = [[2] * 16 for _ in range(16)]
     cells = ZE.tile_terrain(grid, 16, 16)
     town = ON.gameplay_pool("grass", "TOWN")[0]
@@ -66,7 +66,7 @@ def test_vmap_export_game_contracts(tmp_path):
     (character=hostile) and towns start with a fort."""
     from vcmi_mapgen import ontology as ON
     from vcmi_mapgen.steps.gameplay import mines as PG
-    from vcmi_mapgen import zone_engine as ZE
+    from vcmi_mapgen.kit import tiling as ZE
     # orientation: internal footprint un-mirrored, export mask == the mask VCMI's own RMG
     # writes for the same sawmill sprite (ground truth from Maps/RandomMaps). mask_of is
     # windowed identically to vmap_mask_of (same V-padding) so a guard's approach tile always
@@ -123,7 +123,7 @@ def test_playability_overlay(tmp_path):
     """VmapRenderer's playability overlay: exactly N playable slots wired to their towns,
     team matrix set, victory = defeat all (standardWin)."""
     from vcmi_mapgen import ontology as ON
-    from vcmi_mapgen import zone_engine as ZE
+    from vcmi_mapgen.kit import tiling as ZE
     grid = [[2] * 24 for _ in range(24)]
     cells = ZE.tile_terrain(grid, 24, 24)
     town = ON.gameplay_pool("grass", "TOWN")[0]
@@ -164,7 +164,7 @@ def test_playability_overlay_alliance_grouping(tmp_path):
     show alliances; the per-player "team" int alone is not enough (bug reported
     2026-07-05: '2v2' teams weren't shown when the map was selected in VCMI)."""
     from vcmi_mapgen import ontology as ON
-    from vcmi_mapgen import zone_engine as ZE
+    from vcmi_mapgen.kit import tiling as ZE
     grid = [[2] * 24 for _ in range(24)]
     cells = ZE.tile_terrain(grid, 24, 24)
     town = ON.gameplay_pool("grass", "TOWN")[0]
@@ -189,7 +189,7 @@ def test_playability_overlay_random_town_shows_random_in_lobby(tmp_path):
     first faction by id (Castle) instead of showing 'random' in the lobby — the bug reported
     2026-07-03: every player's town appeared fixed to Castle."""
     from vcmi_mapgen.steps.gameplay import mines as PG
-    from vcmi_mapgen import zone_engine as ZE
+    from vcmi_mapgen.kit import tiling as ZE
     rnd = PG.ON.identity_of(PG.RND_TOWN)
     grid = [[2] * 24 for _ in range(24)]
     cells = ZE.tile_terrain(grid, 24, 24)

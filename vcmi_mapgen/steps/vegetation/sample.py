@@ -35,7 +35,7 @@ import os
 from vcmi_mapgen.kit import objects as OR
 from vcmi_mapgen import ontology as ON
 from vcmi_mapgen.steps.vegetation import stats as PS
-from vcmi_mapgen import zone_engine as ZE
+from vcmi_mapgen.kit.noise import _value_noise
 from vcmi_mapgen.kit.terrain_lookup import TNAME, EXCLUDE_DECOR_TYPES
 from vcmi_mapgen.kit.segmentation import _segment_level
 from vcmi_mapgen.kit.geometry import edge_dist, run_lengths
@@ -239,7 +239,7 @@ def sample_zone(ts, zones, zid, model, seed=1, steps_per_tile=STEPS_PER_TILE, pr
     sigma = model.get("sigma", 0.0)
     M = np.ones((H, W))
     if sigma > 0:
-        noise = ZE._value_noise(W, H, COX_CELL, rng)
+        noise = _value_noise(W, H, COX_CELL, rng)
         G = np.array(noise)
         v = G[inz]
         G = (G - v.mean()) / max(v.std(), 1e-6)
