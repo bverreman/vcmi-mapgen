@@ -36,6 +36,8 @@ from vcmi_mapgen.kit import objects as OR
 from vcmi_mapgen import ontology as ON
 from vcmi_mapgen.steps.vegetation import stats as PS
 from vcmi_mapgen import zone_engine as ZE
+from vcmi_mapgen.kit.terrain_lookup import TNAME, EXCLUDE_DECOR_TYPES
+from vcmi_mapgen.kit.segmentation import _segment_level
 from vcmi_mapgen import zone_field as ZF
 
 EBINS = PS.EBINS
@@ -54,7 +56,7 @@ def build_model(terrain):
     st = PS.load(terrain)
     th = PS.theta_local(st, rint=RINT)
 
-    pool = ON.decor_pool(terrain, exclude_types=ZE.EXCLUDE_DECOR_TYPES)
+    pool = ON.decor_pool(terrain, exclude_types=EXCLUDE_DECOR_TYPES)
     cats_all = ON.veg_categories()
     by_cat = collections.defaultdict(list)
     for ident in pool:
@@ -349,9 +351,9 @@ def m1_experiment(map_name, zid, seed=1):
     """The spec's decisive M1 test: sample vegetation for a REAL corpus zone with NO lattice
     field and compare the EMERGENT run-length histogram + coverage against the corpus."""
     fm = OR.load_faithful(map_name)
-    zones, zl, _ = ZE._segment_level(fm["terrain"][0])
+    zones, zl, _ = _segment_level(fm["terrain"][0])
     z = zones[zid]
-    terrain = ZE.TNAME.get(z["terrain_type"])
+    terrain = TNAME.get(z["terrain_type"])
     ts = set(z["tiles_set"])
     model = build_model(terrain)
     print(f"model[{terrain}]: {len(model['cats'])} categories, "

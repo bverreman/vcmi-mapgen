@@ -10,16 +10,14 @@ segment(terrain_level)
     -> (zones: dict[int, zone_dict], zone_label: H×W list[list[int]])
 
 compute_static_features(terrain_level, zones, zone_label)
-    -> numpy array shape (H, W, DIM_STATIC=28)
+    -> numpy array shape (H, W, DIM_STATIC=32)
 
-DIM_STATIC = 28  (exported constant)
+DIM_STATIC = 32  (exported constant)
 """
 from __future__ import annotations
 
 import collections
 import math
-import sys
-import os
 
 import numpy as np
 
@@ -74,14 +72,6 @@ def _bfs_global(H: int, W: int, sources: set, walls: set) -> np.ndarray:
 # Segmentation
 # ---------------------------------------------------------------------------
 
-# Subdivision defaults: a same-terrain region larger than MAX_ZONE_AREA holds
-# several design roles at once (a town area + treasure pockets + buffer), so we
-# split it into compact sub-zones of ~TARGET_SUBZONE_AREA tiles, each of which
-# carries a single archetype. (spec Open Question #5.)
-MAX_ZONE_AREA = 300
-TARGET_SUBZONE_AREA = 200
-
-
 def _flood_fill(terrain_level: list) -> list:
     """4-connected flood-fill by terrain type. Returns zone_label (H×W, -1=barrier)."""
     H = len(terrain_level)
@@ -108,75 +98,8 @@ def _flood_fill(terrain_level: list) -> list:
     return zone_label
 
 
-def _kmeans_positions(tiles: list, k: int, iters: int = 40) -> list:
-    """Partition tile coords into k spatially-compact clusters (k-means++, seed 0).
-    Returns a list of cluster indices aligned with `tiles`."""
-    pts = np.asarray(tiles, dtype=np.float64)
-    n = len(pts)
-    if k <= 1 or n <= k:
-        return [0] * n if k <= 1 else list(range(n))
-    rng = np.random.RandomState(0)
-    # k-means++ seeding
-    centers = [pts[rng.randint(n)]]
-    for _ in range(k - 1):
-        d2 = np.min(np.stack([np.sum((pts - c) ** 2, axis=1) for c in centers]), axis=0)
-        s = d2.sum()
-        probs = d2 / s if s > 0 else np.ones(n) / n
-        centers.append(pts[rng.choice(n, p=probs)])
-    centers = np.array(centers, dtype=np.float64)
-    labels = np.zeros(n, dtype=np.int32)
-    for _ in range(iters):
-        dists = np.linalg.norm(pts[:, None, :] - centers[None, :, :], axis=2)
-        new = dists.argmin(axis=1)
-        if np.array_equal(new, labels):
-            break
-        labels = new
-        for j in range(k):
-            mask = labels == j
-            if mask.any():
-                centers[j] = pts[mask].mean(axis=0)
-    return labels.tolist()
-
-
-def _subdivide_label(zone_label: list, max_area: int, target_area: int) -> list:
-    """Re-label so any zone with area > max_area is split into ~area/target_area
-    compact sub-zones (k-means on tile positions). Returns a new H×W label."""
-    H = len(zone_label)
-    W = len(zone_label[0])
-    tiles_by_zone: dict = collections.defaultdict(list)
-    for y in range(H):
-        for x in range(W):
-            z = zone_label[y][x]
-            if z != -1:
-                tiles_by_zone[z].append((x, y))
-
-    new_label: list = [[-1] * W for _ in range(H)]
-    next_id = 0
-    for _z, tiles in sorted(tiles_by_zone.items()):
-        area = len(tiles)
-        if area <= max_area:
-            for x, y in tiles:
-                new_label[y][x] = next_id
-            next_id += 1
-        else:
-            k = max(2, round(area / target_area))
-            assign = _kmeans_positions(tiles, k)
-            base = next_id
-            used = set()
-            for (x, y), a in zip(tiles, assign):
-                new_label[y][x] = base + a
-                used.add(a)
-            next_id = base + k
-    return new_label
-
-
 def _compute_attrs(terrain_level: list, zone_label: list) -> dict:
-    """Compute per-zone attributes from a finished zone_label.
-
-    A "zone" here is any label != -1 (a terrain region OR a sub-zone of one).
-    Boundary/adjacency are relative to the label, so sub-zone-internal borders
-    count as boundaries — exactly what gives finer sub-zone features.
-    """
+    """Compute per-zone attributes from a finished zone_label."""
     H = len(terrain_level)
     W = len(terrain_level[0])
     tiles_by_zone: dict = collections.defaultdict(list)
@@ -240,19 +163,13 @@ def _compute_attrs(terrain_level: list, zone_label: list) -> dict:
     return zones
 
 
-def segment(terrain_level: list, subdivide: bool = False,
-            max_area: int = MAX_ZONE_AREA,
-            target_area: int = TARGET_SUBZONE_AREA) -> tuple[dict, list]:
+def segment(terrain_level: list) -> tuple[dict, list]:
     """Flood-fill terrain_level by terrain type into natural zones.
 
     Parameters
     ----------
     terrain_level : list[list[dict]]
         H×W grid of {"t": terrain_code, ...} dicts (level 0 from corpus JSON).
-    subdivide : bool
-        If True, split any zone larger than `max_area` into compact sub-zones of
-        ~`target_area` tiles (k-means on positions), so each sub-zone carries a
-        single design role / archetype.
 
     Returns
     -------
@@ -260,11 +177,9 @@ def segment(terrain_level: list, subdivide: bool = False,
         zone_id -> {terrain_type, area, centroid, tiles, tiles_set,
                      boundary_tiles, chokepoints, adjacent_zones}
     zone_label : list[list[int]]
-        H×W; -1 for water/rock, zone_id (or sub-zone id) otherwise.
+        H×W; -1 for water/rock, zone_id otherwise.
     """
     zone_label = _flood_fill(terrain_level)
-    if subdivide:
-        zone_label = _subdivide_label(zone_label, max_area, target_area)
     zones = _compute_attrs(terrain_level, zone_label)
     return zones, zone_label
 
@@ -274,7 +189,7 @@ def segment(terrain_level: list, subdivide: bool = False,
 # ---------------------------------------------------------------------------
 
 def compute_static_features(terrain_level: list, zones: dict, zone_label: list) -> np.ndarray:
-    """Compute the 39-dim static feature vector for every tile.
+    """Compute the 32-dim static feature vector for every tile.
 
     Feature layout (all floats):
       [0:10]  terrain_type one-hot (10 terrain codes)
@@ -306,7 +221,6 @@ def compute_static_features(terrain_level: list, zones: dict, zone_label: list) 
     terr_arr = np.array([[terrain_level[y][x]["t"] for x in range(W)]
                           for y in range(H)], dtype=np.int32)
     passable = (terr_arr != WATER) & (terr_arr != ROCK)
-    walls_set = {(x, y) for y in range(H) for x in range(W) if not passable[y, x]}
 
     # --- dist_water: BFS from all water tiles across the whole map ---
     water_sources = {(x, y) for y in range(H) for x in range(W)
@@ -408,15 +322,3 @@ def compute_static_features(terrain_level: list, zones: dict, zone_label: list) 
             feats[y, x, 31] = 1.0 if cell.get("river") else 0.0
 
     return feats
-
-
-# ---------------------------------------------------------------------------
-# Utility: chokepoint set from zones (for callers that need it)
-# ---------------------------------------------------------------------------
-
-def chokepoint_set_from_zones(zones: dict) -> set:
-    """Return the union of all chokepoint tiles across all zones."""
-    result: set = set()
-    for zone in zones.values():
-        result.update(zone.get("chokepoints", set()))
-    return result

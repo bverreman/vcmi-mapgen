@@ -15,6 +15,8 @@ import os
 
 from vcmi_mapgen.kit import objects as OR
 from vcmi_mapgen import zone_engine as ZE
+from vcmi_mapgen.kit.terrain_lookup import TNAME
+from vcmi_mapgen.kit.segmentation import _segment_level
 
 WATER, ROCK = 8, 9
 NB4 = [(1, 0), (-1, 0), (0, 1), (0, -1)]
@@ -108,7 +110,7 @@ def _components(openset):
 def skeleton(fm, zid, zones, zl):
     z = zones[zid]
     ts = set(z["tiles_set"])
-    terr = ZE.TNAME.get(z["terrain_type"])
+    terr = TNAME.get(z["terrain_type"])
     if z["terrain_type"] in (WATER, ROCK):
         return None
     O = open_set(fm, ts)
@@ -316,7 +318,7 @@ def main():
             except Exception:
                 continue
             lvl = fm["terrain"][0]
-            zones, zl, canon = ZE._segment_level(lvl)
+            zones, zl, canon = _segment_level(lvl)
             for zid in zones:
                 if zones[zid]["terrain_type"] in (WATER, ROCK) or zones[zid]["area"] < 30:
                     continue
@@ -342,7 +344,7 @@ def main():
 
     fm = OR.load_faithful(args.map)
     lvl = fm["terrain"][0]
-    zones, zl, canon = ZE._segment_level(lvl)
+    zones, zl, canon = _segment_level(lvl)
     zids = [args.zone] if args.zone is not None else [
         zid for zid in sorted(zones)
         if zones[zid]["terrain_type"] not in (WATER, ROCK) and zones[zid]["area"] >= 60]

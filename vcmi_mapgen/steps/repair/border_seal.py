@@ -3,7 +3,7 @@ import collections
 
 from vcmi_mapgen.kit import objects as OR
 from vcmi_mapgen import ontology as ON
-from vcmi_mapgen import zone_engine as ZE
+from vcmi_mapgen.kit.terrain_lookup import TNAME, EXCLUDE_DECOR_TYPES
 from vcmi_mapgen.steps.gate.gates import rnd_monster
 
 
@@ -37,7 +37,7 @@ def seal_zone_borders(W, H, grid, zones, entrance_plan, objs, avoid, hard_avoid,
     rng = random.Random(seed ^ 0x5EA1 ^ (level * 7919))
     owner, tname = {}, {}
     for zid, z in sorted(zones.items()):
-        terr = ZE.TNAME.get(z["terrain_type"])
+        terr = TNAME.get(z["terrain_type"])
         if terr in (None, "water", "rock"):
             continue
         for t in z["tiles_set"]:
@@ -89,7 +89,7 @@ def seal_zone_borders(W, H, grid, zones, entrance_plan, objs, avoid, hard_avoid,
             break                                    # everything left is unsealable
         pick, _n = max(cnt.items(), key=lambda kv: (kv[1], kv[0]))
         pool = ON.decor_pool(tname[pick], blocking=True, max_cells=1,
-                             exclude_types=ZE.EXCLUDE_DECOR_TYPES)
+                             exclude_types=EXCLUDE_DECOR_TYPES)
         if not pool:
             dead.add(pick)
             continue

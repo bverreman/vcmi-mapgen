@@ -4,7 +4,7 @@ from __future__ import annotations
 import collections
 
 from vcmi_mapgen.kit import objects as OR
-from vcmi_mapgen import zone_engine as ZE
+from vcmi_mapgen.kit.terrain_lookup import TNAME
 from vcmi_mapgen import zone_field as ZF
 from vcmi_mapgen.pipeline import MapState, PipelineStep, PlacementWorkspace
 from vcmi_mapgen.steps.repair import border_seal as BS
@@ -24,7 +24,7 @@ def _find_start(state: MapState, workspace: PlacementWorkspace):
     zones0 = state.zones.get(0, {})
     big = max(
         (z for z in zones0.values()
-         if ZE.TNAME.get(z["terrain_type"]) not in (None, "water", "rock")),
+         if TNAME.get(z["terrain_type"]) not in (None, "water", "rock")),
         key=lambda z: z["area"],
         default=None,
     )

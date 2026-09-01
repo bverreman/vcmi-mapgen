@@ -34,18 +34,16 @@ import sys
 
 import numpy as np
 
-from vcmi_mapgen import terrain_segment as TS
+from vcmi_mapgen.kit import terrain_segment as TS
 from vcmi_mapgen.kit import objects as OR
+from vcmi_mapgen.kit.segmentation import _segment_level
+from vcmi_mapgen.kit.terrain_lookup import TNAME, EXCLUDE_DECOR_TYPES
 from vcmi_mapgen import ontology as ON
 from vcmi_mapgen import faithful as FA
 from vcmi_mapgen.vcmi_ids import TERRAIN_RGB as _TERRAIN_RGB
 from vcmi_mapgen.kit.paths import project_root
 
 ROOT = project_root()
-
-# terrain code -> human name (for labels); water/rock never form a zone.
-TNAME = {0: "dirt", 1: "sand", 2: "grass", 3: "snow", 4: "swamp",
-         5: "rough", 6: "subterr", 7: "lava", 8: "water", 9: "rock"}
 
 ZONE_TINT = [(200, 80, 80), (80, 160, 200), (90, 200, 120), (210, 180, 70),
              (180, 110, 200), (220, 140, 80), (120, 200, 200), (200, 120, 160),
@@ -72,30 +70,6 @@ def zone_bbox_mask(tiles):
     return (minx, miny, maxx, maxy), mask_rel
 
 
-def canonical_coords(zones, depth_arr):
-    """Per-zone shape-intrinsic (depth, sweep) for every tile.
-
-    depth = per-zone-renormalized BFS-to-boundary (0 edge .. 1 core); channel-20 is
-            already /sqrt(area), so we renormalize to the zone's own [min,max].
-    sweep = atan2(y-cy, x-cx) normalized to [0,1) (a cheap angular address).
-    """
-    out = {}
-    for zid, z in zones.items():
-        tiles = z["tiles"]
-        vals = [float(depth_arr[y, x]) for (x, y) in tiles]
-        vmin, vmax = min(vals), max(vals)
-        rng = vmax - vmin
-        cx, cy = z["centroid"]
-        m = {}
-        for (x, y) in tiles:
-            raw = float(depth_arr[y, x])
-            depth = 0.5 if rng < 1e-9 else (raw - vmin) / rng
-            sweep = (math.atan2(y - cy, x - cx) + math.pi) / (2 * math.pi)
-            m[(x, y)] = (depth, sweep)
-        out[zid] = m
-    return out
-
-
 def label_zone(zone, objs_in, W, H):
     """Deterministic human label: terrain + dominant gameplay purpose + map octant."""
     terr = TNAME.get(zone["terrain_type"], f"t{zone['terrain_type']}")
@@ -115,14 +89,6 @@ def label_zone(zone, objs_in, W, H):
 # ---------------------------------------------------------------------------
 # Extraction:  map -> template
 # ---------------------------------------------------------------------------
-
-def _segment_level(lvl):
-    """segment + per-zone canonical coords for one terrain level."""
-    zones, zone_label = TS.segment(lvl, subdivide=False)
-    feats = TS.compute_static_features(lvl, zones, zone_label)
-    canon = canonical_coords(zones, feats[:, :, 20])
-    return zones, zone_label, canon
-
 
 def _bucket_objects(objects, level, zone_label, zones, W, H):
     """Split this level's objects into per-zone buckets + a barrier bucket.
@@ -401,7 +367,7 @@ def rebuild_map(template: dict, target_terrain: list, identity: bool = False):
         L = lvl_entry["level"]
         if L >= len(target_terrain):
             continue
-        zones_t, _ = TS.segment(target_terrain[L], subdivide=False)
+        zones_t, _ = TS.segment(target_terrain[L])
         index = {}
         for zid, z in zones_t.items():
             bbox, mask_rel = zone_bbox_mask(z["tiles"])
@@ -620,16 +586,7 @@ def _enriched_decor_pool(learned, terr_id, full_fn):
     return out
 
 
-# water features are blocking in the catalog but do NOT read as an obstacle — never use them as a
-# zone-border ridge (the belt must be real obstacles: mountains, trees, hills, rocks). These are
-# the ONTOLOGY type-level (category) names for the catalog's water features.
-# Decoration categories that must NEVER be placed on any terrain: water-feature tiles (river
-# deltas, lakes incl. the AB LAKE_2 avllk1r, reefs, kelp) that read as misplaced water cutting
-# through land. Excluded unconditionally in the pools, the MRF learning (so the category field
-# can't assign them), and the MRF decode. NOTE: the AB class 199 (TREES_2, avlswt*/avltro* --
-# swamp palms + rough trees, sprite-verified) was excluded here while it was the opaque
-# CLASS_199; it is real vegetation and is now allowed.
-EXCLUDE_DECOR_TYPES = {"LAKE", "FROZEN_LAKE", "RIVER_DELTA", "KELP", "REEF", "LAKE_2"}
+# (TNAME, EXCLUDE_DECOR_TYPES moved to kit/terrain_lookup.py.)
 
 
 def _is_excluded_anim(anim):
@@ -3392,7 +3349,7 @@ def render_segmentation(name: str, out_path: str):
     W, H = fm["width"], fm["height"]
     imgs, tables = [], []
     for L, lvl in enumerate(fm["terrain"]):
-        zones, zone_label = TS.segment(lvl, subdivide=False)
+        zones, zone_label = TS.segment(lvl)
         zone_objs, _ = _bucket_objects(fm["objects"], L, zone_label, zones, W, H)
         img = Image.new("RGB", (W * TILE, H * TILE), (10, 10, 10))
         px = img.load()
@@ -4055,7 +4012,7 @@ def _do_deform(name, template, zone_id, stem):
     """Build a deformed single-level map and warp one zone's pattern onto it."""
     src = OR.load_faithful(name)
     W, H = src["width"], src["height"]
-    zones0, label0 = TS.segment(src["terrain"][0], subdivide=False)
+    zones0, label0 = TS.segment(src["terrain"][0])
     if zone_id not in zones0:
         sys.exit(f"zone {zone_id} not on level 0 (have {sorted(zones0)})")
     ztmpl = next(z for z in template["levels"][0]["zones"] if z["zone_id"] == zone_id)

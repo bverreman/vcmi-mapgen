@@ -5,7 +5,7 @@ import collections
 
 from vcmi_mapgen.kit import objects as OR
 from vcmi_mapgen.steps.vegetation import sample as PP  # protected_web
-from vcmi_mapgen import zone_engine as ZE
+from vcmi_mapgen.kit.terrain_lookup import TNAME
 from vcmi_mapgen import zone_field as ZF
 from vcmi_mapgen.pipeline import LevelWorkspace, MapState, PipelineStep, PlacementWorkspace, ZoneWorkspace
 from vcmi_mapgen.steps.gameplay import mines as MN
@@ -84,7 +84,7 @@ def _run_level_gameplay(level, W, H, grid, zones, player_zids, ledger, gstats, s
     # detection is complete), but BEFORE vegetation so veg forbids their footprint.
     zone_cache = {}   # zid → per-zone data needed for pass 2
     for zid, z in sorted(zones.items()):
-        terrain = ZE.TNAME.get(z["terrain_type"])
+        terrain = TNAME.get(z["terrain_type"])
         if terrain in (None, "water", "rock") or z["area"] < MIN_AREA:
             continue
         ts_full = set(z["tiles_set"])

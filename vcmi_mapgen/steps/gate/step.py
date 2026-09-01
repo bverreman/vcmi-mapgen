@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from vcmi_mapgen.pipeline import MapState, PipelineStep
-from vcmi_mapgen import zone_engine as ZE
+from vcmi_mapgen.kit.terrain_lookup import TNAME
 from vcmi_mapgen.steps.gate import gates as PG
 
 MIN_AREA = 25  # matches GameplayStep's own zone floor — a gate must land on a tile a
@@ -14,7 +14,7 @@ MIN_AREA = 25  # matches GameplayStep's own zone floor — a gate must land on a
 def _land_tiles(zones):
     ts = set()
     for z in zones.values():
-        terrain = ZE.TNAME.get(z["terrain_type"])
+        terrain = TNAME.get(z["terrain_type"])
         if terrain in (None, "water", "rock") or z["area"] < MIN_AREA:
             continue
         ts.update(z["tiles_set"])

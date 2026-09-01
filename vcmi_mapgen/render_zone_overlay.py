@@ -32,17 +32,15 @@ import colorsys
 import json
 import os
 from vcmi_mapgen.kit import objects as OR
+from vcmi_mapgen.kit.terrain_lookup import TNAME
 from vcmi_mapgen import render_editor as RED
-from vcmi_mapgen import terrain_segment as TS
+from vcmi_mapgen.kit import terrain_segment as TS
 from vcmi_mapgen.kit.paths import project_root
 from PIL import Image, ImageDraw
 
 TILE = 32
 WATER, ROCK = 8, 9
 ROOT = project_root()
-
-TNAME = {0: "dirt", 1: "sand", 2: "grass", 3: "snow", 4: "swamp",
-         5: "rough", 6: "subterr", 7: "lava", 8: "water", 9: "rock"}
 
 _STRUCTURE_PURPOSES = frozenset({
     "TOWN", "MINE", "DWELLING",
@@ -477,7 +475,7 @@ def _loot_zone_tiles(zones, zone_label, objs0, H, W):
 
 def _zone_layers(base_size, levels0):
     """Returns (fill, border, draw_labels_fn, zones, zone_label)."""
-    zones, zone_label = TS.segment(levels0, subdivide=False)
+    zones, zone_label = TS.segment(levels0)
     H, W = len(levels0), len(levels0[0])
 
     zone_ids = sorted(zones)

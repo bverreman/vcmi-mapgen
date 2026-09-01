@@ -64,8 +64,8 @@ def _purpose(o):
 
 def _segment(level_grid):
     """zones, zone_label for one terrain level (lazy import avoids a cycle with zone_engine)."""
-    from vcmi_mapgen import terrain_segment as TS
-    return TS.segment(level_grid, subdivide=False)
+    from vcmi_mapgen.kit import terrain_segment as TS
+    return TS.segment(level_grid)
 
 
 def _adjacency(zones, zone_label, W, H):

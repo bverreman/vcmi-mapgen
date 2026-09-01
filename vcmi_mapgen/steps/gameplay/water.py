@@ -11,7 +11,7 @@ import zlib
 
 from vcmi_mapgen.kit import objects as OR
 from vcmi_mapgen import ontology as ON
-from vcmi_mapgen import zone_engine as ZE
+from vcmi_mapgen.kit.terrain_lookup import TNAME
 from vcmi_mapgen.steps.gate.gates import rnd_monster
 from vcmi_mapgen.steps.gameplay.mines import RND_ART, RND_RES, WATER_PURPOSES, mine_gameplay
 
@@ -131,7 +131,7 @@ def _ensure_water_seaports(W, H, grid, zones, objs, seed):
     # land tile → zone id
     land_zone_of = {}
     for zid, z in zones.items():
-        if ZE.TNAME.get(z["terrain_type"]) in (None, "water", "rock"):
+        if TNAME.get(z["terrain_type"]) in (None, "water", "rock"):
             continue
         for t in z["tiles_set"]:
             land_zone_of[t] = zid
@@ -266,7 +266,7 @@ def _ensure_water_seaports(W, H, grid, zones, objs, seed):
         o = _try_place(ts_set, list(near_coastal), label)
         if not o:
             print(f"  WARNING: no seaport placed on zone {zid} "
-                  f"({ZE.TNAME.get(z['terrain_type'])}, {z['area']} tiles) — "
+                  f"({TNAME.get(z['terrain_type'])}, {z['area']} tiles) — "
                   f"no valid near-coastal anchor found")
             return False
         return True
@@ -305,7 +305,7 @@ def _ensure_water_seaports(W, H, grid, zones, objs, seed):
 
     # ── 2. Island guarantee ───────────────────────────────────────────────────
     for zid, z in sorted(zones.items()):
-        terrain = ZE.TNAME.get(z["terrain_type"])
+        terrain = TNAME.get(z["terrain_type"])
         if terrain in (None, "water", "rock") or z["area"] < _WATER_BODY_MIN:
             continue
         ts_set = set(z["tiles_set"])

@@ -13,7 +13,7 @@ extracts, per terrain, the DECORATION anchor pattern —
   - corpus run-length histogram of the veg-only open field (the M1 validation yardstick).
 
 Categories are the ontology's decoration types (`veg_categories`); water features
-(`zone_engine.EXCLUDE_DECOR_TYPES`) are dropped everywhere. Cached per terrain in
+(`kit.terrain_lookup.EXCLUDE_DECOR_TYPES`) are dropped everywhere. Cached per terrain in
 ``data/pp/veg_<terrain>.json``.
 
     uv run python -m vcmi_mapgen.steps.vegetation.stats --report grass
@@ -26,7 +26,8 @@ import os
 
 from vcmi_mapgen.kit import objects as OR
 from vcmi_mapgen import ontology as ON
-from vcmi_mapgen import zone_engine as ZE
+from vcmi_mapgen.kit.terrain_lookup import TNAME, EXCLUDE_DECOR_TYPES
+from vcmi_mapgen.kit.segmentation import _segment_level
 from vcmi_mapgen import zone_field as ZF
 from vcmi_mapgen.kit.paths import project_root
 
@@ -58,7 +59,7 @@ def _anchors_of_zone(fm, ts):
         if ci is None:
             continue
         cat = cats[ci]
-        if cat in ZE.EXCLUDE_DECOR_TYPES:
+        if cat in EXCLUDE_DECOR_TYPES:
             continue
         out.append((o["x"], o["y"], cat, anim))
     return out
@@ -120,9 +121,9 @@ def mine(nmaps=159, force=False):
             fm = OR.load_faithful(nm)
         except Exception:
             continue
-        zones, zl, _ = ZE._segment_level(fm["terrain"][0])
+        zones, zl, _ = _segment_level(fm["terrain"][0])
         for zid, z in zones.items():
-            terr = ZE.TNAME.get(z["terrain_type"])
+            terr = TNAME.get(z["terrain_type"])
             if terr not in acc or z["area"] < MIN_AREA:
                 continue
             a = acc[terr]

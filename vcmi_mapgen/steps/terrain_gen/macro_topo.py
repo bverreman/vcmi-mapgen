@@ -30,6 +30,7 @@ import os
 import random
 
 from vcmi_mapgen import zone_engine as ZE
+from vcmi_mapgen.kit.segmentation import _segment_level
 from vcmi_mapgen.kit.paths import project_root
 
 ROOT = project_root()
@@ -72,7 +73,7 @@ def mine_macro(level=0, force=False):
         T = [[c["t"] for c in row] for row in lvl]
         nb = sum(1 for row in T for t in row if t == barrier)
         barrier_fracs.append(nb / max(W * H, 1))
-        zones, zl, _ = ZE._segment_level(lvl)
+        zones, zl, _ = _segment_level(lvl)
         big = 0
         for z in zones.values():
             t = z["terrain_type"]
@@ -412,7 +413,7 @@ def generate(W, H, seed=3, water=None, texture=True, water_mode="normal", level=
 def report(grid):
     """Acceptance metrics of §4.3: zone count + share of land area in zones >= 60 tiles."""
     lvl = [[{"t": t, "river": False, "road": False} for t in row] for row in grid]
-    zones, zl, _ = ZE._segment_level(lvl)
+    zones, zl, _ = _segment_level(lvl)
     land_area = sum(z["area"] for z in zones.values() if 0 <= z["terrain_type"] < 8)
     big = [z for z in zones.values() if z["area"] >= 60 and 0 <= z["terrain_type"] < 8]
     share = sum(z["area"] for z in big) / max(land_area, 1)

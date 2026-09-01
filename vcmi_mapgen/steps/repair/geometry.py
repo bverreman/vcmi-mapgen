@@ -6,7 +6,7 @@ import collections
 
 from vcmi_mapgen.kit import objects as OR
 from vcmi_mapgen import ontology as ON
-from vcmi_mapgen import zone_engine as ZE
+from vcmi_mapgen.kit.terrain_lookup import TNAME, EXCLUDE_DECOR_TYPES
 from vcmi_mapgen.steps.gate.gates import GAP, _fits, rnd_monster
 from vcmi_mapgen.steps.gameplay.mines import RND_ART, mine_gameplay
 from vcmi_mapgen.steps.pickup.scatter import _place_one
@@ -129,7 +129,7 @@ def fill_open_islands(size, grid, objs, targets, seed=1, boat_ok=True, costly=fr
     rng = random.Random(seed ^ 0xF17)
     W = H = size
     land = {(x, y) for y in range(H) for x in range(W) if grid[y][x] < 8}
-    terrain_of = {(x, y): ZE.TNAME.get(grid[y][x]) for (x, y) in land}
+    terrain_of = {(x, y): TNAME.get(grid[y][x]) for (x, y) in land}
 
     cells = collections.defaultdict(list)         # blocking cell -> [veg obj idx]
     hard = set()                                  # gameplay/pickup bodies: never carved/filled
@@ -220,7 +220,7 @@ def fill_open_islands(size, grid, objs, targets, seed=1, boat_ok=True, costly=fr
             if terrain is None:
                 continue
             pool = ON.decor_pool(terrain, blocking=True, max_cells=1,
-                                 exclude_types=ZE.EXCLUDE_DECOR_TYPES)
+                                 exclude_types=EXCLUDE_DECOR_TYPES)
             if not pool:
                 continue
             for (x, y) in tiles:
@@ -378,7 +378,7 @@ def rescue_unreachable_zones(size, grids, zones_by_level, objs_by_level, targets
     for lvl in sorted(zones_by_level):
         grid = grids[lvl]
         for zid, z in sorted(zones_by_level[lvl].items()):
-            terrain = ZE.TNAME.get(z["terrain_type"])
+            terrain = TNAME.get(z["terrain_type"])
             if terrain in (None, "water", "rock") or z["area"] < PORTAL_MIN_AREA:
                 continue
             ts = set(z["tiles_set"])
@@ -462,7 +462,7 @@ def rescue_unreachable_zones(size, grids, zones_by_level, objs_by_level, targets
 
         hosts = []
         for hzid, hz in sorted(zones_by_level[lvl].items()):
-            if hzid == zid or ZE.TNAME.get(hz["terrain_type"]) in (None, "water", "rock"):
+            if hzid == zid or TNAME.get(hz["terrain_type"]) in (None, "water", "rock"):
                 continue
             if hz["area"] < MIN_AREA:
                 continue

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from vcmi_mapgen.pipeline import MapState, PipelineStep
-from vcmi_mapgen import zone_engine as ZE
+from vcmi_mapgen.kit.segmentation import _segment_level
 
 
 def _warn_sliver_zones(zones, level, protect=frozenset()):
@@ -22,7 +22,7 @@ class SegmentStep(PipelineStep):
     def run(self, state: MapState, ontology) -> None:
         protect = frozenset(state.tunnel_protect)
         for level, cells in state.cells.items():
-            zones, _zl, _ = ZE._segment_level(cells)
+            zones, _zl, _ = _segment_level(cells)
             _warn_sliver_zones(zones, level,
                                protect=protect if level == 1 else frozenset())
             state.zones[level] = zones

@@ -21,7 +21,8 @@ import json
 import os
 from vcmi_mapgen.kit import objects as OR
 from vcmi_mapgen import ontology as ON
-from vcmi_mapgen import zone_engine as ZE
+from vcmi_mapgen.kit.terrain_lookup import TNAME, EXCLUDE_DECOR_TYPES
+from vcmi_mapgen.kit.segmentation import _segment_level
 from vcmi_mapgen import zone_field as ZF
 from vcmi_mapgen.kit.paths import project_root
 # Gate is the first step in pipeline order to need footprint-fitting helpers
@@ -213,7 +214,7 @@ def mine_gameplay(level=0, force=False):
             continue
         if level >= len(fm["terrain"]):
             continue
-        zones, zl, _ = ZE._segment_level(fm["terrain"][level])
+        zones, zl, _ = _segment_level(fm["terrain"][level])
         guards = {
             (o["x"], o["y"])
             for o in fm["objects"]
@@ -240,7 +241,7 @@ def mine_gameplay(level=0, force=False):
                     if anim:
                         aw["anim_w"][p][anim] += 1
         for zid, z in zones.items():
-            terr = ZE.TNAME.get(z["terrain_type"])
+            terr = TNAME.get(z["terrain_type"])
             if terr not in acc or z["area"] < MIN_AREA_STATS:
                 continue
             a = acc[terr]
@@ -720,7 +721,7 @@ def place_zone(ts, zones, zid, terrain, seed=1, coastal=frozenset(), force_town=
                     occupied.add(approach)  # no vegetation/pickup may stack there
                     ex, ey = approach[0], approach[1] - 1  # the entrance ('X') cell
                     seal_pool = ON.decor_pool(
-                        terrain, blocking=True, max_cells=1, exclude_types=ZE.EXCLUDE_DECOR_TYPES
+                        terrain, blocking=True, max_cells=1, exclude_types=EXCLUDE_DECOR_TYPES
                     )
                     if seal_pool:
                         for sx, sy in (
@@ -917,7 +918,7 @@ def select_player_zones(zones_by_level, players):
     cand = [(z["area"], level, zid, z["centroid"])
             for level, zones in zones_by_level.items()
             for zid, z in zones.items()
-            if ZE.TNAME.get(z["terrain_type"]) in LAND and z["area"] >= 60]
+            if TNAME.get(z["terrain_type"]) in LAND and z["area"] >= 60]
     if not cand or players <= 0:
         return []
     cand.sort(key=lambda c: (-c[0], c[1], c[2]))

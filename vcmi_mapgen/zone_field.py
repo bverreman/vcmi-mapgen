@@ -16,6 +16,8 @@ import os
 
 from vcmi_mapgen.kit import objects as OR
 from vcmi_mapgen import zone_engine as ZE
+from vcmi_mapgen.kit.terrain_lookup import TNAME, EXCLUDE_DECOR_TYPES
+from vcmi_mapgen.kit.segmentation import _segment_level
 from vcmi_mapgen import zone_skeleton as SK
 
 R = 8          # cap on run-length feature
@@ -82,10 +84,10 @@ def learn(terrain, nmaps=159):
         except Exception:
             continue
         lvl = fm["terrain"][0]
-        zones, zl, canon = ZE._segment_level(lvl)
+        zones, zl, canon = _segment_level(lvl)
         for zid in zones:
             z = zones[zid]
-            if ZE.TNAME.get(z["terrain_type"]) != terrain or z["area"] < 60:
+            if TNAME.get(z["terrain_type"]) != terrain or z["area"] < 60:
                 continue
             ts = set(z["tiles_set"])
             O = SK.open_set(fm, ts)
@@ -771,7 +773,7 @@ def render_markov_field(seed=3, W=72, H=72, scale=9, out=None, min_area=60,
     grid = MT.generate(M, W, H, rng)
     MT.gibbs(grid, M4, M["marg"], rng, sweeps=6)               # isotropic smoothing -> coherent patches
     lvl = [[{"t": t, "river": False, "road": False} for t in row] for row in grid]
-    zones, zl, canon = ZE._segment_level(lvl)
+    zones, zl, canon = _segment_level(lvl)
 
     # terrain background
     img = Image.new("RGB", (W * _TILE, H * _TILE))
@@ -785,7 +787,7 @@ def render_markov_field(seed=3, W=72, H=72, scale=9, out=None, min_area=60,
     model_cache = {}
     nfields = 0
     for zid, z in zones.items():
-        terrain = ZE.TNAME.get(z["terrain_type"])
+        terrain = TNAME.get(z["terrain_type"])
         if terrain in (None, "water", "rock") or z["area"] < min_area:
             continue                                           # leave sea / void / scraps as terrain
         if terrain not in model_cache:
@@ -842,7 +844,7 @@ def render_markov_sprites(seed=3, W=72, H=72, out=None, min_area=60,
     from vcmi_mapgen.kit import objects as _OR
     from vcmi_mapgen import render_editor as RED
 
-    name2id = {v: k for k, v in ZE.TNAME.items()}
+    name2id = {v: k for k, v in TNAME.items()}
 
     def _corpus_weights(terr_id):
         """anim -> corpus occurrence count for DECORATION on this terrain (a spatial statistic; the
@@ -867,7 +869,7 @@ def render_markov_sprites(seed=3, W=72, H=72, out=None, min_area=60,
     grid = MT.generate(M, W, H, rng)
     MT.gibbs(grid, M4, M["marg"], rng, sweeps=6)
     lvl = [[{"t": t, "river": False, "road": False} for t in row] for row in grid]
-    zones, zl, canon = ZE._segment_level(lvl)
+    zones, zl, canon = _segment_level(lvl)
 
     # surface tile strings (clean full-ground view per terrain, picked deterministically per tile)
     surf = []
@@ -883,9 +885,9 @@ def render_markov_sprites(seed=3, W=72, H=72, out=None, min_area=60,
     # plant corpus-weighted blocking vegetation packed into the blocked tiles of every field zone
     model_cache, pool_cache, objs = {}, {}, []
     nfields = 0
-    ex = ZE.EXCLUDE_DECOR_TYPES                                  # drop water-delta / lake / reef tiles
+    ex = EXCLUDE_DECOR_TYPES                                  # drop water-delta / lake / reef tiles
     for zid, z in zones.items():
-        terrain = ZE.TNAME.get(z["terrain_type"])
+        terrain = TNAME.get(z["terrain_type"])
         if terrain in (None, "water", "rock") or z["area"] < min_area:
             continue
         if terrain not in model_cache:
@@ -974,9 +976,9 @@ def main():
 
     fm = OR.load_faithful(args.map)
     lvl = fm["terrain"][0]
-    zones, zl, canon = ZE._segment_level(lvl)
+    zones, zl, canon = _segment_level(lvl)
     z = zones[args.zone]
-    terrain = ZE.TNAME.get(z["terrain_type"])
+    terrain = TNAME.get(z["terrain_type"])
     ts_real = set(z["tiles_set"])
     O_real = SK.open_set(fm, ts_real)
 
