@@ -79,3 +79,8 @@ def write_vmap(path, header_template, terrain_levels, objects_raw, name="vcmi-ma
 
 # write_vmap / read_raw are imported as a library by faithful.to_vmap and h3m2vmap.
 # The former round-trip self-test depended on the removed vmaplib experiment.
+#
+# faithful.py's atomic tile/mask string encoders (TCODE, RIVER, ROAD, tile_string, ...)
+# join this module in a later refactor phase — they're the other half of ".vmap
+# container + its tile-string encoding" but move separately to keep this relocation
+# mechanical.

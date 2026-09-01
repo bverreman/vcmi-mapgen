@@ -13,7 +13,7 @@ town and asserts every zone, every town and every mine is reachable. Wired into
 
 import os, json, collections
 
-from vcmi_mapgen.vcmi_paths import project_root
+from vcmi_mapgen.kit.paths import project_root
 
 ROOT = project_root()
 OBJ = json.load(open(str(ROOT / "data" / "objlib.json")))

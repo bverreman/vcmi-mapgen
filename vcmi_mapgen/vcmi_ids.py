@@ -7,7 +7,7 @@ config/creatures/*.json, config/factions/*.json : { "<identifier>": { "index": <
 
 import json, re, glob, os
 
-from vcmi_mapgen import vcmi_paths
+from vcmi_mapgen.kit import paths as vcmi_paths
 
 _BASES = vcmi_paths.vcmi_config_dirs() + [os.path.join(vcmi_paths.vcmi_home(), "Mods")]
 

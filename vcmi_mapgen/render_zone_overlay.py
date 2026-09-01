@@ -34,7 +34,7 @@ import os
 from vcmi_mapgen import obj_resolve as OR
 from vcmi_mapgen import render_editor as RED
 from vcmi_mapgen import terrain_segment as TS
-from vcmi_mapgen.vcmi_paths import project_root
+from vcmi_mapgen.kit.paths import project_root
 from PIL import Image, ImageDraw
 
 TILE = 32

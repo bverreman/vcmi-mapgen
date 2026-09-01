@@ -39,7 +39,7 @@ from vcmi_mapgen import obj_resolve as OR
 from vcmi_mapgen import ontology as ON
 from vcmi_mapgen import faithful as FA
 from vcmi_mapgen.vcmi_ids import TERRAIN_RGB as _TERRAIN_RGB
-from vcmi_mapgen.vcmi_paths import project_root
+from vcmi_mapgen.kit.paths import project_root
 
 ROOT = project_root()
 

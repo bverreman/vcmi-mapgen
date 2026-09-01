@@ -13,7 +13,7 @@ Usage:
 import sys, os, struct, zlib, zipfile, re, json, argparse, collections
 from PIL import Image
 
-from vcmi_mapgen.vcmi_paths import project_root, vcmi_home, vcmi_config_dirs
+from vcmi_mapgen.kit.paths import project_root, vcmi_home, vcmi_config_dirs
 ROOT = project_root()
 
 LOD_DIR = os.path.join(vcmi_home(), "Data")

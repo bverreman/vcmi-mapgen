@@ -5,8 +5,10 @@ opened in the editor and confirmed faithful, then trusted as the reference.
 
 import json, glob, os, sys, re, collections
 
-from vcmi_mapgen import h3m, vcmi_ids, vmapwrite, vcmi_paths
-from vcmi_mapgen.vcmi_paths import project_root
+from vcmi_mapgen import h3m, vcmi_ids
+from vcmi_mapgen.kit import paths as vcmi_paths
+from vcmi_mapgen.kit import vmap_format as vmapwrite
+from vcmi_mapgen.kit.paths import project_root
 
 ROOT = project_root()
 

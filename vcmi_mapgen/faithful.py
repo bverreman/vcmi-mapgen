@@ -6,9 +6,9 @@ animation + mask). Anything in this shape round-trips to an editor-valid .vmap.
 import json, re, glob, os
 import pathlib
 
-from vcmi_mapgen import vmapwrite
+from vcmi_mapgen.kit import vmap_format as vmapwrite
 from vcmi_mapgen import ontology
-from vcmi_mapgen import vcmi_paths
+from vcmi_mapgen.kit import paths as vcmi_paths
 
 TCODE = {
     0: "dt",

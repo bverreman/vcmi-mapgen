@@ -29,7 +29,7 @@ import numpy as np
 
 from vcmi_mapgen import obj_resolve as OR
 from vcmi_mapgen import traverse as TR
-from vcmi_mapgen.vcmi_paths import project_root
+from vcmi_mapgen.kit.paths import project_root
 
 ROOT = project_root()
 WATER, ROCK = 8, 9

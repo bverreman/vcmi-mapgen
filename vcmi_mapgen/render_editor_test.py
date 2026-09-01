@@ -163,7 +163,7 @@ def test_rebuilt_map_renders_pixel_identical_to_source(tmp_path):
     """The bit-exact guarantee at the pixel level: an identity rebuild of the test map
     renders byte-for-byte identically to the source map through the same path."""
     import glob as _glob
-    import vcmi_mapgen.vcmi_paths as _VP
+    import vcmi_mapgen.kit.paths as _VP
     _randommaps = _glob.glob(os.path.join(_VP.vcmi_home(), "Maps", "RandomMaps", "*.vmap"))
     if not _randommaps:
         pytest.skip("VCMI template .vmap not available (no RandomMaps/*.vmap)")

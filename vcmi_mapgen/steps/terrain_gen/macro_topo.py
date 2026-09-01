@@ -30,7 +30,7 @@ import os
 import random
 
 from vcmi_mapgen import zone_engine as ZE
-from vcmi_mapgen.vcmi_paths import project_root
+from vcmi_mapgen.kit.paths import project_root
 
 ROOT = project_root()
 STATS_PATH = str(ROOT / "data" / "pp" / "macro_stats.json")

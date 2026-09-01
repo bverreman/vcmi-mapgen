@@ -28,7 +28,7 @@ from vcmi_mapgen import obj_resolve as OR
 from vcmi_mapgen import ontology as ON
 from vcmi_mapgen import zone_engine as ZE
 from vcmi_mapgen import zone_field as ZF
-from vcmi_mapgen.vcmi_paths import project_root
+from vcmi_mapgen.kit.paths import project_root
 
 ROOT = project_root()
 PP_DIR = str(ROOT / "data" / "pp")

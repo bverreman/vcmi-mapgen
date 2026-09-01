@@ -9,7 +9,7 @@ import glob, os, re, json
 
 from vcmi_mapgen import h3m, vcmi_ids
 from vcmi_mapgen import h3m2vmap as HV
-from vcmi_mapgen.vcmi_paths import project_root
+from vcmi_mapgen.kit.paths import project_root
 
 ROOT = project_root()
 OUT = str(ROOT / "maps_json")

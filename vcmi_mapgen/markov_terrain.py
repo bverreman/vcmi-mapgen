@@ -7,7 +7,7 @@ coastlines, how terrains border each other) instead of arbitrary noise blobs.
 
 import json, glob, random, collections, os
 
-from vcmi_mapgen.vcmi_paths import project_root
+from vcmi_mapgen.kit.paths import project_root
 
 ROOT = project_root()
 

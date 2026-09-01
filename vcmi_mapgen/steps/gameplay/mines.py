@@ -23,7 +23,7 @@ from vcmi_mapgen import obj_resolve as OR
 from vcmi_mapgen import ontology as ON
 from vcmi_mapgen import zone_engine as ZE
 from vcmi_mapgen import zone_field as ZF
-from vcmi_mapgen.vcmi_paths import project_root
+from vcmi_mapgen.kit.paths import project_root
 # Gate is the first step in pipeline order to need footprint-fitting helpers
 # (_cells/_fits/GAP) and rnd_monster; Gameplay/Pickup/Repair import them from there rather
 # than duplicating them or inventing a generic shared module (see steps/gate/gates.py).

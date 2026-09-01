@@ -79,4 +79,4 @@ def vcmi_config_dirs():
 
 def project_root() -> pathlib.Path:
     """The vcmi-mapgen project root directory (parent of the vcmi_mapgen package)."""
-    return pathlib.Path(__file__).parent.parent
+    return pathlib.Path(__file__).parent.parent.parent

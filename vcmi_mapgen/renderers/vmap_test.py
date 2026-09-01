@@ -6,7 +6,7 @@ import zipfile
 
 import pytest
 
-from vcmi_mapgen import vcmi_paths
+from vcmi_mapgen.kit import paths as vcmi_paths
 from vcmi_mapgen.pipeline import MapState
 from vcmi_mapgen.renderers.vmap import VmapRenderer, _parse_teams
 
