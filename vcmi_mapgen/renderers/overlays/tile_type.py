@@ -4,7 +4,7 @@ from __future__ import annotations
 from PIL import Image
 
 from vcmi_mapgen.pipeline import MapState
-from vcmi_mapgen.vcmi_ids import TERRAIN_RGB
+from vcmi_mapgen.kit.render_palette import TERRAIN_RGB
 from vcmi_mapgen.renderers.overlays.base import MapOverlay, TILE
 
 _ALPHA = 90  # overlay opacity; low enough to keep sprites legible

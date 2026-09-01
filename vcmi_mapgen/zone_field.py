@@ -766,7 +766,7 @@ def render_markov_field(seed=3, W=72, H=72, scale=9, out=None, min_area=60,
     from PIL import Image
     import markov_terrain as MT
     from PIL import Image
-    from vcmi_mapgen.vcmi_ids import TERRAIN_RGB as _TRGB, TERRAIN_TILE_PX as _TILE
+    from vcmi_mapgen.kit.render_palette import TERRAIN_RGB as _TRGB, TERRAIN_TILE_PX as _TILE
 
     rng = random.Random(seed)
     M, M4 = MT.learn(0), MT.learn4(0)

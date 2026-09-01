@@ -2436,7 +2436,7 @@ def iter_leaves(tree=None):
 # Placement / category accessors — the ontology as the SINGLE SOURCE OF TRUTH for object
 # identity, footprint mask, terrain coupling and decoration category. The whole generation
 # pipeline (tile placement -> .vmap -> rendering) draws from these instead of the corpus.
-# `type`/`subtype` in a placement identity come from `vcmi_ids` (same as the corpus path),
+# `type`/`subtype` in a placement identity come from `kit.vcmi_config` (same as the corpus path),
 # so an ontology identity is a drop-in for the old objlib identity.
 # ---------------------------------------------------------------------------
 
@@ -2451,7 +2451,7 @@ _GAMEPLAY_BY_TP = None   # (terrain name, purpose) -> sorted [anim, ...] of non-
 def _vid():
     global _VID
     if _VID is None:
-        from vcmi_mapgen import vcmi_ids
+        from vcmi_mapgen.kit import vcmi_config as vcmi_ids
         _VID = vcmi_ids
     return _VID
 
@@ -2588,7 +2588,7 @@ def gameplay_pool(terrain, purpose):
 
 def mines_by_resource(terrain):
     """``{resource: [identity]}`` for MINE objects placeable on a terrain — the resource bucket (wood,
-    ore, gold, …) is the ontology-resolved subtype (``vcmi_ids`` -> :data:`MINE_RES`). Lets a town
+    ore, gold, …) is the ontology-resolved subtype (``kit.vcmi_config`` -> :data:`MINE_RES`). Lets a town
     economy guarantee a wood + ore mine without touching the corpus."""
     out = {}
     for ident in gameplay_pool(terrain, "MINE"):

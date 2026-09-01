@@ -438,7 +438,7 @@ def main():
     grid = generate(args.size, args.size, seed=args.seed, water=args.water, level=args.level)
     print("generated:", report(grid))
     from PIL import Image
-    from vcmi_mapgen.vcmi_ids import TERRAIN_RGB, TERRAIN_TILE_PX as _TILE
+    from vcmi_mapgen.kit.render_palette import TERRAIN_RGB, TERRAIN_TILE_PX as _TILE
     lvl = [[{"t": t, "river": False, "road": False} for t in row] for row in grid]
     img = Image.new("RGB", (args.size * _TILE, args.size * _TILE))
     px = img.load()

@@ -7,7 +7,8 @@ writer-ready terrain). Run: `uv run python -m vcmi_mapgen.extract_faithful`.
 
 import glob, os, re, json
 
-from vcmi_mapgen import h3m, vcmi_ids
+from vcmi_mapgen import h3m
+from vcmi_mapgen.kit import vcmi_config as vcmi_ids
 from vcmi_mapgen import h3m2vmap as HV
 from vcmi_mapgen.kit.paths import project_root
 

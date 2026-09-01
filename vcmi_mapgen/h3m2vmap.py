@@ -1,11 +1,12 @@
 """Faithful h3m -> .vmap converter using VCMI's OWN config for object identifiers
-(src/vcmi_ids.py) -- no reverse-engineering. Round-trips a real map so it can be
+(kit/vcmi_config.py) -- no reverse-engineering. Round-trips a real map so it can be
 opened in the editor and confirmed faithful, then trusted as the reference.
 """
 
 import json, glob, os, sys, re, collections
 
-from vcmi_mapgen import h3m, vcmi_ids
+from vcmi_mapgen import h3m
+from vcmi_mapgen.kit import vcmi_config as vcmi_ids
 from vcmi_mapgen.kit import paths as vcmi_paths
 from vcmi_mapgen.kit import vmap_format as vmapwrite
 from vcmi_mapgen.kit.vmap_format import TCODE, RIVER, ROAD, _mir as mirror_suffix

@@ -17,7 +17,7 @@ Reuses (no existing file modified):
   terrain_segment.segment / compute_static_features   (zones + interior-depth feature)
   kit.objects.load_faithful / exact_identity / purpose_of / mask_cells
   faithful.save / faithful.to_vmap                     (artifacts)
-  vcmi_ids.TERRAIN_RGB, zone_structure.ZONE_TINT        (segmentation palette)
+  kit.render_palette.TERRAIN_RGB, zone_structure.ZONE_TINT        (segmentation palette)
   render_editor.read_vmap / read_real / render_map     (realistic sprite render)
 """
 from __future__ import annotations
@@ -41,7 +41,7 @@ from vcmi_mapgen.kit.terrain_lookup import TNAME, EXCLUDE_DECOR_TYPES
 from vcmi_mapgen import ontology as ON
 from vcmi_mapgen import faithful as FA
 from vcmi_mapgen.kit import vmap_format as VF
-from vcmi_mapgen.vcmi_ids import TERRAIN_RGB as _TERRAIN_RGB
+from vcmi_mapgen.kit.render_palette import TERRAIN_RGB as _TERRAIN_RGB
 from vcmi_mapgen.kit.paths import project_root
 
 ROOT = project_root()
