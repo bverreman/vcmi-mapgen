@@ -2666,13 +2666,13 @@ def category_terrain_matrix():
 def _decode_mask(passability, triggers):
     """Decode the objects.txt passability(48)+triggers(48) bitfields into the B/A/V footprint
     mask rows (`kit.objects.mask_cells` semantics: B=blocking, A=visitable anchor, V=visible
-    overlay). This reproduces `h3m2vmap.build_mask` (the corpus mask source) bit-for-bit: the
+    overlay). This reproduces `kit.vmap.mask.build_mask_from_h3m` (the corpus mask source) bit-for-bit: the
     6x8 grid defaults to 'V', a cell is 'A' if its trigger bit is set else 'B' if its
     passability bit is clear (H3: clear=blocked); rows/cols that are all-'V' are trimmed. The
     grid is anchored bottom-right and stored rotated 180° (rows bottom-to-top AND columns
     right-to-left), so BOTH are reversed to sprite-align it — reversing rows only leaves every
     asymmetric footprint horizontally mirrored vs the art (the v5.2 sawmill-entrance bug; see
-    :func:`_decode_mask_grid`). Kept bit-for-bit in sync with `h3m2vmap.build_mask` (the
+    :func:`_decode_mask_grid`). Kept bit-for-bit in sync with `kit.vmap.mask.build_mask_from_h3m` (the
     corpus mask source)."""
     def rows(bits):
         return [bits[r * 8:(r + 1) * 8] for r in range(6)]
@@ -2776,7 +2776,7 @@ def _decode_mask_full(passability, triggers, tile_dims):
     are visually part of the sprite (the v5.3 sawmill-guard-hidden-behind-trees bug). Real RMG
     .vmaps V-fill to the sprite extent, so this is the ground truth for :func:`mask_of` as well
     as :func:`vmap_mask_of` — both in the same LEFT-TO-RIGHT column order as this function's
-    output and the corpus's `h3m2vmap.build_mask` masks (col 0 = leftmost tile, anchor is the
+    output and the corpus's `kit.vmap.mask.build_mask_from_h3m` masks (col 0 = leftmost tile, anchor is the
     last column: `tx = ax - (ww - 1 - c)`, see `kit.objects.mask_cells`'s docstring); no column
     reversal is needed anywhere in this decode chain — the v5.4 sawmill-guard-wrong-side bug
     turned out to be in the CONSUMER (`mask_cells`/`_cells` treating col 0 as the anchor instead

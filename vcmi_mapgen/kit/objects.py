@@ -100,7 +100,7 @@ def mask_cells(mask: list[str], x: int, y: int):
     """Tiles a mask covers when anchored at (x, y).
 
     Convention: anchor (x, y) is the BOTTOM-RIGHT tile of the footprint. Mask rows are stored
-    LEFT-TO-RIGHT, sprite-aligned (matching `h3m2vmap.build_mask` and `ontology._decode_mask`),
+    LEFT-TO-RIGHT, sprite-aligned (matching `kit.vmap.mask.build_mask_from_h3m` and `ontology._decode_mask`),
     so column 0 is the LEFTMOST tile and the anchor is the LAST column of each row ->
     `tx = x - (ww - 1 - c)` where `ww = len(row)`. (Verified pixel-for-pixel against real sprite
     art: a sawmill's ramp/visit tile and a pine clump's trunks land on the correct side only with

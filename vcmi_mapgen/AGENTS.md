@@ -4,11 +4,15 @@
 
 - `.h3m` (real maps): gzip binary, parsed by `vcmi_mapgen/h3m.py` (`parse_file` → `H3Map`
   with terrain tiles + objects; RoE/AB/SoD only). `.vmap` (editor): zip of relaxed JSON,
-  written by `vcmi_mapgen/faithful.py` + `vcmi_mapgen/vmapwrite.py`.
-- **Faithful JSON** (`maps_json/<name>.json`, loaded by `obj_resolve.load_faithful`) is the
-  engine's input: writer-ready terrain cells `{t,view,rt,rd,ot,od,m}` + objects carrying
-  their EXACT `{type, subtype, animation, mask}`. Regenerate from `maps/` with
-  `python -m vcmi_mapgen.extract_faithful`.
+  read/written by `vcmi_mapgen/kit/vmap/{reader,writer}.py` (a full `VmapDocument` model —
+  header players/teams/victory/defeat, every object, terrain as VCMI tile strings — with an
+  `extra` catch-all so an unmodeled key still round-trips losslessly).
+- **The corpus** (`maps_vmap/<name>.vmap`, loaded by `kit.objects.load_faithful`) is the
+  engine's input. Regenerate from `maps/` with `python -m vcmi_mapgen.extract_vmap`. The
+  engine-internal mask charset (`'X'` blocked-entrance vs `'A'` walk-on) is NOT read back
+  from a `.vmap`'s `template.mask` (VCMI's own charset can't represent that distinction —
+  see `kit.vmap.terrain.vcmi_mask`'s docstring); it's re-derived deterministically from the
+  ontology by object identity instead.
 - Object identity comes from VCMI's own config via `vcmi_mapgen/vcmi_ids.py`
   (`resolve(obj_class, obj_subid) → (type, subtype)`). Never guess subtypes. The reference
   C++ format sources are in `vcmi-h3m-format-reference/`.

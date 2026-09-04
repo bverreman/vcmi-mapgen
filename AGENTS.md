@@ -32,10 +32,11 @@ Load `vcmi-mapgen-maps` for the domain details (formats, segmentation, rendering
   - `render_editor.py` — editor-quality 32px H3 sprite rendering (decodes DEF fmt 0/1/2/3);
     `render.py` — schematic PNGs.
   - `markov_terrain.py` — the terrain generator (Markov chain learned from the corpus).
-  - `h3m.py`, `vcmi_ids.py`, `h3m2vmap.py`, `extract_faithful.py` — `.h3m` → faithful pipeline.
+  - `h3m.py`, `vcmi_ids.py`, `extract_vmap.py` — `.h3m` → `.vmap` corpus-extraction pipeline.
   - `render_editor_test.py` — rendering-engine reliability tests.
 - **`maps/`** — the `.h3m` corpus (159 maps), the source data.
-- **`maps_json/`** — faithful JSON per map (the engine's input; regenerable from `maps/`).
+- **`maps_vmap/`** — one real `.vmap` per corpus map (the engine's input; regenerable from
+  `maps/` via `extract_vmap.py`).
 - **`data/`** — corpus-derived priors (`objlib.json`).
 - **`out/`** — transient outputs (templates, features, renders); **gitignored**.
 - **`vcmi-h3m-format-reference/`** — verbatim VCMI C++ sources documenting the `.h3m` format

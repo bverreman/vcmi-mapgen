@@ -75,4 +75,4 @@ def write_vmap(path, header_template, terrain_levels, objects_raw, name="vcmi-ma
     return path
 
 
-# write_vmap / read_raw are imported as a library by faithful.to_vmap and h3m2vmap.
+# write_vmap / read_raw are imported as a library by faithful.to_vmap.
