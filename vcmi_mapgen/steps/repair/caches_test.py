@@ -59,9 +59,9 @@ def test_find_pockets_drawn_shapes():
 
     def best_mouths(reach, pocket_tiles):
         """canonical (deduped, ranked) mouth candidates whose pocket covers the nook"""
-        raw = {m: c for m, c in find_pockets(reach).items()
-               if set(pocket_tiles) <= set(c)}
-        return [cands[0] for cands in CA._dedupe_pockets(raw, reach)]
+        raw = {g: c for g, c in find_pockets(reach).items()
+               if set(pocket_tiles) <= c[0]}
+        return [(cands[0][0], cands[0][1]) for cands in CA._dedupe_pockets(raw, reach)]
 
     # Pocket 1: 1-tile nook in a flat wall face, open field above. The canonical guard
     # must stand directly in front (orthogonal), not on a diagonal or a tile out.
@@ -107,8 +107,9 @@ def test_find_pockets_drawn_shapes():
     # along its run (its two END corners against the map edge are genuine 1-tile corner
     # nooks and MAY be flagged -- that is accepted semantics, thinned by POCKET_MIN_SEP)
     reach = _field(12, 12, {(x, 6) for x in range(12)})
-    for m, c in find_pockets(reach).items():
-        assert all(t[0] in (0, 11) for t in c), f"mid-wall false positive {m}->{sorted(c)}"
+    for m, (pocket, _mouth_fs) in find_pockets(reach).items():
+        assert all(t[0] in (0, 11) for t in pocket), \
+            f"mid-wall false positive {m}->{sorted(pocket)}"
 
 
 @needs_stats

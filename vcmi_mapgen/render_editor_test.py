@@ -21,6 +21,7 @@ import vcmi_mapgen.render_editor as RE
 import vcmi_mapgen.kit.objects as OR
 import vcmi_mapgen.faithful as FA
 import vcmi_mapgen.zone_engine as ZE
+from vcmi_mapgen.rebuild.render import _paint_sort
 
 TEST_MAP = "All for One"
 
@@ -153,8 +154,8 @@ def test_render_is_deterministic():
         {"x": 4, "y": 4, "l": 0, "type": "", "template": {"animation": "AVLpntr7", "mask": []}},
         {"x": 2, "y": 5, "l": 0, "type": "", "template": {"animation": "AVLman30", "mask": []}},
     ]
-    a = RE.render_map(surf, ZE._paint_sort(objs))
-    b = RE.render_map(surf, ZE._paint_sort(objs))
+    a = RE.render_map(surf, _paint_sort(objs))
+    b = RE.render_map(surf, _paint_sort(objs))
     assert a.size == b.size
     assert a.tobytes() == b.tobytes(), "renderer is not deterministic"
 
@@ -179,8 +180,8 @@ def test_rebuilt_map_renders_pixel_identical_to_source(tmp_path):
 
     ssurf, sobjs = RE.read_vmap(src_vmap)
     rsurf, robjs = RE.read_vmap(reb_vmap)
-    src_img = RE.render_map(ssurf, ZE._paint_sort(sobjs))
-    reb_img = RE.render_map(rsurf, ZE._paint_sort(robjs))
+    src_img = RE.render_map(ssurf, _paint_sort(sobjs))
+    reb_img = RE.render_map(rsurf, _paint_sort(robjs))
 
     assert src_img.size == reb_img.size
     assert src_img.tobytes() == reb_img.tobytes(), "rebuilt render differs from source"

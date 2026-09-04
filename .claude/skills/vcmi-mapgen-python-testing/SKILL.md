@@ -22,7 +22,7 @@ metadata:
 ## Naming
 
 - Test functions: `test_<description>` — descriptive, reads like a sentence.
-- Test files: `test_<module>.py` co-located with source, or `tests/<module>/test_<subject>.py`.
+- Test files: `<module>_test.py` co-located with source, or `tests/<module>/<subject>_test.py`.
 - Group related tests with comments, not subclasses.
 
 ## Fixtures — hermetic sandboxes
